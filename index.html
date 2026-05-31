@@ -6815,6 +6815,19 @@ async function saveCfgKey(key, value) {
   return true;
 }
 
+// Fetch-first upsert for a single item inside an array-typed config key.
+// Fetches the current array from Supabase before merging to avoid clobbering
+// concurrent edits from other sessions (last-write-wins race condition).
+async function saveCfgArrayItem(key, item, idField = 'id') {
+  setSyncStatus('syncing', 'Saving...');
+  const { data: row, error: fetchErr } = await db.from('config').select('value').eq('key', key).maybeSingle();
+  if (fetchErr) { setSyncStatus('err', 'Sync error'); console.error('saveCfgArrayItem fetch error key='+key, fetchErr); return false; }
+  const current = (row && Array.isArray(row.value)) ? row.value : (Array.isArray(cfg[key]) ? cfg[key] : []);
+  const idx = current.findIndex(x => String(x[idField]) === String(item[idField]));
+  const merged = idx > -1 ? current.map((x, i) => i === idx ? item : x) : [...current, item];
+  return saveCfgKey(key, merged);
+}
+
 async function loadIngs() {
   const { data } = await db.from('ingredients').select('*').order('id');
   if (data) ings = data;
@@ -6837,6 +6850,8 @@ async function loadBatches() {
           }
         } catch(e) {}
       }
+      // Prefer the proper parent_batch_id column over the notes JSON fallback for new records
+      if (b.parent_batch_id && !b.parentBatchId) b.parentBatchId = b.parent_batch_id;
       // Migrate icingMaterials to v3 in-memory: {_v:3, entries:[...]}
       if (b.icingMaterials) {
         if (Array.isArray(b.icingMaterials) && b.icingMaterials.length > 0) {
@@ -7094,6 +7109,7 @@ async function insertBatch(b) {
     campaign_id:b.campaign_id||null,
     extra_campaign_ids:b.extra_campaign_ids||null,
     order_ids:b.order_ids||null,
+    parent_batch_id:b.parentBatchId||null,
     saved_at:new Date().toISOString()
   }]).select();
   if (!error && data) {
@@ -7115,7 +7131,7 @@ async function updateBatch(id, fields) {
   // Only send columns that actually exist in the batches table.
   // Sending unknown keys causes a Supabase 400 error.
   const KNOWN_BATCH_COLS = ['date','recipe','mult','yield','made_by','bb','occasion','variation',
-    'notes','failed','campaign_id','campaign_qty','extra_campaign_ids','order_ids','ingredients','chocolate','flavouring','icingMaterials','num','saved_at'];
+    'notes','failed','campaign_id','campaign_qty','extra_campaign_ids','order_ids','ingredients','chocolate','flavouring','icingMaterials','num','saved_at','parent_batch_id'];
   const safe = {};
   KNOWN_BATCH_COLS.forEach(function(k){ if (Object.prototype.hasOwnProperty.call(fields, k)) safe[k] = fields[k]; });
   const { error } = await db.from('batches').update(safe).eq('id', id);
@@ -9796,9 +9812,10 @@ async function saveBake() {
     decMaterials.other.map(function(o){ return {type:'other',ingId:o.ingId,label:o.label,weight:null,amount:o.amount,sourceClosedownId:null}; })
   ) : [];
 
-  // Duplicate batch number guard
+  // Duplicate batch number guard — live DB check first, then in-memory for normalised variants
   var numNorm = normBatchNum(num);
-  if (batches.find(function(b){ return normBatchNum(b.num) === numNorm; })) {
+  const { data: dupRows } = await db.from('batches').select('id').eq('num', num.trim());
+  if ((dupRows && dupRows.length > 0) || batches.find(function(b){ return normBatchNum(b.num) === numNorm; })) {
     alert('Batch number ' + num + ' already exists. Please use a different number.');
     return;
   }
@@ -19740,7 +19757,12 @@ async function saveOrderFull() {
     const badge = document.getElementById('orf-order-number-badge');
     badge.textContent = newOrder.order_number || orderData.order_number;
     badge.style.display = 'inline-block';
-    await insertOrderLines(lines.map(l => { const { _dbId, ...fields } = l; return { ...fields, order_id: newOrder.id }; }));
+    const insertedLines = await insertOrderLines(lines.map(l => { const { _dbId, ...fields } = l; return { ...fields, order_id: newOrder.id }; }));
+    if (!insertedLines) {
+      await deleteOrder(newOrder.id);
+      showMsg('orf-msg', 'Error saving cookie lines — order rolled back. Check connection and try again.');
+      return;
+    }
     _renderOrfBatches(newOrder);
     _populateBatchSelect();
     document.getElementById('orf-batches-card').style.display = 'block';
@@ -20577,6 +20599,7 @@ function addOrderLine(prefill) {
   const id = orderLineCount++;
   const div = document.createElement('div');
   div.id = 'ol-row-' + id;
+  if (prefill && prefill.id) div.dataset.dbId = String(prefill.id);
   div.style.cssText = 'display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-bottom:6px;align-items:start;';
   div.innerHTML = `
     <div>
@@ -20603,16 +20626,17 @@ async function saveOrderForm() {
   const deliveryDate = document.getElementById('of-delivery-date').value;
   if (!deliveryDate) { alert('Please enter a delivery date.'); return; }
 
-  // Collect lines
+  // Collect lines — capture _dbId so existing lines are updated in place, not re-inserted
   const lineEls = document.querySelectorAll('#of-lines > div[id^="ol-row-"]');
   const lines = [];
   lineEls.forEach(row => {
     const idNum = row.id.replace('ol-row-','');
+    const dbId = row.dataset.dbId || null;
     const type = document.getElementById('ol-type-'+idNum)?.value.trim();
     const flavour = document.getElementById('ol-flavour-'+idNum)?.value.trim();
     const qty = parseInt(document.getElementById('ol-qty-'+idNum)?.value)||0;
     const notes = document.getElementById('ol-notes-'+idNum)?.value.trim();
-    if (type || qty) lines.push({ cookie_type: type||'', flavour: flavour||'', quantity: qty, notes: notes||'' });
+    if (type || qty) lines.push({ _dbId: dbId, cookie_type: type||'', flavour: flavour||'', quantity: qty, notes: notes||'' });
   });
   if (!lines.length) { alert('Please add at least one cookie line.'); return; }
 
@@ -20626,27 +20650,37 @@ async function saveOrderForm() {
   };
 
   if (existingOrderId) {
-    // Update order
     await updateOrder(existingOrderId, orderData);
-    // Delete old lines and re-insert
     setSyncStatus('syncing','Saving...');
-    await db.from('order_lines').delete().eq('order_id', existingOrderId);
-    orderLines = orderLines.filter(l => l.order_id !== existingOrderId);
-    const newLines = lines.map(l => ({ ...l, order_id: existingOrderId }));
-    const savedLines = await insertOrderLines(newLines);
-    if (!savedLines) {
-      // Lines are gone from DB — alert and reload to show true state
-      alert('⚠️ Critical: The order was saved but the cookie lines could NOT be saved to the database. ' +
-            'The app will now reload to show the current state. ' +
-            'You will need to re-enter the cookie lines for this order.');
-      location.reload();
-      return;
+    // Smart line save: update existing lines in place, insert new, delete removed
+    const existingDbLines = orderLines.filter(l => String(l.order_id) === String(existingOrderId));
+    const existingDbIds = existingDbLines.map(l => String(l.id));
+    const keptDbIds = lines.filter(l => l._dbId).map(l => String(l._dbId));
+    const toDelete = existingDbIds.filter(id => !keptDbIds.includes(id));
+    const toUpdate = lines.filter(l => l._dbId);
+    const toInsert = lines.filter(l => !l._dbId);
+    for (const dbId of toDelete) {
+      await db.from('order_lines').delete().eq('id', dbId);
+      orderLines = orderLines.filter(l => String(l.id) !== String(dbId));
+    }
+    for (const l of toUpdate) {
+      const { _dbId, ...fields } = l;
+      await db.from('order_lines').update({ ...fields, order_id: existingOrderId }).eq('id', _dbId);
+      const idx = orderLines.findIndex(x => String(x.id) === String(_dbId));
+      if (idx > -1) Object.assign(orderLines[idx], fields);
+    }
+    if (toInsert.length) {
+      const savedLines = await insertOrderLines(toInsert.map(l => { const { _dbId, ...fields } = l; return { ...fields, order_id: existingOrderId }; }));
+      if (!savedLines) {
+        alert('Error saving new cookie lines. Existing lines remain intact. Check connection.');
+        return;
+      }
     }
   } else {
     const newOrder = await insertOrder(orderData);
     if (!newOrder) return;
-    const newLines = lines.map(l => ({ ...l, order_id: newOrder.id }));
-    await insertOrderLines(newLines);
+    const newLines = lines.map(l => ({ _dbId: undefined, ...l, order_id: newOrder.id }));
+    await insertOrderLines(newLines.map(l => { const { _dbId, ...fields } = l; return fields; }));
   }
 
   showSaveToast('Order saved');
