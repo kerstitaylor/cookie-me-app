@@ -10087,7 +10087,7 @@ function orfSaveDeliveryAddrToCustomer(rowIdx) {
   if (!cfg.customers[idx].addresses) cfg.customers[idx].addresses = [];
   if (!cfg.customers[idx].addresses.includes(addr)) {
     cfg.customers[idx].addresses.push(addr);
-    saveCfgKey('customers', cfg.customers);
+    saveCfgArrayItem('customers', cfg.customers[idx]);
     alert('Address saved to customer profile.');
   } else { alert('This address is already saved for this customer.'); }
 }
@@ -12698,7 +12698,7 @@ async function confirmQuickAdd(wrapperId) {
   };
   if (!cfg.customers) cfg.customers = [];
   cfg.customers.push(rec);
-  await saveCfgKey('customers', cfg.customers);
+  await saveCfgArrayItem('customers', rec);
   // Update the picker input
   const wrap = document.getElementById(wrapperId);
   if (wrap) {
@@ -13035,7 +13035,7 @@ async function saveHistCustEdit() {
     address: ['hce-street','hce-suburb','hce-city','hce-postcode'].map(id=>document.getElementById(id)?.value.trim()).filter(Boolean).join(', '),
     type: document.getElementById('hce-t').value
   };
-  await saveCfgKey('customers', cfg.customers);
+  await saveCfgArrayItem('customers', cfg.customers[idx]);
   showMsg('hce-msg','Saved ✓');
   setTimeout(() => { document.getElementById('hist-cust-edit-form').style.display='none'; renderHistCustomers(); }, 700);
 }
@@ -18529,7 +18529,7 @@ async function saveCustDetailForm() {
     address:[street,suburb,city,postcode].filter(Boolean).join(', ')||null,
     social_media:Object.keys(social).length?social:null
   });
-  await saveCfgKey('customers', cfg.customers);
+  await saveCfgArrayItem('customers', c);
   document.getElementById('cust-detail-name').textContent = org||name;
   showMsg('cd-msg','Saved ✓','success');
   renderCustMain();
@@ -19341,7 +19341,7 @@ async function saveNewCustInline() {
   if (!name) { alert('Customer name is required.'); return; }
   const rec = { name, type: document.getElementById('orf-nc-type').value, phone: document.getElementById('orf-nc-phone').value.trim(), email: document.getElementById('orf-nc-email').value.trim(), address: '', id: crypto.randomUUID() };
   cfg.customers.push(rec);
-  await saveCfgKey('customers', cfg.customers);
+  await saveCfgArrayItem('customers', rec);
   document.getElementById('orf-org').value = custDisplayName(rec);
   document.getElementById('orf-cust-search').value = rec.name || '';
   document.getElementById('orf-cust-id').value = rec.id;
@@ -20404,7 +20404,7 @@ async function saveCustomerForm() {
     id: editIdx !== '' ? cfg.customers[parseInt(editIdx)].id : crypto.randomUUID()
   };
   if (editIdx !== '') { cfg.customers[parseInt(editIdx)] = rec; } else { cfg.customers.push(rec); }
-  await saveCfgKey('customers', cfg.customers);
+  await saveCfgArrayItem('customers', rec);
   showSaveToast('Customer saved');
   showMsg('cust-form-msg', 'Customer saved \u2713');
   document.getElementById('nc-edit-idx').value = '';
@@ -20463,14 +20463,13 @@ async function syncEngagementsToCustomers() {
     return !byId && !byName;
   });
   if (!needsSync) return; // nothing to do — skip DB write entirely
-  let changed = false;
-  campEngagements.forEach(e => {
-    if (!e.name) return;
+  for (const e of campEngagements) {
+    if (!e.name) continue;
     const alreadyById = e.customer_id && cfg.customers.find(c => c.id == e.customer_id);
     const alreadyByName = cfg.customers.find(c => c.name && c.name.toLowerCase() === e.name.toLowerCase() && c.status !== 'closed');
     if (alreadyById || alreadyByName) {
       if (alreadyByName && !alreadyById) e.customer_id = alreadyByName.id;
-      return;
+      continue;
     }
     const rec = {
       name: e.name, phone: e.phone||'', email: e.email||'',
@@ -20479,9 +20478,8 @@ async function syncEngagementsToCustomers() {
     };
     cfg.customers.push(rec);
     e.customer_id = rec.id;
-    changed = true;
-  });
-  if (changed) await saveCfgKey('customers', cfg.customers);
+    await saveCfgArrayItem('customers', rec);
+  }
 }
 
 async function delCust(i) {
@@ -20496,7 +20494,7 @@ async function delCust(i) {
       async function() {
         const snapshot = cfg.customers.slice();
         cfg.customers[i] = { ...cfg.customers[i], status: 'active', closedReason: null, closedAt: null, closedNotes: null };
-        const ok = await saveCfgKey('customers', cfg.customers);
+        const ok = await saveCfgArrayItem('customers', cfg.customers[i]);
         if (!ok) { cfg.customers = snapshot; alert('Reopen failed. Try again.'); }
         renderCustomers();
       }
@@ -20548,7 +20546,7 @@ async function doCloseCust(i) {
     closedAt: today(),
     closedNotes: notes || null
   };
-  const ok = await saveCfgKey('customers', cfg.customers);
+  const ok = await saveCfgArrayItem('customers', cfg.customers[i]);
   if (!ok) {
     cfg.customers = snapshot;
     alert('Close failed — ' + displayName + ' was NOT closed. Check your connection and try again.');
@@ -26045,7 +26043,7 @@ function engSaveDeliveryAddrToCustomer(rowIdx) {
   if (!cfg.customers[idx].addresses) cfg.customers[idx].addresses = [];
   if (!cfg.customers[idx].addresses.includes(addr)) {
     cfg.customers[idx].addresses.push(addr);
-    saveCfgKey('customers', cfg.customers);
+    saveCfgArrayItem('customers', cfg.customers[idx]);
     alert('Address saved to customer profile.');
   } else {
     alert('This address is already saved for this customer.');
@@ -26384,7 +26382,7 @@ async function saveEngagement() {
       const newCust = { name, phone:phone||'', email:email||'', address:address||'', type:'campaign', additionalTypes:[], quickAdd:true, id:crypto.randomUUID() };
       if (!cfg.customers) cfg.customers = [];
       cfg.customers.push(newCust);
-      await saveCfgKey('customers', cfg.customers);
+      await saveCfgArrayItem('customers', newCust);
       _engLinkedCustomerId = newCust.id;
     }
   }
@@ -26426,7 +26424,7 @@ async function engSaveWithDiff(updateRecord) {
       if (f.email) cfg.customers[idx].email = f.email;
       if (f.address) cfg.customers[idx].address = f.address;
       cfg.customers[idx].quickAdd = false;
-      await saveCfgKey('customers', cfg.customers);
+      await saveCfgArrayItem('customers', cfg.customers[idx]);
     }
   }
   await _doSaveEngagement(f);
@@ -26497,7 +26495,7 @@ async function _doSaveEngagement(f) {
         const existing = cust.campaigns||[];
         if (campName && !existing.includes(campName)) {
           cust.campaigns = [...existing, campName];
-          await saveCfgKey('customers', cfg.customers);
+          await saveCfgArrayItem('customers', cust);
         }
       }
     }
