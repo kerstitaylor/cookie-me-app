@@ -6279,6 +6279,22 @@ async function saveIcingSession() {
     toSave.push(Object.assign({ id: newIcingEntryId(), date: dateVal }, data));
   });
   if (errors.length) { showMsg('icing-session-msg', errors[0], 'danger'); return; }
+  // Validate order references: each selected order must still exist with a valid customer
+  toSave.forEach(function(entry) {
+    (entry.orderIds || []).forEach(function(ordId) {
+      if (!ordId) return;
+      var _ord = (orders || []).find(function(o){ return String(o.id) === String(ordId); });
+      if (!_ord) {
+        errors.push('Order #' + ordId + ' no longer exists. Remove it from the recipient list before saving.');
+        return;
+      }
+      var _ordCust = (cfg.customers || []).find(function(c){ return String(c.id) === String(_ord.customer_id); });
+      if (!_ordCust) {
+        errors.push('Order ' + (_ord.order_number || '#' + ordId) + ' references a deleted customer. Correct the order before linking it here.');
+      }
+    });
+  });
+  if (errors.length) { showMsg('icing-session-msg', errors[0], 'danger'); return; }
   var byBatch = {};
   toSave.forEach(function(e) { if (!byBatch[e.batchId]) byBatch[e.batchId] = []; byBatch[e.batchId].push(e); });
 
@@ -27663,6 +27679,28 @@ async function saveLogRecordEdit(id, logType) {
   const qtyEl = document.getElementById('elr-qty');
   if (qtyEl) updated.qty = parseFloat(qtyEl.value);
   updated.savedAt = new Date().toISOString();
+  // 1a: Block save if the log references a batch that no longer exists
+  if (updated.batchNum) {
+    const _batchValid = batches.some(
+      function(b){ return normBatchNum(b.num) === normBatchNum(updated.batchNum); }
+    );
+    if (!_batchValid) {
+      alert('⚠ Batch "' + updated.batchNum + '" no longer exists in the system. Remove or correct the batch reference before saving.');
+      return;
+    }
+  }
+  // 1b: Prevent silent staff-name corruption when original recorder is no longer on the team
+  const _teamList = cfg.team || [];
+  if (updated.by !== undefined) {
+    const _origByGone = orig.by && !_teamList.includes(orig.by);
+    if (_origByGone && updated.by !== orig.by) {
+      // The select silently defaulted away from the removed person — restore the original name
+      updated.by = orig.by;
+    }
+    if (updated.by && !_teamList.includes(updated.by)) {
+      updated._byRemoved = true;
+    }
+  }
   try {
     await db.from('logs').update({ data: updated }).eq('id', id);
     closeUModal();
