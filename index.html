@@ -16150,11 +16150,20 @@ function _prBuildCustomers(customers) {
 
       // Direct allocations to this customer (samples, giveaways etc — no order)
       var custName = c.name || '';
+      var custDispName = custDisplayName(c);
       var custDirectAllocs = (allocs||[]).filter(function(a) {
         if (a.type === 'disposal') return false;
         var r = a.recipient || {};
         var rName = typeof r === 'string' ? r : (r.name || '');
-        return rName.toLowerCase() === custName.toLowerCase();
+        var rNameLc = rName.toLowerCase();
+        if (rNameLc === custName.toLowerCase()) return true;
+        if (custDispName && custDispName !== custName && rNameLc === custDispName.toLowerCase()) return true;
+        if (a.notes && a.notes.indexOf('eng:') === 0) {
+          var _prEid = a.notes.slice(4);
+          var _prEng = (campEngagements||[]).find(function(e){ return String(e.id) === String(_prEid); });
+          if (_prEng && _prEng.customer_id && String(_prEng.customer_id) === String(c.id)) return true;
+        }
+        return false;
       });
       if (custDirectAllocs.length) {
         // Aggregate by batch_num + type + method
@@ -18706,12 +18715,14 @@ function renderCustDetailOrders() {
   // 2. Completed orders (Delivered or Paid)
   // 3. Alloc records matched by recipient name (Gifted/Donated/Sample etc)
   const custNameLc = (c.name||'').toLowerCase();
+  const custDispNameLc = custDisplayName(c).toLowerCase();
   const custPhone = (c.phone||'').replace(/\s/g,'');
 
   // Source 1: engagements — match by customer_id, name, or phone
   const custEngs = campEngagements.filter(e =>
     (e.customer_id && e.customer_id == c.id) ||
     (e.name||'').toLowerCase() === custNameLc ||
+    (custDispNameLc && custDispNameLc !== custNameLc && (e.name||'').toLowerCase() === custDispNameLc) ||
     (custPhone && (e.phone||'').replace(/\s/g,'') === custPhone)
   );
   const engItems = custEngs.map(e => {
@@ -18728,8 +18739,17 @@ function renderCustDetailOrders() {
 
   // Source 3: alloc records by recipient name (excluding campaign box allocs which are covered by engagements)
   const custAllocs = allocs.filter(a => {
+    if (a.collection_instance_id) return false;
     const rname = (typeof a.recipient === 'object' ? a.recipient?.name : a.recipient)||'';
-    return rname.toLowerCase() === custNameLc && !a.collection_instance_id;
+    const rnameLc = rname.toLowerCase();
+    if (rnameLc === custNameLc) return true;
+    if (custDispNameLc && custDispNameLc !== custNameLc && rnameLc === custDispNameLc) return true;
+    if (a.notes && a.notes.indexOf('eng:') === 0) {
+      const _s3Eid = a.notes.slice(4);
+      const _s3Eng = (campEngagements||[]).find(e => String(e.id) === String(_s3Eid));
+      if (_s3Eng && _s3Eng.customer_id && String(_s3Eng.customer_id) === String(c.id)) return true;
+    }
+    return false;
   });
   // Group by batch+date for display
   const allocGroups = {};
