@@ -24115,6 +24115,77 @@ async function saveColInstance() {
     if (!error) {
       var idx = collectionInstances.findIndex(function(x){ return x.id === parseInt(editId); });
       if (idx > -1) collectionInstances[idx] = normaliseColInstance(Object.assign({}, collectionInstances[idx], rec));
+      // Backfill: when a new slot is added, create missing allocation rows for existing recipients
+      var _updInst = collectionInstances[idx];
+      var _instId = parseInt(editId);
+      var _tpl = _updInst ? collectionTemplates.find(function(x){ return x.id === _updInst.template_id; }) : null;
+      if (_tpl && (_tpl.slots || []).length) {
+        var _instAllocs = allocs.filter(function(a){ return a.collection_instance_id === _instId; });
+        if (_instAllocs.length) {
+          // Group existing allocs by recipient \u2014 use eng:XX notes tag when present for precision
+          var _recipGroups = {};
+          _instAllocs.forEach(function(a) {
+            var _rk = (a.notes && a.notes.indexOf('eng:') === 0) ? a.notes : ('n:' + (a.recipient || '').toLowerCase().trim());
+            if (!_recipGroups[_rk]) _recipGroups[_rk] = [];
+            _recipGroups[_rk].push(a);
+          });
+          // Resolve firstBatchNum for random-slot fallback (mirrors saveBoxAllocations logic)
+          var _firstBN = '';
+          for (var _fsi = 0; _fsi < _tpl.slots.length && !_firstBN; _fsi++) {
+            if (_tpl.slots[_fsi].random) continue;
+            var _fAssign = (_updInst.slot_assignments || []).find(function(a){ return a.slotId === _tpl.slots[_fsi].slotId; });
+            _firstBN = _fAssign ? (_fAssign.batchNum || '') : '';
+            if (!_firstBN && _fAssign) {
+              var _fids = _fAssign.icingEntryIds || [_fAssign.icingEntryId].filter(Boolean);
+              batches.forEach(function(b){ (b.icingEntries||[]).forEach(function(ie){ if (!_firstBN && _fids.indexOf(String(ie.id)) > -1) _firstBN = b.num; }); });
+            }
+          }
+          for (var _rKey in _recipGroups) {
+            var _rAllocs = _recipGroups[_rKey];
+            var _sample = _rAllocs[0];
+            // Build list of icing_entry_ids already covered for this recipient
+            var _existIds = _rAllocs.map(function(a){ return a.icing_entry_id == null ? null : String(a.icing_entry_id); });
+            var _nullCount = _existIds.filter(function(v){ return v === null; }).length;
+            var _randProc = 0;
+            for (var _si2 = 0; _si2 < _tpl.slots.length; _si2++) {
+              var _sl = _tpl.slots[_si2];
+              var _asgn = (_updInst.slot_assignments || []).find(function(a){ return a.slotId === _sl.slotId; });
+              var _eIds = _sl.random ? [] : (_asgn ? (_asgn.icingEntryIds || [_asgn.icingEntryId].filter(Boolean)) : []);
+              var _eid = _eIds[0] || null;
+              var _bn = _sl.random ? _firstBN : (_asgn ? (_asgn.batchNum || '') : '');
+              if (!_bn && !_sl.random && _eid) {
+                batches.forEach(function(b){ (b.icingEntries||[]).forEach(function(ie){ if (String(ie.id) === String(_eid)) _bn = b.num; }); });
+              }
+              if (!_bn) continue; // slot not yet assigned \u2014 skip
+              var _covered;
+              if (_sl.random) {
+                _covered = _randProc < _nullCount;
+                _randProc++;
+              } else {
+                _covered = _existIds.indexOf(_eid == null ? null : String(_eid)) > -1;
+              }
+              if (_covered) continue;
+              await insertAlloc({
+                batchNum:             _bn,
+                batchIdx:             null,
+                type:                 _sample.type || 'sold',
+                qty:                  (_sample.box_qty || 1) * (_sl.qty || 1),
+                recipient:            _sample.recipient || '',
+                dist:                 null,
+                method:               _sample.method || null,
+                addr:                 _sample.addr || null,
+                market:               null,
+                date:                 _sample.date || today(),
+                icingEntryId:         _eid,
+                collectionInstanceId: _instId,
+                boxQty:               _sample.box_qty || null,
+                campaignIds:          _sample.campaign_ids || [],
+                notes:                _sample.notes || null
+              });
+            }
+          }
+        }
+      }
       setSyncStatus('ok', 'Saved \u2713');
     } else { setSyncStatus('err', 'Sync error'); showMsg('col-if-msg', 'Error: ' + error.message, 'danger'); return; }
   } else {
