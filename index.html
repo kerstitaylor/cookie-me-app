@@ -7296,20 +7296,32 @@ async function backfillLinkedBatchIds() {
 // where a name match to cfg.customers is found. Becomes a no-op once backfilled.
 async function backfillAllocCustomerIds() {
   const toFix = allocs.filter(function(a) {
-    return typeof a.recipient === 'object'
-      && a.recipient !== null
-      && a.recipient.name
-      && !a.recipient.customerId;
+    if (typeof a.recipient === 'object' && a.recipient !== null) {
+      // Object recipient: needs backfill if name is present but customerId is missing
+      return a.recipient.name && !a.recipient.customerId;
+    }
+    if (typeof a.recipient === 'string' && a.recipient && !a.collection_instance_id) {
+      // String recipient (direct allocs only — campaign box allocs excluded via collection_instance_id)
+      return true;
+    }
+    return false;
   });
   if (!toFix.length) return;
   await Promise.all(toFix.map(async function(a) {
-    const rNameLc = a.recipient.name.toLowerCase();
+    const rName = typeof a.recipient === 'object' ? a.recipient.name : a.recipient;
+    if (!rName) return;
+    const rNameLc = rName.toLowerCase();
     const matched = (cfg.customers||[]).find(function(c) {
       return custDisplayName(c).toLowerCase() === rNameLc
           || (c.name||'').toLowerCase() === rNameLc;
     });
     if (!matched) return;
-    const updatedRecipient = Object.assign({}, a.recipient, { customerId: matched.id });
+    // Both cases write a full object to the DB:
+    // - string "John Knap"         → { name: "John Knap", customerId: matched.id }
+    // - object { name: "John Knap" } → { ...existing fields, customerId: matched.id }
+    const updatedRecipient = typeof a.recipient === 'object'
+      ? Object.assign({}, a.recipient, { customerId: matched.id })
+      : { name: rName, customerId: matched.id };
     const { error } = await db.from('allocations').update({ recipient: updatedRecipient }).eq('id', a.id);
     if (!error) a.recipient = updatedRecipient;
   }));
