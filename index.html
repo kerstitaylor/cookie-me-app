@@ -7272,6 +7272,49 @@ async function safeLoad(fn, name) {
   }
 }
 
+// One-time migration: write linked_batch_ids for orders that have cookie_allocations
+// but an empty linked_batch_ids field. Becomes a no-op once all orders are backfilled.
+async function backfillLinkedBatchIds() {
+  const toFix = orders.filter(function(o) {
+    return (!o.linked_batch_ids || !o.linked_batch_ids.length) && (o.cookie_allocations||[]).length;
+  });
+  for (const o of toFix) {
+    const nums = new Set();
+    (o.cookie_allocations||[]).forEach(function(ca) {
+      const b = batches.find(function(b) {
+        return (b.icingEntries||[]).some(function(e){ return String(e.id) === String(ca.icing_entry_id); });
+      });
+      if (b) nums.add(String(b.num));
+    });
+    if (nums.size) {
+      await updateOrder(o.id, { linked_batch_ids: Array.from(nums) });
+    }
+  }
+}
+
+// One-time migration: write customerId into recipient JSONB for direct allocs
+// where a name match to cfg.customers is found. Becomes a no-op once backfilled.
+async function backfillAllocCustomerIds() {
+  const toFix = allocs.filter(function(a) {
+    return typeof a.recipient === 'object'
+      && a.recipient !== null
+      && a.recipient.name
+      && !a.recipient.customerId;
+  });
+  if (!toFix.length) return;
+  await Promise.all(toFix.map(async function(a) {
+    const rNameLc = a.recipient.name.toLowerCase();
+    const matched = (cfg.customers||[]).find(function(c) {
+      return custDisplayName(c).toLowerCase() === rNameLc
+          || (c.name||'').toLowerCase() === rNameLc;
+    });
+    if (!matched) return;
+    const updatedRecipient = Object.assign({}, a.recipient, { customerId: matched.id });
+    const { error } = await db.from('allocations').update({ recipient: updatedRecipient }).eq('id', a.id);
+    if (!error) a.recipient = updatedRecipient;
+  }));
+}
+
 async function init() {
   setHeaderHeight();
   _loadFailures = [];
@@ -7327,6 +7370,14 @@ async function init() {
 
   // Sync engagement contact records into unified customer database
   await syncEngagementsToCustomers();
+
+  // One-time data migrations — backfillLinkedBatchIds first (no customer dependency),
+  // then backfillAllocCustomerIds (needs cfg.customers settled by syncEngagementsToCustomers).
+  // Both must complete before the UI renders so Fix 2B customerId matching works immediately.
+  if (!_loadFailures.includes('orders') && !_loadFailures.includes('allocs') && !_loadFailures.includes('batches')) {
+    await backfillLinkedBatchIds();
+    await backfillAllocCustomerIds();
+  }
 
   // Migration: if supplier_records is empty but cfg.suppliers has names, offer migration
   if (supplierRecords.length === 0 && cfg.suppliers && cfg.suppliers.length) {
@@ -9906,6 +9957,17 @@ async function saveBake() {
       if (!_cIng.lifecycle_status || _cIng.lifecycle_status === 'inventory') _cFields.lifecycle_status = 'opened';
       await updateIng(_cId, _cFields);
     }
+    // Sync linked_batch_ids on each order this batch was baked for
+    if (bkOrderIds.length) {
+      for (const _oid of bkOrderIds) {
+        const _ord = orders.find(function(x){ return String(x.id) === String(_oid); });
+        if (!_ord) continue;
+        const _ordLinked = (_ord.linked_batch_ids || []).map(String);
+        if (!_ordLinked.includes(String(num))) {
+          await updateOrder(_oid, { linked_batch_ids: [..._ordLinked, String(num)] });
+        }
+      }
+    }
     // Handle split if toggle was checked
     const splitTog = document.getElementById('bk-split-toggle');
     if (splitTog && splitTog.checked) {
@@ -10445,7 +10507,8 @@ async function addAlloc() {
       org: overrideOrg || c.org || '',
       contactName: overrideContact || c.name,
       phone: overridePhone || c.phone,
-      email: c.email, address: c.address, custType: c.type
+      email: c.email, address: c.address, custType: c.type,
+      customerId: c.id
     });
   } else if (pickerName) {
     Object.assign(recipient, {
@@ -16156,6 +16219,7 @@ function _prBuildCustomers(customers) {
         var r = a.recipient || {};
         var rName = typeof r === 'string' ? r : (r.name || '');
         var rNameLc = rName.toLowerCase();
+        if (typeof r === 'object' && r.customerId && String(r.customerId) === String(c.id)) return true;
         if (rNameLc === custName.toLowerCase()) return true;
         if (custDispName && custDispName !== custName && rNameLc === custDispName.toLowerCase()) return true;
         if (a.notes && a.notes.indexOf('eng:') === 0) {
@@ -18742,6 +18806,7 @@ function renderCustDetailOrders() {
     if (a.collection_instance_id) return false;
     const rname = (typeof a.recipient === 'object' ? a.recipient?.name : a.recipient)||'';
     const rnameLc = rname.toLowerCase();
+    if (typeof a.recipient === 'object' && a.recipient?.customerId && String(a.recipient.customerId) === String(c.id)) return true;
     if (rnameLc === custNameLc) return true;
     if (custDispNameLc && custDispNameLc !== custNameLc && rnameLc === custDispNameLc) return true;
     if (a.notes && a.notes.indexOf('eng:') === 0) {
@@ -19529,7 +19594,7 @@ function _orfGetEntriesForOrder(orderId) {
     (o.linked_batch_ids || []).forEach(function(id){ linkedBatchIds.add(String(id)); });
   }
   batches.forEach(function(b) {
-    var isLinked = linkedBatchIds.has(String(b.id));
+    var isLinked = linkedBatchIds.has(String(b.num));
     (b.icingEntries || []).forEach(function(e) {
       var ids = (e.orderIds || []).map(String);
       if (ids.indexOf(String(orderId)) === -1) return;
@@ -19626,6 +19691,16 @@ async function orfConfirmAlloc(orderId, icingEntryId) {
   var ok = await updateOrder(orderId, { cookie_allocations: allocs });
   if (ok === false) { showSaveError('Cookie allocation not saved — check your connection.'); return; }
   o.cookie_allocations = allocs;
+  // Sync linked_batch_ids: add the batch num for this icing entry
+  var _confBatch = batches.find(function(b){
+    return (b.icingEntries||[]).some(function(e){ return String(e.id) === String(icingEntryId); });
+  });
+  if (_confBatch) {
+    var _linked = (o.linked_batch_ids || []).map(String);
+    if (!_linked.includes(String(_confBatch.num))) {
+      await updateOrder(orderId, { linked_batch_ids: _linked.concat([String(_confBatch.num)]) });
+    }
+  }
   orfRenderLinkedIcing(orderId);
   showMsg('orf-msg', 'Allocation confirmed ✓');
 }
@@ -19681,6 +19756,21 @@ async function orfRemoveIcingFromOrder(entryId, batchId, orderId) {
       return;
     }
     o.cookie_allocations = newAllocs;
+    // Sync linked_batch_ids: remove batch num if no remaining allocations reference it
+    var _removedBatch = batches.find(function(b){
+      return (b.icingEntries||[]).some(function(e){ return String(e.id) === String(entryId); });
+    });
+    if (_removedBatch) {
+      var _stillRef = (newAllocs||[]).some(function(ca){
+        return ((batches.find(function(b2){
+          return (b2.icingEntries||[]).some(function(e){ return String(e.id) === String(ca.icing_entry_id); });
+        }))||{}).num === _removedBatch.num;
+      });
+      if (!_stillRef) {
+        var _newLinked = (o.linked_batch_ids||[]).map(String).filter(function(n){ return n !== String(_removedBatch.num); });
+        await updateOrder(orderId, { linked_batch_ids: _newLinked });
+      }
+    }
   }
 
   orfRenderLinkedIcing(orderId);
