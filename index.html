@@ -7160,6 +7160,12 @@ async function deleteBatch(id) {
 
 async function insertAlloc(a) {
   setSyncStatus('syncing','Saving...');
+  const { data: _batchRow } = await db.from('batches').select('num').eq('num', (a.batchNum||'').trim()).maybeSingle();
+  if (!_batchRow) {
+    setSyncStatus('err', 'Batch not found');
+    console.error('insertAlloc: batch "' + a.batchNum + '" not found in DB');
+    return;
+  }
   const { data, error } = await db.from('allocations').insert([{
     batch_num:a.batchNum, batch_idx:a.batchIdx, type:a.type,
     qty:a.qty, recipient:a.recipient, dist:a.dist,
@@ -8297,6 +8303,33 @@ async function moveToHistory(id, resolution, extraFields) {
     ...extraFields
   };
   await updateIng(id, updates);
+
+  // Flag batch records and their downstream allocs that referenced this ingredient
+  const _affectedBatches = batches.filter(function(b) {
+    return (b.ingredients||[]).some(function(x){ return x.ingId === id; }) ||
+           (b.icingMaterials||[]).some(function(x){ return x.ingId === id; }) ||
+           (b.chocolate||[]).some(function(x){ return x.ingId === id; }) ||
+           (b.flavouring||[]).some(function(x){ return x.ingId === id; });
+  });
+  if (_affectedBatches.length) {
+    const _ingLabel = '[⚠ Ingredient #' + id + ' (' + (ing.category||'') + ') archived ' + today() + ']';
+    const _affectedNums = new Set(_affectedBatches.map(function(b){ return b.num; }));
+    for (const _b of _affectedBatches) {
+      const _bNewNotes = _b.notes ? _b.notes + '\n' + _ingLabel : _ingLabel;
+      await db.from('batches').update({ notes: _bNewNotes, saved_at: new Date().toISOString() }).eq('id', _b.id);
+      const _bi = batches.findIndex(function(x){ return x.id === _b.id; });
+      if (_bi > -1) batches[_bi] = Object.assign({}, batches[_bi], { notes: _bNewNotes });
+    }
+    const _affectedAllocs = allocs.filter(function(a){ return _affectedNums.has(a.batch_num); });
+    const _allocLabel = '[Ingredient archived: #' + id + ' ' + (ing.category||'') + ']';
+    for (const _a of _affectedAllocs) {
+      const _aNewNotes = _a.notes ? _a.notes + ' · ' + _allocLabel : _allocLabel;
+      await db.from('allocations').update({ notes: _aNewNotes }).eq('id', _a.id);
+      const _ai = allocs.findIndex(function(x){ return x.id === _a.id; });
+      if (_ai > -1) allocs[_ai] = Object.assign({}, allocs[_ai], { notes: _aNewNotes });
+    }
+  }
+
   renderInv(); renderOpened(); renderIngHistory(); renderAlerts(); renderStocktake(); renderStocktakeReport();
 
   showUndoToast(`${ing.category||ing.cat||'Item'} #${id} moved to history`, async () => {
@@ -9844,6 +9877,19 @@ async function saveBake() {
     const bkDP = document.getElementById('bk-dec-panel'); if(bkDP) bkDP.style.display = 'none';
     ['fondant','colour','flavour','other'].forEach(function(t){ var c = document.getElementById('bk-dec-' + t + '-rows'); if(c) c.innerHTML = ''; });
     toggleBatchFailed();
+    // Update ingredient records: mark opened and record last-used batch
+    const _consumedIngIds = new Set();
+    ingUsed.forEach(function(x){ if (x.ingId) _consumedIngIds.add(x.ingId); });
+    chocUsed.forEach(function(x){ if (x.ingId) _consumedIngIds.add(x.ingId); });
+    flavUsed.forEach(function(x){ if (x.ingId) _consumedIngIds.add(x.ingId); });
+    (icingMaterials||[]).forEach(function(x){ if (x.ingId) _consumedIngIds.add(x.ingId); });
+    for (const _cId of _consumedIngIds) {
+      const _cIng = ings.find(function(x){ return x.id === _cId; });
+      if (!_cIng) continue;
+      const _cFields = { last_used_in_batch: num };
+      if (!_cIng.lifecycle_status || _cIng.lifecycle_status === 'inventory') _cFields.lifecycle_status = 'opened';
+      await updateIng(_cId, _cFields);
+    }
     // Handle split if toggle was checked
     const splitTog = document.getElementById('bk-split-toggle');
     if (splitTog && splitTog.checked) {
@@ -10416,8 +10462,9 @@ async function addAlloc() {
     }
   } else {
     // Calculate how many cookies from this batch are already allocated
-    // Source 1: direct allocations table
-    var usedDirect = allocs.filter(function(a){ return normBatchNum(a.batch_num) === normBatchNum(b.num); }).reduce(function(s,a){ return s+(a.qty||0); }, 0);
+    // Source 1: live DB query (avoids stale in-memory data from concurrent sessions)
+    const { data: _liveAllocs } = await db.from('allocations').select('qty').eq('batch_num', b.num);
+    var usedDirect = (_liveAllocs || []).reduce(function(s, a){ return s + (a.qty||0); }, 0);
     // Source 2: order-confirmed cookies (cookie_allocations on orders whose icing entries belong to this batch)
     var batchIcingIds = new Set((b.icingEntries||[]).map(function(e){ return String(e.id); }));
     var usedOrders = (orders||[]).reduce(function(s, o) {
@@ -20395,6 +20442,8 @@ async function saveCustomerForm() {
     });
     return Object.keys(s).length ? s : null;
   })();
+  const _editingCust = editIdx !== '' ? cfg.customers[parseInt(editIdx)] : null;
+  const _oldDisplayName = _editingCust ? custDisplayName(_editingCust) : null;
   const rec = {
     name, org:org||null, contacts:contacts.length>1?contacts:null,
     phone: document.getElementById('nc-p').value.trim(),
@@ -20405,6 +20454,16 @@ async function saveCustomerForm() {
   };
   if (editIdx !== '') { cfg.customers[parseInt(editIdx)] = rec; } else { cfg.customers.push(rec); }
   await saveCfgArrayItem('customers', rec);
+  const _newDisplayName = custDisplayName(rec);
+  if (_oldDisplayName && _newDisplayName !== _oldDisplayName) {
+    const _staleAllocs = allocs.filter(function(a){ return typeof a.recipient === 'object' && a.recipient !== null && a.recipient.name === _oldDisplayName; });
+    for (const _sa of _staleAllocs) {
+      const _updRec = Object.assign({}, _sa.recipient, { name: _newDisplayName });
+      await db.from('allocations').update({ recipient: _updRec }).eq('id', _sa.id);
+      const _ai = allocs.findIndex(function(x){ return x.id === _sa.id; });
+      if (_ai > -1) allocs[_ai] = Object.assign({}, allocs[_ai], { recipient: _updRec });
+    }
+  }
   showSaveToast('Customer saved');
   showMsg('cust-form-msg', 'Customer saved \u2713');
   document.getElementById('nc-edit-idx').value = '';
@@ -20550,6 +20609,15 @@ async function doCloseCust(i) {
   if (!ok) {
     cfg.customers = snapshot;
     alert('Close failed — ' + displayName + ' was NOT closed. Check your connection and try again.');
+  } else {
+    const _linkedOrders = orders.filter(function(o){
+      return String(o.customer_id) === String(c.id) && !['Complete','Cancelled'].includes(o.status);
+    });
+    for (const _o of _linkedOrders) {
+      const _flag = '[Customer closed: ' + reason + ' — ' + today() + ']';
+      const _newNotes = _o.notes ? _o.notes + '\n' + _flag : _flag;
+      await updateOrder(_o.id, { notes: _newNotes });
+    }
   }
   renderCustomers();
 }
