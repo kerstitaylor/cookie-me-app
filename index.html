@@ -7307,6 +7307,10 @@ async function backfillAllocCustomerIds() {
     const withoutCampaign = skippedByCollectionId.filter(function(a){ return !a.campaign_id && !a.campaign_ids; });
     console.log('[backfill] skipped with campaign_id/campaign_ids:', withCampaign.length, '| without:', withoutCampaign.length);
     if (withoutCampaign.length) console.log('[backfill] no-campaign skipped names:', withoutCampaign.map(function(a){ return a.recipient + ' (coll_id:' + a.collection_instance_id + ')'; }));
+    const withEngTag = skippedByCollectionId.filter(function(a){ return typeof a.notes === 'string' && a.notes.startsWith('eng:'); });
+    const withoutEngTag = skippedByCollectionId.filter(function(a){ return !a.notes || !String(a.notes).startsWith('eng:'); });
+    console.log('[backfill] skipped with eng: notes tag:', withEngTag.length, '| without eng: tag:', withoutEngTag.length);
+    if (withoutEngTag.length) console.log('[backfill] no-eng-tag skipped names:', withoutEngTag.map(function(a){ return a.recipient; }));
   }
   const toFix = allocs.filter(function(a) {
     if (typeof a.recipient === 'object' && a.recipient !== null) {
