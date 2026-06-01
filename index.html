@@ -7295,6 +7295,7 @@ async function backfillLinkedBatchIds() {
 // One-time migration: write customerId into recipient JSONB for direct allocs
 // where a name match to cfg.customers is found. Becomes a no-op once backfilled.
 async function backfillAllocCustomerIds() {
+  console.log('[backfill] backfillAllocCustomerIds called');
   const toFix = allocs.filter(function(a) {
     if (typeof a.recipient === 'object' && a.recipient !== null) {
       // Object recipient: needs backfill if name is present but customerId is missing
@@ -7306,7 +7307,10 @@ async function backfillAllocCustomerIds() {
     }
     return false;
   });
+  console.log('[backfill] records to fix:', toFix.length, toFix.map(function(a){ return typeof a.recipient === 'object' ? a.recipient.name : a.recipient; }));
   if (!toFix.length) return;
+  let matched_count = 0, unmatched_count = 0;
+  const unmatched_names = [];
   await Promise.all(toFix.map(async function(a) {
     const rName = typeof a.recipient === 'object' ? a.recipient.name : a.recipient;
     if (!rName) return;
@@ -7315,7 +7319,7 @@ async function backfillAllocCustomerIds() {
       return custDisplayName(c).toLowerCase() === rNameLc
           || (c.name||'').toLowerCase() === rNameLc;
     });
-    if (!matched) return;
+    if (!matched) { unmatched_count++; unmatched_names.push(rName); return; }
     // Both cases write a full object to the DB:
     // - string "John Knap"         → { name: "John Knap", customerId: matched.id }
     // - object { name: "John Knap" } → { ...existing fields, customerId: matched.id }
@@ -7323,8 +7327,11 @@ async function backfillAllocCustomerIds() {
       ? Object.assign({}, a.recipient, { customerId: matched.id })
       : { name: rName, customerId: matched.id };
     const { error } = await db.from('allocations').update({ recipient: updatedRecipient }).eq('id', a.id);
-    if (!error) a.recipient = updatedRecipient;
+    if (!error) { a.recipient = updatedRecipient; matched_count++; }
+    else { unmatched_count++; unmatched_names.push(rName + ' (DB error: ' + error.message + ')'); }
   }));
+  console.log('[backfill] matched+updated:', matched_count, '| unmatched:', unmatched_count);
+  if (unmatched_names.length) console.log('[backfill] unmatched names:', unmatched_names);
 }
 
 async function init() {
@@ -7348,6 +7355,7 @@ async function init() {
     safeLoad(loadNotifications, 'notifications'),
     safeLoad(loadTasks, 'tasks')
   ]);
+  console.log('[init] _loadFailures after Promise.all:', _loadFailures);
 
   // Hide spinner and show app FIRST — before any render calls that might throw
   document.getElementById('loading').style.display = 'none';
@@ -7366,7 +7374,7 @@ async function init() {
     }
     // If cfg itself failed, stop here — syncEngagementsToCustomers would overwrite real customer data
     if (_loadFailures.includes('cfg')) {
-      console.error('cfg failed to load — aborting init to protect customer data');
+      console.error('[init] cfg guard triggered — aborting init. _loadFailures:', _loadFailures);
       return;
     }
   } else {
@@ -7386,6 +7394,7 @@ async function init() {
   // One-time data migrations — backfillLinkedBatchIds first (no customer dependency),
   // then backfillAllocCustomerIds (needs cfg.customers settled by syncEngagementsToCustomers).
   // Both must complete before the UI renders so Fix 2B customerId matching works immediately.
+  console.log('[backfill] _loadFailures at guard:', _loadFailures);
   if (!_loadFailures.includes('orders') && !_loadFailures.includes('allocs') && !_loadFailures.includes('batches')) {
     await backfillLinkedBatchIds();
     await backfillAllocCustomerIds();
