@@ -7296,12 +7296,16 @@ async function backfillLinkedBatchIds() {
 // where a name match to cfg.customers is found. Becomes a no-op once backfilled.
 async function backfillAllocCustomerIds() {
   console.log('[backfill] backfillAllocCustomerIds called');
+  const skippedByCollectionId = allocs.filter(function(a) {
+    return typeof a.recipient === 'string' && a.recipient && a.collection_instance_id && a.type !== 'disposal';
+  });
+  if (skippedByCollectionId.length) console.log('[backfill] string allocs skipped due to collection_instance_id:', skippedByCollectionId.length, skippedByCollectionId.map(function(a){ return a.recipient; }));
   const toFix = allocs.filter(function(a) {
     if (typeof a.recipient === 'object' && a.recipient !== null) {
       // Object recipient: needs backfill if name is present but customerId is missing
       return a.recipient.name && !a.recipient.customerId;
     }
-    if (typeof a.recipient === 'string' && a.recipient && !a.collection_instance_id) {
+    if (typeof a.recipient === 'string' && a.recipient && !a.collection_instance_id && a.type !== 'disposal') {
       // String recipient (direct allocs only — campaign box allocs excluded via collection_instance_id)
       return true;
     }
