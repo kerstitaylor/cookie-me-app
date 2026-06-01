@@ -7295,59 +7295,43 @@ async function backfillLinkedBatchIds() {
 // One-time migration: write customerId into recipient JSONB for direct allocs
 // where a name match to cfg.customers is found. Becomes a no-op once backfilled.
 async function backfillAllocCustomerIds() {
-  console.log('[backfill] backfillAllocCustomerIds called');
-  const skippedByCollectionId = allocs.filter(function(a) {
-    return typeof a.recipient === 'string' && a.recipient && a.collection_instance_id && a.type !== 'disposal';
-  });
-  if (skippedByCollectionId.length) {
-    console.log('[backfill] string allocs skipped due to collection_instance_id:', skippedByCollectionId.length);
-    const distinctCollIds = [...new Set(skippedByCollectionId.map(function(a){ return a.collection_instance_id; }))];
-    console.log('[backfill] distinct collection_instance_ids:', distinctCollIds);
-    const withCampaign = skippedByCollectionId.filter(function(a){ return a.campaign_id || a.campaign_ids; });
-    const withoutCampaign = skippedByCollectionId.filter(function(a){ return !a.campaign_id && !a.campaign_ids; });
-    console.log('[backfill] skipped with campaign_id/campaign_ids:', withCampaign.length, '| without:', withoutCampaign.length);
-    if (withoutCampaign.length) console.log('[backfill] no-campaign skipped names:', withoutCampaign.map(function(a){ return a.recipient + ' (coll_id:' + a.collection_instance_id + ')'; }));
-    const withEngTag = skippedByCollectionId.filter(function(a){ return typeof a.notes === 'string' && a.notes.startsWith('eng:'); });
-    const withoutEngTag = skippedByCollectionId.filter(function(a){ return !a.notes || !String(a.notes).startsWith('eng:'); });
-    console.log('[backfill] skipped with eng: notes tag:', withEngTag.length, '| without eng: tag:', withoutEngTag.length);
-    if (withoutEngTag.length) console.log('[backfill] no-eng-tag skipped names:', withoutEngTag.map(function(a){ return a.recipient; }));
-  }
   const toFix = allocs.filter(function(a) {
     if (typeof a.recipient === 'object' && a.recipient !== null) {
-      // Object recipient: needs backfill if name is present but customerId is missing
       return a.recipient.name && !a.recipient.customerId;
     }
-    if (typeof a.recipient === 'string' && a.recipient && !a.collection_instance_id && a.type !== 'disposal') {
-      // String recipient (direct allocs only — campaign box allocs excluded via collection_instance_id)
-      return true;
+    if (typeof a.recipient === 'string' && a.recipient && a.type !== 'disposal') {
+      if (!a.collection_instance_id) return true;
+      // Campaign box alloc without eng: tag — derive customer via collection_instance_id → engagement
+      return !(a.notes && String(a.notes).startsWith('eng:'));
     }
     return false;
   });
-  console.log('[backfill] records to fix:', toFix.length, toFix.map(function(a){ return typeof a.recipient === 'object' ? a.recipient.name : a.recipient; }));
   if (!toFix.length) return;
-  let matched_count = 0, unmatched_count = 0;
-  const unmatched_names = [];
   await Promise.all(toFix.map(async function(a) {
-    const rName = typeof a.recipient === 'object' ? a.recipient.name : a.recipient;
+    var rName = typeof a.recipient === 'object' ? a.recipient.name : a.recipient;
     if (!rName) return;
-    const rNameLc = rName.toLowerCase();
-    const matched = (cfg.customers||[]).find(function(c) {
-      return custDisplayName(c).toLowerCase() === rNameLc
-          || (c.name||'').toLowerCase() === rNameLc;
-    });
-    if (!matched) { unmatched_count++; unmatched_names.push(rName); return; }
-    // Both cases write a full object to the DB:
-    // - string "John Knap"         → { name: "John Knap", customerId: matched.id }
-    // - object { name: "John Knap" } → { ...existing fields, customerId: matched.id }
-    const updatedRecipient = typeof a.recipient === 'object'
+    var matched = null;
+    if (a.collection_instance_id) {
+      var eng = (campEngagements||[]).find(function(e) {
+        return String(e.collection_instance_id) === String(a.collection_instance_id);
+      });
+      if (eng && eng.customer_id) {
+        matched = (cfg.customers||[]).find(function(c) { return String(c.id) === String(eng.customer_id); });
+      }
+    } else {
+      var rNameLc = rName.toLowerCase();
+      matched = (cfg.customers||[]).find(function(c) {
+        return custDisplayName(c).toLowerCase() === rNameLc
+            || (c.name||'').toLowerCase() === rNameLc;
+      });
+    }
+    if (!matched) return;
+    var updatedRecipient = typeof a.recipient === 'object'
       ? Object.assign({}, a.recipient, { customerId: matched.id })
       : { name: rName, customerId: matched.id };
-    const { error } = await db.from('allocations').update({ recipient: updatedRecipient }).eq('id', a.id);
-    if (!error) { a.recipient = updatedRecipient; matched_count++; }
-    else { unmatched_count++; unmatched_names.push(rName + ' (DB error: ' + error.message + ')'); }
+    var { error } = await db.from('allocations').update({ recipient: updatedRecipient }).eq('id', a.id);
+    if (!error) a.recipient = updatedRecipient;
   }));
-  console.log('[backfill] matched+updated:', matched_count, '| unmatched:', unmatched_count);
-  if (unmatched_names.length) console.log('[backfill] unmatched names:', unmatched_names);
 }
 
 async function init() {
@@ -7371,7 +7355,6 @@ async function init() {
     safeLoad(loadNotifications, 'notifications'),
     safeLoad(loadTasks, 'tasks')
   ]);
-  console.log('[init] _loadFailures after Promise.all:', _loadFailures);
 
   // Hide spinner and show app FIRST — before any render calls that might throw
   document.getElementById('loading').style.display = 'none';
@@ -7390,7 +7373,7 @@ async function init() {
     }
     // If cfg itself failed, stop here — syncEngagementsToCustomers would overwrite real customer data
     if (_loadFailures.includes('cfg')) {
-      console.error('[init] cfg guard triggered — aborting init. _loadFailures:', _loadFailures);
+      console.error('cfg failed to load — aborting init to protect customer data');
       return;
     }
   } else {
@@ -7410,7 +7393,6 @@ async function init() {
   // One-time data migrations — backfillLinkedBatchIds first (no customer dependency),
   // then backfillAllocCustomerIds (needs cfg.customers settled by syncEngagementsToCustomers).
   // Both must complete before the UI renders so Fix 2B customerId matching works immediately.
-  console.log('[backfill] _loadFailures at guard:', _loadFailures);
   if (!_loadFailures.includes('orders') && !_loadFailures.includes('allocs') && !_loadFailures.includes('batches')) {
     await backfillLinkedBatchIds();
     await backfillAllocCustomerIds();
@@ -16263,6 +16245,10 @@ function _prBuildCustomers(customers) {
           var _prEid = a.notes.slice(4);
           var _prEng = (campEngagements||[]).find(function(e){ return String(e.id) === String(_prEid); });
           if (_prEng && _prEng.customer_id && String(_prEng.customer_id) === String(c.id)) return true;
+        }
+        if (a.collection_instance_id) {
+          var _prCollEng = (campEngagements||[]).find(function(e){ return String(e.collection_instance_id) === String(a.collection_instance_id); });
+          if (_prCollEng && _prCollEng.customer_id && String(_prCollEng.customer_id) === String(c.id)) return true;
         }
         return false;
       });
