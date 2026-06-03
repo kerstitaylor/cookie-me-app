@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v36.15</title>
+<title>Cookie & Me — Kitchen Manager v36.16</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -16537,6 +16537,14 @@ function _prBuildCampaigns(campArr, engArr, collTemplates, collInstances) {
     var totalCosts = costPkg + costPrint + costIng + costTrans + costCour + engCourierActual + costSoc + costOther + (donationFinal||0);
     var profit = rev - totalCosts;
     if (rev > 0) html += '<tr><th>Revenue received</th><td colspan="3">$' + rev.toFixed(2) + '</td></tr>';
+    var outstanding = soldEngs.reduce(function(s,e){
+      if (e.payment_status !== 'Unpaid' && e.payment_status !== 'Partial') return s;
+      var owed = parseFloat(e.amount_owed)||0;
+      var received = (e.payments||[]).filter(function(p){ return !p._meta; }).reduce(function(ps,p){ return ps+(parseFloat(p.amount)||0); }, 0);
+      return s + Math.max(0, owed - received);
+    }, 0);
+    if (outstanding > 0) html += '<tr><th>Outstanding</th><td colspan="3" style="color:#b45309;font-weight:600;">$' + outstanding.toFixed(2) + '</td></tr>';
+    if (outstanding > 0) html += '<tr><th>Total potential</th><td colspan="3">$' + (rev + outstanding).toFixed(2) + '</td></tr>';
     if (totalCosts > 0) html += '<tr><th>Total costs</th><td colspan="3">$' + totalCosts.toFixed(2) + '</td></tr>';
     if (rev > 0 || totalCosts > 0) {
       var pStyle = profit >= 0 ? 'color:#065f46;font-weight:700;' : 'color:#c0392b;font-weight:700;';
@@ -27190,7 +27198,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v36.15',
+    app_version: 'v36.16',
     tables: {}
   };
 
