@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v36.13</title>
+<title>Cookie & Me — Kitchen Manager v36.15</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -26649,6 +26649,39 @@ async function engSaveWithDiff(updateRecord) {
 
 async function _doSaveEngagement(f) {
   const colOrders = _readEngColRows();
+  // Fix 3: Gifted/sold type consistency — block if linked allocs are 'sold' but engagement is Gifted
+  var _giftedRows = colOrders.filter(function(r){ return r.box_type === 'Gifted'; });
+  if (_giftedRows.length > 0) {
+    var _fix3Conflicts = [];
+    // Check via collection_instance_id → engagement's box_allocations (edit path)
+    if (editEngagementId) {
+      var _fix3Eng = campEngagements.find(function(e){ return e.id === editEngagementId; });
+      var _fix3InstIds = (_fix3Eng && _fix3Eng.box_allocations || []).map(function(a){ return String(a.instance_id); });
+      if (_fix3InstIds.length) {
+        _fix3Conflicts = (allocs||[]).filter(function(a){
+          return a.type === 'sold'
+            && a.collection_instance_id
+            && _fix3InstIds.includes(String(a.collection_instance_id));
+        });
+      }
+    }
+    // Check via customer_id + campaign_id (new or edit)
+    if (!_fix3Conflicts.length && _engLinkedCustomerId) {
+      _fix3Conflicts = (allocs||[]).filter(function(a){
+        if (a.type !== 'sold') return false;
+        var hasCamp = a.campaign_ids && a.campaign_ids.map(String).includes(String(activeCampaignId));
+        var hasCust = a.recipient && String(a.recipient.customerId) === String(_engLinkedCustomerId);
+        return hasCamp && hasCust;
+      });
+    }
+    if (_fix3Conflicts.length) {
+      showMsg('ef-msg', 'Cannot save: this engagement has Gifted boxes, but '
+        + _fix3Conflicts.length + ' linked allocation'
+        + (_fix3Conflicts.length > 1 ? 's are' : ' is')
+        + ' recorded as type "Sold" (meaning revenue was recorded). If you intended to gift these, update the allocation type(s) to "Gifted" then try again.', 'error');
+      return;
+    }
+  }
   // Amount owed with discount applied
   const baseOwed = colOrders.filter(r=>r.box_type==='Sold').reduce((s,r)=>s+((r.qty||0)*(parseFloat(r.unit_price)||0)),0);
   const discVal = parseFloat(document.getElementById('ef-discount')?.value)||0;
@@ -27157,7 +27190,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v36.13',
+    app_version: 'v36.15',
     tables: {}
   };
 
