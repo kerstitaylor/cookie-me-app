@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v36.16</title>
+<title>Cookie & Me — Kitchen Manager v36.17</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -8389,32 +8389,6 @@ async function moveToHistory(id, resolution, extraFields) {
     ...extraFields
   };
   await updateIng(id, updates);
-
-  // Flag batch records and their downstream allocs that referenced this ingredient
-  const _affectedBatches = batches.filter(function(b) {
-    return (b.ingredients||[]).some(function(x){ return x.ingId === id; }) ||
-           (b.icingMaterials||[]).some(function(x){ return x.ingId === id; }) ||
-           (b.chocolate||[]).some(function(x){ return x.ingId === id; }) ||
-           (b.flavouring||[]).some(function(x){ return x.ingId === id; });
-  });
-  if (_affectedBatches.length) {
-    const _ingLabel = '[⚠ Ingredient #' + id + ' (' + (ing.category||'') + ') archived ' + today() + ']';
-    const _affectedNums = new Set(_affectedBatches.map(function(b){ return b.num; }));
-    for (const _b of _affectedBatches) {
-      const _bNewNotes = _b.notes ? _b.notes + '\n' + _ingLabel : _ingLabel;
-      await db.from('batches').update({ notes: _bNewNotes, saved_at: new Date().toISOString() }).eq('id', _b.id);
-      const _bi = batches.findIndex(function(x){ return x.id === _b.id; });
-      if (_bi > -1) batches[_bi] = Object.assign({}, batches[_bi], { notes: _bNewNotes });
-    }
-    const _affectedAllocs = allocs.filter(function(a){ return _affectedNums.has(a.batch_num); });
-    const _allocLabel = '[Ingredient archived: #' + id + ' ' + (ing.category||'') + ']';
-    for (const _a of _affectedAllocs) {
-      const _aNewNotes = _a.notes ? _a.notes + ' · ' + _allocLabel : _allocLabel;
-      await db.from('allocations').update({ notes: _aNewNotes }).eq('id', _a.id);
-      const _ai = allocs.findIndex(function(x){ return x.id === _a.id; });
-      if (_ai > -1) allocs[_ai] = Object.assign({}, allocs[_ai], { notes: _aNewNotes });
-    }
-  }
 
   renderInv(); renderOpened(); renderIngHistory(); renderAlerts(); renderStocktake(); renderStocktakeReport();
 
@@ -27198,7 +27172,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v36.16',
+    app_version: 'v36.17',
     tables: {}
   };
 
