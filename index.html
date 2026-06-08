@@ -8971,7 +8971,7 @@ function renderOpened() {
           <div style="flex:1;min-width:0">
             <div style="font-family:sans-serif;font-weight:600">${[i.brand,i.product].filter(Boolean).join(' ')||(i.category||i.cat)||'—'}${(i.size&&i.unit)?' · '+i.size+i.unit:''}</div>
             <div style="font-size:11px;color:var(--text-muted)">${i.supplier||i.sup||'—'}${i.batch?' · '+i.batch:''}${i.purchased_by?' · '+i.purchased_by:''}</div>
-            <div style="font-size:11px;color:var(--success);font-family:sans-serif;margin-top:2px">📂 Opened: ${i.opened_date.split('-').reverse().join('/')}</div>
+            <div style="font-size:11px;color:var(--success);font-family:sans-serif;margin-top:2px">📂 Opened: ${i.opened_date ? i.opened_date.split('-').reverse().join('/') : '—'}</div>
             <div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:3px;">${i.bb||i.best_before?`<span class="tag ${exp?'tag-red':sn?'tag-amber':'tag-green'}">${exp?'BB Expired':'BB '+fmtIngDate(i.bb||i.best_before).split('/').slice(0,2).join('/')}</span>`:''}${ubo?`<span class="tag ${uboExp?'tag-red':uboSn?'tag-amber':'tag-green'}">UBO ${ubo.split('-').reverse().slice(0,2).join('/')}</span>`:''}${daysTag}</div>
           </div>
           <div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end;flex-shrink:0">
