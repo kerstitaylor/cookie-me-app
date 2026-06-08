@@ -4428,84 +4428,6 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <div id="upcoming-orders-list"></div>
     </div>
   </div>
-  <!-- EDIT BATCH MODAL -->
-  <div id="edit-batch-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:998;align-items:center;justify-content:center;padding:16px;">
-    <div style="background:var(--white);border-radius:var(--radius-lg);padding:20px;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-        <div style="font-size:15px;font-weight:700;font-family:sans-serif;color:var(--navy)">Edit batch <span id="eb-num"></span></div>
-        <button onclick="closeEditBatch()" style="border:none;background:transparent;font-size:22px;cursor:pointer;color:var(--text-muted);line-height:1;">×</button>
-      </div>
-      <div class="field"><label>Startup session <span style="font-size:11px;font-weight:400;color:var(--text-muted)">(optional — fills date)</span></label>
-        <select id="eb-setup-pick" onchange="onSetupSessionPick(this,'eb-date')" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"><option value="">— Enter date manually —</option></select>
-      </div>
-      <div class="r2">
-        <div class="field"><label>Date</label><input id="eb-date" type="date"/></div>
-        <div class="field"><label>Batches (multiplier)</label><input id="eb-mult" type="number" min="1"/></div>
-      </div>
-      <div class="field"><label>Recipe</label><input id="eb-recipe"/></div>
-      <div class="r2">
-        <div class="field"><label>Yield (cookies)</label><input id="eb-yield" type="number" min="0"/></div>
-        <div class="field"><label>Made by</label><input id="eb-madeby"/></div>
-      </div>
-      <div class="r2">
-        <div class="field"><label>Best before</label><input id="eb-bb" type="date"/></div>
-        <div class="field"><label>Variation notes</label><input id="eb-variation"/></div>
-      </div>
-      <div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
-        <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.08em;font-family:sans-serif;margin-bottom:8px;">Recipients <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--text-muted)">(optional)</span></div>
-        <div style="display:grid;grid-template-columns:2fr 1fr 2fr 1fr;gap:4px;margin-bottom:4px;">
-          <div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Order</div>
-          <div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</div>
-          <div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Campaign</div>
-          <div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</div>
-        </div>
-        <div id="eb-recipient-rows"></div>
-        <button type="button" class="btn btn-sm" style="font-size:11px;color:var(--purple);border-color:var(--purple);margin-top:4px;" onclick="addEbRecipientRow()">+ Add recipient</button>
-      </div>
-      <div class="field" style="display:flex;align-items:center;gap:10px;padding:6px 0;">
-        <input type="checkbox" id="eb-failed" style="width:18px;height:18px;accent-color:var(--danger);flex-shrink:0;"/>
-        <label for="eb-failed" style="font-size:13px;font-family:sans-serif;color:var(--danger);cursor:pointer;margin:0;">Mark as failed batch (yield will be set to 0)</label>
-      </div>
-      <div id="eb-failed-note" style="display:none;font-size:12px;color:var(--danger);font-family:sans-serif;margin-top:-4px;margin-bottom:6px;">&#9888;&#65039; Yield will be set to 0 and this batch will be locked from allocation.</div>
-      <div class="field"><label>Batch notes</label><textarea id="eb-notes" style="min-height:48px"></textarea></div>
-      <div style="font-size:10px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.08em;font-family:sans-serif;margin-bottom:8px;margin-top:4px">Ingredients used</div>
-      <div id="eb-ing-list"></div>
-      <button class="btn btn-sm" style="margin-top:6px;font-size:12px" onclick="addEbIngRow()">+ Add ingredient row</button>
-      <div style="margin-top:12px;border:1px solid rgba(147,119,223,0.3);border-radius:var(--radius);overflow:hidden;">
-        <div style="background:rgba(147,119,223,0.1);padding:8px 12px;font-size:11px;font-weight:700;color:#7c5cbf;text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;">Decoration ingredients</div>
-        <div style="padding:10px 12px;" id="eb-decoration-body">
-          <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;margin-bottom:4px;">Fondant</div>
-          <div id="eb-fondant-rows"></div>
-          <button type="button" class="btn btn-sm" style="font-size:11px;margin-bottom:10px;" onclick="addDecRow('eb','fondant')">+ Add fondant row</button>
-          <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;margin-bottom:4px;">Colours</div>
-          <div id="eb-colour-rows"></div>
-          <button type="button" class="btn btn-sm" style="font-size:11px;margin-bottom:10px;" onclick="addDecRow('eb','colour')">+ Add colour row</button>
-          <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;margin-bottom:4px;">Flavourings</div>
-          <div id="eb-flavour-rows"></div>
-          <button type="button" class="btn btn-sm" style="font-size:11px;margin-bottom:10px;" onclick="addDecRow('eb','flavour')">+ Add flavouring row</button>
-          <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;margin-bottom:4px;">Food glue &amp; other</div>
-          <div id="eb-other-rows"></div>
-          <button type="button" class="btn btn-sm" style="font-size:11px;margin-bottom:0;" onclick="addDecRow('eb','other')">+ Add row</button>
-        </div>
-      </div>
-      <!-- ICING ENTRIES - read-only summary -->
-      <div style="margin-top:12px;border:1px solid rgba(147,119,223,0.3);border-radius:var(--radius);overflow:hidden;">
-        <div style="background:rgba(147,119,223,0.1);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
-          <div style="font-size:11px;font-weight:700;color:#7c5cbf;text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;">&#x1F36C; Icing Entries</div>
-          <button type="button" class="btn btn-sm" style="font-size:11px;color:#7c5cbf;border-color:rgba(147,119,223,0.4);" onclick="closeEditBatch();go('production');goProd('prod-icing');">Go to Icing tab &#x2197;</button>
-        </div>
-        <div style="padding:10px 12px;" id="eb-icing-entries-list">
-          <div class="empty" style="padding:8px 0;font-size:12px;">No icing entries recorded for this batch yet.</div>
-        </div>
-        <div style="padding:0 12px 10px;font-size:11px;color:var(--text-muted);font-family:sans-serif;">To add or edit icing entries, use the Icing tab.</div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-        <button class="btn btn-primary" style="flex:1;min-width:120px;" onclick="saveEditBatch()">Save changes</button>
-        <button class="btn btn-sm" id="eb-split-btn" style="flex:0;white-space:nowrap;padding:10px 14px;border-color:var(--orange);color:var(--orange);" onclick="openSplitFromEdit()">&#x2702;&#xFE0F; Split batch</button>
-        <button class="btn" style="flex:1;min-width:80px;" onclick="closeEditBatch()">Cancel</button>
-      </div>
-    </div>
-  </div>
 
   <!-- ══════════════════════════════════════════════
        SPLIT BATCH MIX-IN WORKFLOW MODAL
@@ -6688,8 +6610,6 @@ async function saveIcingEntryEdit() {
   }
   closeUModal();
   renderIcingHistory();
-  var activeBatch = batches.find(function(b){ return b.id === (newBatchId||origBatchId); });
-  if (activeBatch) renderEbIcingEntries(activeBatch);
 }
 
 function deleteIcingEntry(elOrId, batchIdArg) {
@@ -6700,21 +6620,7 @@ function deleteIcingEntry(elOrId, batchIdArg) {
     batch.icingEntries = (batch.icingEntries||[]).filter(function(e){ return e.id !== entryId; });
     await updateBatch(batchId, { icingMaterials: { _v: 3, entries: batch.icingEntries } });
     renderIcingHistory();
-    if (editingBatchId === batchId) renderEbIcingEntries(batch);
   });
-}
-
-// Read-only icing entries summary in the batch edit modal
-function renderEbIcingEntries(batch) {
-  var el = document.getElementById('eb-icing-entries-list'); if (!el) return;
-  var entries = batch ? (batch.icingEntries || []) : [];
-  if (!entries.length) {
-    el.innerHTML = '<div class="empty" style="padding:8px 0;font-size:12px;">No icing entries recorded for this batch yet.</div>';
-    return;
-  }
-  el.innerHTML = entries.map(function(e) {
-    return icingEntryReadCard(Object.assign({}, e, { _batchId: batch.id, _batchNum: batch.num }), true);
-  }).join('');
 }
 
 
@@ -10047,22 +9953,6 @@ function popBake() {
   if (card) card.style.display = 'none';
   const riSel = document.getElementById('bk-r');
   if (riSel) riSel.value = '';
-}
-
-function addEbRecipientRow(prefill) {
-  var container = document.getElementById('eb-recipient-rows'); if (!container) return;
-  addBkRecipientRow(prefill, container);
-}
-
-function collectEbRecipients() {
-  var orderIds = [], campIds = [];
-  document.querySelectorAll('#eb-recipient-rows [data-bk-recip]').forEach(function(row) {
-    var ordId = (row.querySelector('[data-bk-order]')||{}).value||'';
-    var campId = (row.querySelector('[data-bk-camp]')||{}).value||'';
-    if (ordId) orderIds.push(ordId);
-    if (campId) campIds.push(campId);
-  });
-  return { orderIds: orderIds, campIds: campIds };
 }
 
 function cancelBake() {
@@ -18564,210 +18454,6 @@ function renderRecentBatches() {
     </div>
   </div>`;
   }).join('');
-}
-
-// ── Edit batch ──
-let editingBatchId = null;
-let ebIngCount = 0;
-
-function buildEbIngRow(idx, ing) {
-  const cat = ing.category||'';
-  const lot = ing.ingBatch||ing.lot||'';
-  const amt = ing.amount||'';
-  const ingId = ing.ingId||'';
-  const notes = ing.notes||'';
-  // Two-line layout: top row has category + amount + × button, bottom row has lot no. + notes
-  return '<div style="background:var(--gray-light);border-radius:6px;padding:6px 8px;margin-bottom:5px" id="eb-ing-row-'+idx+'">'
-    + '<div style="display:flex;gap:4px;align-items:center;margin-bottom:3px">'
-    + '<input value="'+cat.replace(/"/g,'&quot;')+'" id="eb-ing-cat-'+idx+'" placeholder="Ingredient name" style="flex:2;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:var(--white);color:var(--text);font-weight:600"/>'
-    + '<input value="'+amt.replace(/"/g,'&quot;')+'" id="eb-ing-amt-'+idx+'" placeholder="Amount (e.g. 150g)" style="flex:1;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:var(--white);color:var(--text)"/>'
-    + '<button onclick="removeEbIngRow('+idx+')" style="border:none;background:none;color:var(--danger);font-size:18px;cursor:pointer;padding:0 4px;line-height:1;flex-shrink:0">&times;</button>'
-    + '</div>'
-    + '<div style="display:flex;gap:4px;align-items:center">'
-    + '<input value="'+lot.replace(/"/g,'&quot;')+'" id="eb-ing-lot-'+idx+'" placeholder="Lot / batch no. from label" style="flex:1;padding:4px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;background:var(--white);color:var(--text)"/>'
-    + '<input value="'+notes.replace(/"/g,'&quot;')+'" id="eb-ing-notes-'+idx+'" placeholder="Notes (e.g. replaced 2 tbsp flour)" style="flex:1.5;padding:4px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;background:var(--white);color:var(--text-muted)"/>'
-    + '</div>'
-    + '<input type="hidden" id="eb-ing-id-'+idx+'" value="'+ingId+'"/>'
-    + '</div>';
-}
-
-function renderEbIngList(ings) {
-  ebIngCount = ings.length;
-  const el = document.getElementById('eb-ing-list');
-  if (!el) return;
-  el.innerHTML = ings.map((ing, i) => buildEbIngRow(i, ing)).join('');
-}
-
-function addEbIngRow() {
-  const el = document.getElementById('eb-ing-list');
-  if (!el) return;
-  const div = document.createElement('div');
-  div.innerHTML = buildEbIngRow(ebIngCount, {});
-  el.appendChild(div.firstChild);
-  ebIngCount++;
-}
-
-function removeEbIngRow(idx) {
-  const el = document.getElementById('eb-ing-row-'+idx);
-  if (el) el.remove();
-}
-
-function collectEbIngredients() {
-  const result = [];
-  for (let i = 0; i < ebIngCount + 5; i++) {
-    const catEl = document.getElementById('eb-ing-cat-'+i);
-    if (!catEl) continue;
-    const cat = catEl.value.trim();
-    const amt = document.getElementById('eb-ing-amt-'+i)?.value.trim()||'';
-    const lot = document.getElementById('eb-ing-lot-'+i)?.value.trim()||'';
-    const notes = document.getElementById('eb-ing-notes-'+i)?.value.trim()||'';
-    const ingId = parseInt(document.getElementById('eb-ing-id-'+i)?.value)||null;
-    if (cat) result.push({ category:cat, amount:amt, ingBatch:lot, ingId, ingBrand:'', notes });
-  }
-  return result;
-}
-
-function openEditBatch(id) {
-  editingBatchId = id;
-  const b = batches.find(x=>x.id===id);
-  if (!b) return;
-  var _ebPick = document.getElementById('eb-setup-pick');
-  if (_ebPick) _ebPick.innerHTML = setupSessionOpts('Bake');
-  document.getElementById('eb-num').textContent = b.num;
-  document.getElementById('eb-date').value = b.date||'';
-  document.getElementById('eb-recipe').value = b.recipe||'';
-  document.getElementById('eb-mult').value = b.mult||1;
-  document.getElementById('eb-yield').value = b.yield||'';
-  document.getElementById('eb-madeby').value = b.made_by||'';
-  document.getElementById('eb-bb').value = b.bb||'';
-  document.getElementById('eb-variation').value = b.variation||'';
-  document.getElementById('eb-notes').value = b.notes||'';
-  // Failed
-  const failedCb = document.getElementById('eb-failed');
-  if (failedCb) {
-    failedCb.checked = !!b.failed;
-    const note = document.getElementById('eb-failed-note');
-    if (note) note.style.display = b.failed ? 'block' : 'none';
-    failedCb.onchange = function() {
-      if (note) note.style.display = this.checked ? 'block' : 'none';
-    };
-  }
-
-  // Decoration ingredients — pre-populate from flat icingMaterials if present (legacy format only)
-  // With v2 (icingRuns), decoration data lives in the runs — clear the batch-level dec rows
-  var rawIcing = b.icingMaterials;
-  var isV2orV3 = rawIcing && (rawIcing._v === 2 || rawIcing._v === 3);
-  if (!isV2orV3 && Array.isArray(rawIcing) && rawIcing.length) {
-    populateDecRows('eb', rawIcing);
-  } else {
-    ['fondant','colour','flavour','other'].forEach(function(t) {
-      var c = document.getElementById('eb-' + t + '-rows');
-      if (c) c.innerHTML = '';
-    });
-  }
-  // Combine all ingredient types for editing
-  const allIngs = [
-    ...(b.ingredients||[]),
-    ...(b.chocolate||[]).map(c=>({category:c.category||c.description||'Chocolate', amount:c.qty||'', ingBatch:c.lot||'', ingId:c.ingId||null})),
-    ...(b.flavouring||[]).map(f=>({category:'Flavouring: '+(f.description||''), amount:'', ingBatch:f.lot||'', ingId:f.ingId||null}))
-  ];
-  renderEbIngList(allIngs);
-  document.getElementById('edit-batch-modal').style.display = 'flex';
-  // Populate recipient rows from saved campaign/order data
-  var ebRecipContainer = document.getElementById('eb-recipient-rows');
-  if (ebRecipContainer) {
-    ebRecipContainer.innerHTML = '';
-    var ebCampIds = (b.campaign_id ? [String(b.campaign_id)] : []).concat((b.extra_campaign_ids || []).map(String));
-    var ebOrdIds = (b.order_ids || []).map(String);
-    var ebMaxRows = Math.max(1, ebCampIds.length, ebOrdIds.length);
-    for (var ri = 0; ri < ebMaxRows; ri++) {
-      addEbRecipientRow({ campId: ebCampIds[ri]||'', orderId: ebOrdIds[ri]||'' });
-    }
-  }
-  // Render icing entries (read-only)
-  renderEbIcingEntries(b);
-  // Show/hide split button
-  const ebSplitBtn = document.getElementById('eb-split-btn');
-  if (ebSplitBtn) ebSplitBtn.style.display = b.isSplitParent ? 'none' : '';
-}
-
-function closeEditBatch() {
-  document.getElementById('edit-batch-modal').style.display = 'none';
-  editingBatchId = null;
-}
-
-async function saveEditBatch() {
-  if (!editingBatchId) return;
-  const b = batches.find(x => x.id === editingBatchId);
-  const ingredients = collectEbIngredients();
-  const failed = document.getElementById('eb-failed')?.checked || false;
-  const _ebRecips = collectEbRecipients();
-  const campVal = _ebRecips.campIds[0] || '';
-  const ebExtraCampIds = _ebRecips.campIds.slice(1);
-  const ebOrderIds = _ebRecips.orderIds;
-  const fields = {
-    date: document.getElementById('eb-date').value,
-    recipe: document.getElementById('eb-recipe').value.trim(),
-    mult: parseInt(document.getElementById('eb-mult').value)||1,
-    yield: failed ? 0 : (parseInt(document.getElementById('eb-yield').value)||0),
-    made_by: document.getElementById('eb-madeby').value.trim(),
-    bb: document.getElementById('eb-bb').value||null,
-    occasion: '',
-    variation: document.getElementById('eb-variation').value.trim(),
-    notes: document.getElementById('eb-notes').value.trim(),
-    failed,
-    campaign_id: campVal || null,
-    extra_campaign_ids: ebExtraCampIds.length ? ebExtraCampIds : null,
-    order_ids: ebOrderIds.length ? ebOrderIds : null,
-    ingredients,
-  };
-
-  // Collect decoration rows from the batch-level dec section
-  var dec = collectDecRows('eb');
-  var newDecEntries = [].concat(
-    dec.fondantItems.map(function(f){ return {type:'fondant',ingId:f.ingId,label:f.label,weight:f.weight,amount:null,sourceClosedownId:null}; }),
-    dec.colours.map(function(c){ return {type:'colour',ingId:c.ingId,label:c.label,weight:null,amount:c.amount,sourceClosedownId:null}; }),
-    dec.flavourings.map(function(f){ return {type:'flavour',ingId:f.ingId,label:f.label,weight:null,amount:f.amount,sourceClosedownId:null}; }),
-    dec.other.map(function(o){ return {type:'other',ingId:o.ingId,label:o.label,weight:null,amount:o.amount,sourceClosedownId:null}; })
-  );
-
-  var existingRawIcing = (b && b.icingMaterials) || [];
-  var isV2 = existingRawIcing && (existingRawIcing._v === 2 || existingRawIcing._v === 3);
-
-  var doSave = async function() {
-    if (isV2) {
-      // v2/v3: icing entries are managed via the Icing tab — preserve existing icingMaterials
-      fields.icingMaterials = b.icingMaterials;
-    } else {
-      // legacy flat format: merge batch-owned entries with close-down entries
-      var closedownOwned = Array.isArray(existingRawIcing) ? existingRawIcing.filter(function(e){ return e.sourceClosedownId; }) : [];
-      var newIngIds = newDecEntries.map(function(e){ return e.ingId; });
-      var keepClosedown = closedownOwned.filter(function(e){ return !newIngIds.includes(e.ingId); });
-      fields.icingMaterials = newDecEntries.concat(keepClosedown);
-    }
-    const ok = await updateBatch(editingBatchId, fields);
-    if (ok) { closeEditBatch(); renderHist(); renderRecentBatches(); popAlloc(); showMsg('bk-msg','Batch updated \u2713'); }
-  };
-
-  // Only warn about conflicts when using legacy flat format
-  var conflicts = [];
-  if (!isV2 && Array.isArray(existingRawIcing)) {
-    var closedownOwned2 = existingRawIcing.filter(function(e){ return e.sourceClosedownId; });
-    var newIngIds2 = newDecEntries.map(function(e){ return e.ingId; });
-    conflicts = closedownOwned2.filter(function(e){ return newIngIds2.includes(e.ingId); });
-  }
-
-  if (conflicts.length) {
-    var names = conflicts.map(function(e){ return e.label || ('Ingredient #' + e.ingId); }).join(', ');
-    showConfirm(
-      'Override close-down data?',
-      'Your close-down record has entries for: ' + names + '. Saving the batch form will replace those amounts with the values entered here. Continue?',
-      'Yes, save batch values',
-      doSave
-    );
-  } else {
-    doSave();
-  }
 }
 
 async function confirmDeleteBatch(id, num) {
