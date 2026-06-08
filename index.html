@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v36.13</title>
+<title>Cookie & Me — Kitchen Manager v36.15</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -7312,8 +7312,10 @@ async function backfillAllocCustomerIds() {
     if (!rName) return;
     var matched = null;
     if (a.collection_instance_id) {
+      var rNameForMatch = typeof a.recipient === 'object' ? (a.recipient.name || '') : (a.recipient || '');
       var eng = (campEngagements||[]).find(function(e) {
-        return String(e.collection_instance_id) === String(a.collection_instance_id);
+        return String(e.collection_instance_id) === String(a.collection_instance_id)
+          && (e.name || '').toLowerCase().trim() === rNameForMatch.toLowerCase().trim();
       });
       if (eng && eng.customer_id) {
         matched = (cfg.customers||[]).find(function(c) { return String(c.id) === String(eng.customer_id); });
@@ -7466,6 +7468,19 @@ function today() {
 function nowNZTime() {
   // Returns NZ local time as HH:MM
   return new Date().toLocaleTimeString('en-NZ', { timeZone: 'Pacific/Auckland', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function validateDate(dateStr, label) {
+  if (!dateStr) return null;
+  var _vd = new Date(dateStr + 'T00:00:00');
+  if (isNaN(_vd.getTime())) return label + ': invalid date.';
+  var _yr = _vd.getFullYear();
+  if (_yr < 2020 || _yr > 2040) return label + ': year ' + _yr + ' is outside the allowed range (2020–2040).';
+  var _now = new Date();
+  var _pastLimit = new Date(_now.getFullYear() - 5, _now.getMonth(), _now.getDate());
+  var _futLimit  = new Date(_now.getFullYear() + 2, _now.getMonth(), _now.getDate());
+  if (_vd < _pastLimit) return label + ': date is more than 5 years in the past.';
+  if (_vd > _futLimit)  return label + ': date is more than 2 years in the future.';
+  return null;
 }
 function scaleAmt(a, m) {
   // legacy: called with a string from old format
@@ -9824,6 +9839,8 @@ async function saveBake() {
   const variation = (document.getElementById('bk-variation')?.value||'').trim();
   const occasion = '';
   if (!date) { alert('Please enter a date.'); return; }
+  var _bkDateErr = validateDate(date, 'Batch date') || validateDate(bb, 'Best before date');
+  if (_bkDateErr) { alert(_bkDateErr); return; }
   const yldEl = document.getElementById('bk-y');
   if (!failed && yldEl.value === '') { alert('Please enter actual yield, or tick "Batch failed" if it did not produce cookies.'); return; }
   const recIdx2 = ri !== '' ? parseInt(ri) : -1;
@@ -10541,6 +10558,8 @@ async function addAlloc() {
   const addr = (method==='delivery'||method==='courier') ? ['al-addr-street','al-addr-suburb','al-addr-city','al-addr-postcode'].map(id=>document.getElementById(id)?.value.trim()).filter(Boolean).join(', ') : '';
   const market = method==='market' ? document.getElementById('al-mk').value : '';
   const date = document.getElementById('al-dt').value;
+  var _alDateErr = validateDate(date, 'Allocation date');
+  if (_alDateErr) { alert(_alDateErr); return; }
   const notes = (document.getElementById('al-notes')?.value||'').trim();
   const costToMake = parseFloat(document.getElementById('al-cost-to-make')?.value)||null;
   const allocCampIds = getCampMultiPickerIds('al-camp-picker');
@@ -12834,6 +12853,16 @@ async function confirmQuickAdd(wrapperId) {
   const emailEl = document.getElementById('qa-email-'+wrapperId);
   const name = nameEl ? nameEl.value.trim() : '';
   if (!name) { alert('Name is required.'); return; }
+  // Duplicate check for quick-add
+  var _qaDupNameNorm = name.toLowerCase().trim();
+  var _qaDupMatch = (cfg.customers||[]).find(function(c) {
+    return c.status !== 'closed' && c.name.toLowerCase().trim() === _qaDupNameNorm;
+  });
+  if (_qaDupMatch) {
+    var _qaDupIdx = (cfg.customers||[]).indexOf(_qaDupMatch);
+    var _qaDupId = custDisplayId(_qaDupIdx);
+    if (!confirm('"' + _qaDupMatch.name + '" (' + _qaDupId + ') already exists. Create a new customer anyway?')) return;
+  }
   const rec = {
     name, type: typeEl ? typeEl.value : 'personal',
     phone: phoneEl ? phoneEl.value.trim() : '',
@@ -19864,6 +19893,10 @@ async function saveOrderFull() {
     if (qty > 0 || flavour) lines.push({ _dbId: dbId, cookie_type: flavour, flavour, quantity: qty, shape, shape_name, fondant_colours, fondant_flavour, glitter, embellishments, notes });
   });
   if (!lines.length) { alert('Please add at least one cookie variety.'); return; }
+  var _orfDateErr = validateDate(document.getElementById('orf-date-placed').value || today(), 'Date placed')
+    || validateDate(dueDate, 'Due date')
+    || validateDate(deliveryDate, 'Delivery date');
+  if (_orfDateErr) { alert(_orfDateErr); return; }
 
   const existingId = document.getElementById('orf-order-id').value;
   const existingNum = document.getElementById('orf-order-number').value;
@@ -20593,6 +20626,22 @@ async function saveCustomerForm() {
   })();
   const _editingCust = editIdx !== '' ? cfg.customers[parseInt(editIdx)] : null;
   const _oldDisplayName = _editingCust ? custDisplayName(_editingCust) : null;
+  // Duplicate check — only when creating, not editing
+  if (editIdx === '') {
+    var _dupAddrNew = ['nc-street','nc-suburb','nc-city','nc-postcode'].map(function(id){ var el=document.getElementById(id); return el?el.value.trim():''; }).filter(Boolean).join(', ');
+    var _dupNameNorm = name.toLowerCase().trim();
+    var _dupMatch = (cfg.customers||[]).find(function(c) {
+      if (c.status === 'closed') return false;
+      if (c.name.toLowerCase().trim() === _dupNameNorm) return true;
+      if (_dupAddrNew && c.address && c.address.toLowerCase().trim() === _dupAddrNew.toLowerCase()) return true;
+      return false;
+    });
+    if (_dupMatch) {
+      var _dupMatchIdx = (cfg.customers||[]).indexOf(_dupMatch);
+      var _dupMatchId = custDisplayId(_dupMatchIdx);
+      if (!confirm('"' + _dupMatch.name + '" (' + _dupMatchId + ') already exists. Create a new customer record anyway?')) return;
+    }
+  }
   const rec = {
     name, org:org||null, contacts:contacts.length>1?contacts:null,
     phone: document.getElementById('nc-p').value.trim(),
@@ -20840,6 +20889,9 @@ async function saveOrderForm() {
   if (!c) { alert('Customer not found.'); return; }
   const deliveryDate = document.getElementById('of-delivery-date').value;
   if (!deliveryDate) { alert('Please enter a delivery date.'); return; }
+  var _ofDateErr = validateDate(document.getElementById('of-date-placed').value, 'Date placed')
+    || validateDate(deliveryDate, 'Delivery date');
+  if (_ofDateErr) { alert(_ofDateErr); return; }
 
   // Collect lines — capture _dbId so existing lines are updated in place, not re-inserted
   const lineEls = document.querySelectorAll('#of-lines > div[id^="ol-row-"]');
@@ -26589,6 +26641,14 @@ async function saveEngagement() {
     return Object.keys(s).length ? s : null;
   })();
 
+  // Date validation — before any DB writes
+  var _engDelRowsForValidation = readEngDeliveryRows();
+  for (var _engDri = 0; _engDri < _engDelRowsForValidation.length; _engDri++) {
+    var _engDelDate = _engDelRowsForValidation[_engDri].date;
+    var _engDateErr = validateDate(_engDelDate, 'Fulfilment date (row ' + (_engDri + 1) + ')');
+    if (_engDateErr) { showMsg('ef-msg', _engDateErr, 'error'); return; }
+  }
+
   // Auto-create customer record if no match found
   if (!_engLinkedCustomerId) {
     const existing = (cfg.customers||[]).find(c=>c.name.toLowerCase()===name.toLowerCase());
@@ -26649,6 +26709,39 @@ async function engSaveWithDiff(updateRecord) {
 
 async function _doSaveEngagement(f) {
   const colOrders = _readEngColRows();
+  // Fix 3: Gifted/sold type consistency — block if linked allocs are 'sold' but engagement is Gifted
+  var _giftedRows = colOrders.filter(function(r){ return r.box_type === 'Gifted'; });
+  if (_giftedRows.length > 0) {
+    var _fix3Conflicts = [];
+    // Check via collection_instance_id → engagement's box_allocations (edit path)
+    if (editEngagementId) {
+      var _fix3Eng = campEngagements.find(function(e){ return e.id === editEngagementId; });
+      var _fix3InstIds = (_fix3Eng && _fix3Eng.box_allocations || []).map(function(a){ return String(a.instance_id); });
+      if (_fix3InstIds.length) {
+        _fix3Conflicts = (allocs||[]).filter(function(a){
+          return a.type === 'sold'
+            && a.collection_instance_id
+            && _fix3InstIds.includes(String(a.collection_instance_id));
+        });
+      }
+    }
+    // Check via customer_id + campaign_id (new or edit)
+    if (!_fix3Conflicts.length && _engLinkedCustomerId) {
+      _fix3Conflicts = (allocs||[]).filter(function(a){
+        if (a.type !== 'sold') return false;
+        var hasCamp = a.campaign_ids && a.campaign_ids.map(String).includes(String(activeCampaignId));
+        var hasCust = a.recipient && String(a.recipient.customerId) === String(_engLinkedCustomerId);
+        return hasCamp && hasCust;
+      });
+    }
+    if (_fix3Conflicts.length) {
+      showMsg('ef-msg', 'Cannot save: this engagement has Gifted boxes, but '
+        + _fix3Conflicts.length + ' linked allocation'
+        + (_fix3Conflicts.length > 1 ? 's are' : ' is')
+        + ' recorded as type "Sold" (meaning revenue was recorded). If you intended to gift these, update the allocation type(s) to "Gifted" then try again.', 'error');
+      return;
+    }
+  }
   // Amount owed with discount applied
   const baseOwed = colOrders.filter(r=>r.box_type==='Sold').reduce((s,r)=>s+((r.qty||0)*(parseFloat(r.unit_price)||0)),0);
   const discVal = parseFloat(document.getElementById('ef-discount')?.value)||0;
@@ -27157,7 +27250,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v36.13',
+    app_version: 'v36.15',
     tables: {}
   };
 
