@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v36.15</title>
+<title>Cookie & Me — Kitchen Manager v36.18</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -8405,32 +8405,6 @@ async function moveToHistory(id, resolution, extraFields) {
   };
   await updateIng(id, updates);
 
-  // Flag batch records and their downstream allocs that referenced this ingredient
-  const _affectedBatches = batches.filter(function(b) {
-    return (b.ingredients||[]).some(function(x){ return x.ingId === id; }) ||
-           (b.icingMaterials||[]).some(function(x){ return x.ingId === id; }) ||
-           (b.chocolate||[]).some(function(x){ return x.ingId === id; }) ||
-           (b.flavouring||[]).some(function(x){ return x.ingId === id; });
-  });
-  if (_affectedBatches.length) {
-    const _ingLabel = '[⚠ Ingredient #' + id + ' (' + (ing.category||'') + ') archived ' + today() + ']';
-    const _affectedNums = new Set(_affectedBatches.map(function(b){ return b.num; }));
-    for (const _b of _affectedBatches) {
-      const _bNewNotes = _b.notes ? _b.notes + '\n' + _ingLabel : _ingLabel;
-      await db.from('batches').update({ notes: _bNewNotes, saved_at: new Date().toISOString() }).eq('id', _b.id);
-      const _bi = batches.findIndex(function(x){ return x.id === _b.id; });
-      if (_bi > -1) batches[_bi] = Object.assign({}, batches[_bi], { notes: _bNewNotes });
-    }
-    const _affectedAllocs = allocs.filter(function(a){ return _affectedNums.has(a.batch_num); });
-    const _allocLabel = '[Ingredient archived: #' + id + ' ' + (ing.category||'') + ']';
-    for (const _a of _affectedAllocs) {
-      const _aNewNotes = _a.notes ? _a.notes + ' · ' + _allocLabel : _allocLabel;
-      await db.from('allocations').update({ notes: _aNewNotes }).eq('id', _a.id);
-      const _ai = allocs.findIndex(function(x){ return x.id === _a.id; });
-      if (_ai > -1) allocs[_ai] = Object.assign({}, allocs[_ai], { notes: _aNewNotes });
-    }
-  }
-
   renderInv(); renderOpened(); renderIngHistory(); renderAlerts(); renderStocktake(); renderStocktakeReport();
 
   showUndoToast(`${ing.category||ing.cat||'Item'} #${id} moved to history`, async () => {
@@ -16566,6 +16540,14 @@ function _prBuildCampaigns(campArr, engArr, collTemplates, collInstances) {
     var totalCosts = costPkg + costPrint + costIng + costTrans + costCour + engCourierActual + costSoc + costOther + (donationFinal||0);
     var profit = rev - totalCosts;
     if (rev > 0) html += '<tr><th>Revenue received</th><td colspan="3">$' + rev.toFixed(2) + '</td></tr>';
+    var outstanding = soldEngs.reduce(function(s,e){
+      if (e.payment_status !== 'Unpaid' && e.payment_status !== 'Partial') return s;
+      var owed = parseFloat(e.amount_owed)||0;
+      var received = (e.payments||[]).filter(function(p){ return !p._meta; }).reduce(function(ps,p){ return ps+(parseFloat(p.amount)||0); }, 0);
+      return s + Math.max(0, owed - received);
+    }, 0);
+    if (outstanding > 0) html += '<tr><th>Outstanding</th><td colspan="3" style="color:#b45309;font-weight:600;">$' + outstanding.toFixed(2) + '</td></tr>';
+    if (outstanding > 0) html += '<tr><th>Total potential</th><td colspan="3">$' + (rev + outstanding).toFixed(2) + '</td></tr>';
     if (totalCosts > 0) html += '<tr><th>Total costs</th><td colspan="3">$' + totalCosts.toFixed(2) + '</td></tr>';
     if (rev > 0 || totalCosts > 0) {
       var pStyle = profit >= 0 ? 'color:#065f46;font-weight:700;' : 'color:#c0392b;font-weight:700;';
@@ -27250,7 +27232,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v36.15',
+    app_version: 'v36.18',
     tables: {}
   };
 
@@ -28338,45 +28320,26 @@ function viewBatch(id) {
       b.ingredients.map(i=>`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><span>${esc(i.category||'')}</span><span style="color:var(--text-muted)">${esc(i.amount||'')}${i.ingBatch?' · lot: '+esc(i.ingBatch):''}</span></div>`).join('')
     }</div></div>`;
   }
-  if ((b.icingMaterials||[]).length || (b.icingRuns||[]).length) {
-    var runs = b.icingRuns || [];
-    var rawIcing = b.icingMaterials;
-    if (runs.length) {
-      // v2 icingRuns format
-      body += '<div class="u-modal-field"><label style="color:#7c5cbf;">&#x1F9C1; Icing Runs (' + runs.length + ')</label><div style="font-size:12px;font-family:sans-serif;">';
-      runs.forEach(function(run, i) {
-        var dec = run.decoration || {};
-        var allDec = [].concat(
-          (dec.fondantItems||[]).map(function(f){return 'Fondant: '+esc(f.label||'')+(f.weight?' - '+f.weight+'g':'');}),
-          (dec.colours||[]).map(function(c){return 'Colour: '+esc(c.label||'')+(c.amount?' - '+c.amount:'');}),
-          (dec.flavourings||[]).map(function(f){return 'Flavouring: '+esc(f.label||'')+(f.amount?' - '+f.amount:'');}),
-          (dec.other||[]).map(function(o){return 'Other: '+esc(o.label||'')+(o.amount?' - '+o.amount:'');})
-        );
-        body += '<div style="padding:4px 0;border-bottom:1px solid var(--gray-light);margin-bottom:3px;">'
-          + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
-          + (run.date ? '<span style="font-weight:600;">'+run.date+'</span>' : '')
-          + (run.qty ? '<span class="tag tag-blue" style="font-size:10px;">'+run.qty+' cookies</span>' : '')
-          + (run.isLegacy ? '<span class="tag tag-amber" style="font-size:10px;">legacy</span>' : '')
-          + '</div>'
-          + (run.customerOrCampaign ? '<div style="margin-top:2px;color:var(--navy);">&#x1F464; '+esc(run.customerOrCampaign)+'</div>' : '')
-          + (run.occasion ? '<div style="color:var(--text-muted);margin-top:1px;">'+esc(run.occasion)+'</div>' : '')
-          + (allDec.length ? '<div style="color:var(--text-muted);margin-top:2px;">'+allDec.join(' · ')+'</div>' : '')
-          + '</div>';
+  if ((b.icingEntries||[]).length) {
+    var icingEntries = b.icingEntries;
+    body += '<div class="u-modal-field"><label style="color:#7c5cbf;">&#x1F9C1; Icing / Decoration (' + icingEntries.length + (icingEntries.length === 1 ? ' run' : ' runs') + ')</label><div style="font-size:12px;font-family:sans-serif;">';
+    icingEntries.forEach(function(entry) {
+      var dec = entry.decoration || [];
+      var allDec = dec.map(function(d){
+        return esc(d.type||'') + ': ' + esc(d.ingName||'') + (d.amount ? ' — ' + esc(d.amount) : '');
       });
-      body += '</div></div>';
-    } else if (Array.isArray(rawIcing) && rawIcing.length) {
-      // Legacy flat format
-      var fondantList = rawIcing.filter(function(m){return m.type==='fondant';});
-      var colourList = rawIcing.filter(function(m){return m.type==='colour';});
-      var flavourList = rawIcing.filter(function(m){return m.type==='flavour';});
-      var otherList = rawIcing.filter(function(m){return m.type==='other';});
-      body += '<div class="u-modal-field"><label style="color:#7c5cbf;">Decoration ingredients</label><div style="font-size:12px;font-family:sans-serif;">';
-      if (fondantList.length) body += '<div style="font-weight:600;margin-top:4px;margin-bottom:2px;color:var(--navy);">Fondant</div>' + fondantList.map(function(m){return '<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);">'+esc(m.label||'')+(m.weight?' \u2014 '+m.weight+'g':'')+'</div>';}).join('');
-      if (colourList.length) body += '<div style="font-weight:600;margin-top:6px;margin-bottom:2px;color:var(--navy);">Colours</div>' + colourList.map(function(m){return '<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);">'+esc(m.label||'')+(m.amount?' \u2014 '+esc(m.amount):'')+'</div>';}).join('');
-      if (flavourList.length) body += '<div style="font-weight:600;margin-top:6px;margin-bottom:2px;color:var(--navy);">Flavourings</div>' + flavourList.map(function(m){return '<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);">'+esc(m.label||'')+(m.amount?' \u2014 '+esc(m.amount):'')+'</div>';}).join('');
-      if (otherList.length) body += '<div style="font-weight:600;margin-top:6px;margin-bottom:2px;color:var(--navy);">Food glue &amp; other</div>' + otherList.map(function(m){return '<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);">'+esc(m.label||'')+(m.amount?' \u2014 '+esc(m.amount):'')+'</div>';}).join('');
-      body += '</div></div>';
-    }
+      body += '<div style="padding:4px 0;border-bottom:1px solid var(--gray-light);margin-bottom:3px;">'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+        + (entry.date ? '<span style="font-weight:600;">'+esc(entry.date)+'</span>' : '')
+        + (entry.qty ? '<span class="tag tag-blue" style="font-size:10px;">'+entry.qty+' cookies</span>' : '')
+        + (entry.isLegacy ? '<span class="tag tag-amber" style="font-size:10px;">legacy</span>' : '')
+        + '</div>'
+        + (entry.purpose ? '<div style="margin-top:2px;color:var(--navy);">&#x1F464; '+esc(entry.purpose)+'</div>' : '')
+        + (entry.occasion ? '<div style="color:var(--text-muted);margin-top:1px;">'+esc(entry.occasion)+'</div>' : '')
+        + (allDec.length ? '<div style="color:var(--text-muted);margin-top:2px;">'+allDec.join(' · ')+'</div>' : '')
+        + '</div>';
+    });
+    body += '</div></div>';
   }
   if (ba.length) {
     body += `<div class="u-modal-field"><label>Allocations</label><div style="font-size:13px;">${
