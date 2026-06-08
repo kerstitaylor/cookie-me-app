@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v36.18</title>
+<title>Cookie & Me — Kitchen Manager v37.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -986,8 +986,13 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
     <div id="prod-bake" class="section active">
       <div class="card">
         <div class="card-title">Production batch</div>
+        <div id="bk-edit-banner" style="display:none;background:#fff4e0;border:1px solid #f0c98a;border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;font-size:13px;font-family:sans-serif;color:#8a5a00;">
+          &#x270F;&#xFE0F; Editing batch <strong id="bk-edit-banner-num" style="font-size:15px;"></strong> — batch number is locked and cannot be changed.
+        </div>
+        <div id="bk-recipe-retired-warning" style="display:none;background:var(--warning-bg);border:1px solid var(--warning);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;font-family:sans-serif;color:var(--warning);"></div>
         <div class="r2">
-          <div class="field"><label>Recipe</label><select id="bk-r" onchange="loadRecipe()"><option value="">Select...</option></select></div>
+          <div class="field" id="bk-recipe-field"><label>Recipe</label><select id="bk-r" onchange="loadRecipe()"><option value="">Select...</option></select></div>
+          <div class="field" id="bk-recipe-readonly-field" style="display:none"><label>Recipe</label><div id="bk-recipe-readonly" style="font-size:14px;font-family:sans-serif;font-weight:600;color:var(--navy);padding:9px 10px;background:var(--gray-light);border-radius:var(--radius);"></div></div>
           <div class="field"><label>Batches</label><input id="bk-m" type="number" value="1" min="1" oninput="loadRecipe()"/></div>
         </div>
         <div class="field"><label>Startup session <span style="font-size:11px;font-weight:400;color:var(--text-muted)">(optional — fills date)</span></label>
@@ -1030,7 +1035,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           <div id="bk-failed-note" style="display:none;font-size:12px;color:var(--danger);font-family:sans-serif;margin-top:6px;">&#9888;&#65039; Yield set to 0. This batch will be locked from allocation.</div>
         </div>
         <!-- SPLIT BATCH TOGGLE -->
-        <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
+        <div id="bk-split-section" style="background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-family:sans-serif;cursor:pointer;">
             <input type="checkbox" id="bk-split-toggle" onchange="toggleSplitPanel()" style="width:16px;height:16px;accent-color:var(--orange)"/>
             <span style="font-weight:600;">&#x2702;&#xFE0F; Split this batch?</span>
@@ -1114,6 +1119,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="btn" style="flex:1;margin-top:0;" onclick="cancelBake()">Cancel</button>
       </div>
       <div id="bk-msg" class="alert alert-success" style="display:none;margin-top:8px"></div>
+      <div id="bk-readonly-info" style="display:none"></div>
       <div class="card" style="margin-top:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <div class="card-title" style="margin:0">Recent batches</div>
@@ -5289,11 +5295,11 @@ function batchDropdownHtml(idx, context, existingValue) {
   opts += '<option value="__new__">+ Create new batch\u2026</option>';
   recent.forEach(b => {
     const sel = (normBatchNum(b.num) === existingNorm) ? ' selected' : '';
-    opts += '<option value="' + b.num + '"' + sel + '>' + b.num + (b.recipe ? ' \u2014 ' + b.recipe : '') + (b.date ? ' \u00b7 ' + b.date : '') + '</option>';
+    opts += '<option value="' + b.num + '"' + sel + '>' + b.num + (b.recipe ? ' — ' + b.recipe : '') + (b.date ? ' \u00b7 ' + b.date : '') + '</option>';
   });
   // If existing value is a real batch not in the recent 5, add it so it shows
   if (existingNotInRecent) {
-    opts += '<option value="' + existingBatch.num + '" selected>' + existingBatch.num + (existingBatch.recipe ? ' \u2014 ' + existingBatch.recipe : '') + '</option>';
+    opts += '<option value="' + existingBatch.num + '" selected>' + existingBatch.num + (existingBatch.recipe ? ' — ' + existingBatch.recipe : '') + '</option>';
   }
   opts += '<option value="__manual__">(type manually)</option>';
 
@@ -5329,9 +5335,9 @@ function updateBatchInfoLine(ctrl) {
   if (!num) { info.textContent = ''; return; }
   const b = findBatchByNum(num);
   if (b) {
-    info.innerHTML = '<span style="color:var(--success);">&#x2713; ' + b.num + (b.recipe ? ' \u2014 ' + b.recipe : '') + (b.date ? ' \u00b7 ' + b.date : '') + (b.yield ? ' \u00b7 ' + b.yield + ' cookies' : '') + (b.occasion ? ' \u00b7 ' + b.occasion : '') + '</span>';
+    info.innerHTML = '<span style="color:var(--success);">&#x2713; ' + b.num + (b.recipe ? ' — ' + b.recipe : '') + (b.date ? ' \u00b7 ' + b.date : '') + (b.yield ? ' \u00b7 ' + b.yield + ' cookies' : '') + (b.occasion ? ' \u00b7 ' + b.occasion : '') + '</span>';
   } else {
-    info.innerHTML = '<span style="color:var(--text-muted);">No matching batch found \u2014 will be saved as text</span>';
+    info.innerHTML = '<span style="color:var(--text-muted);">No matching batch found — will be saved as text</span>';
   }
 }
 
@@ -5369,7 +5375,7 @@ function onBatchDropdownChange(sel, context) {
       const qtyInput = row.querySelector('[data-qty-input]');
       if (qtyInput && !qtyInput.value && b.yield) {
         qtyInput.value = b.yield;
-        if (info) info.innerHTML += ' <span style="color:var(--success);font-size:10px;">\u2014 qty pre-filled from batch yield</span>';
+        if (info) info.innerHTML += ' <span style="color:var(--success);font-size:10px;">— qty pre-filled from batch yield</span>';
       }
       // For Ice task type: ensure the icing note is shown
       const taskSel = row.querySelector('[data-task-sel]');
@@ -5455,7 +5461,7 @@ async function saveBatchMiniForm(btn) {
       // Add new batch to dropdown and select it
       const newOpt = document.createElement('option');
       newOpt.value = newBatch.num;
-      newOpt.textContent = newBatch.num + (newBatch.recipe ? ' \u2014 ' + newBatch.recipe : '') + ' \u00b7 ' + newBatch.date;
+      newOpt.textContent = newBatch.num + (newBatch.recipe ? ' — ' + newBatch.recipe : '') + ' \u00b7 ' + newBatch.date;
       newOpt.selected = true;
       // Insert after the __new__ option
       const newOptEl = sel.querySelector('option[value="__new__"]');
@@ -9329,6 +9335,10 @@ async function delIngConfirm(id) { if(!confirm('Remove this ingredient?'))return
 // ═══════════════════════════════════════════════════════
 // BAKE
 // ═══════════════════════════════════════════════════════
+// Edit-mode state for the bake form (null = adding a new batch)
+let bkEditId = null;
+let bkEditReturnTo = null;
+
 function setBakeD() {
   const t = today();
   document.getElementById('bk-d').value = t;
@@ -9339,6 +9349,13 @@ function setBakeD() {
   // Ensure at least one recipient row is visible
   const rc = document.getElementById('bk-recipient-rows');
   if (rc && rc.children.length === 0) addBkRecipientRow();
+  // Reset edit-mode-only UI back to add-mode defaults
+  const banner = document.getElementById('bk-edit-banner'); if (banner) banner.style.display = 'none';
+  const ro = document.getElementById('bk-readonly-info'); if (ro) { ro.style.display = 'none'; ro.innerHTML = ''; }
+  const retiredWarning = document.getElementById('bk-recipe-retired-warning'); if (retiredWarning) retiredWarning.style.display = 'none';
+  const recipeField = document.getElementById('bk-recipe-field'); if (recipeField) recipeField.style.display = '';
+  const recipeReadonlyField = document.getElementById('bk-recipe-readonly-field'); if (recipeReadonlyField) recipeReadonlyField.style.display = 'none';
+  const splitSection = document.getElementById('bk-split-section'); if (splitSection) splitSection.style.display = '';
 }
 
 function updateBakeBB() {
@@ -9819,6 +9836,7 @@ async function saveBake() {
   if (!failed && yldEl.value === '') { alert('Please enter actual yield, or tick "Batch failed" if it did not produce cookies.'); return; }
   const recIdx2 = ri !== '' ? parseInt(ri) : -1;
   const rec = recIdx2 >= 0 ? cfg.recipes[recIdx2] : null;
+  const _origBatch = bkEditId ? batches.find(x=>x.id===bkEditId) : null;
   const ingUsed = [];
   if (rec) {
     (rec.ingredients||[]).forEach((ri2,idx) => {
@@ -9869,20 +9887,23 @@ async function saveBake() {
         });
       }
     });
+  } else if (_origBatch) {
+    // Editing a batch whose recipe has been retired/renamed — the ingredient
+    // card is hidden and uneditable, so preserve the original saved amounts.
+    ingUsed.push(...(_origBatch.ingredients||[]));
   }
-  // Collect chocolate rows (two-step: category + packet)
+  // Collect chocolate rows
   const chocUsed = [];
   let ci = 0;
   while (ci <= bkChocCount + 10) {
-    const catSel = document.getElementById('bk-choc-cat-' + ci);
-    if (!catSel && ci > bkChocCount) break;
-    if (catSel && catSel.value) {
-      const category = catSel.value;
-      const itemSel = document.getElementById('bk-choc-sel-' + ci);
-      const ingId = itemSel ? (parseInt(itemSel.value)||null) : null;
+    const itemSel = document.getElementById('bk-choc-sel-' + ci);
+    if (!itemSel && ci > bkChocCount) break;
+    if (itemSel && itemSel.value) {
+      const ingId = parseInt(itemSel.value)||null;
       const qty = document.getElementById('bk-choc-qty-' + ci)?.value.trim()||'';
       const lot = document.getElementById('bk-choc-lot-' + ci)?.value.trim()||'';
       const stockIng = ingId ? ings.find(i=>i.id===ingId) : null;
+      const category = stockIng ? (stockIng.category||stockIng.cat||'') : '';
       const description = stockIng
         ? [stockIng.brand||'', stockIng.product||'', category].filter(Boolean).join(' · ')
         : category;
@@ -9922,39 +9943,26 @@ async function saveBake() {
     decMaterials.other.map(function(o){ return {type:'other',ingId:o.ingId,label:o.label,weight:null,amount:o.amount,sourceClosedownId:null}; })
   ) : [];
 
-  // Duplicate batch number guard — live DB check first, then in-memory for normalised variants
-  var numNorm = normBatchNum(num);
-  const { data: dupRows } = await db.from('batches').select('id').eq('num', num.trim());
-  if ((dupRows && dupRows.length > 0) || batches.find(function(b){ return normBatchNum(b.num) === numNorm; })) {
-    alert('Batch number ' + num + ' already exists. Please use a different number.');
-    return;
+  // Duplicate batch number guard — skipped in edit mode (batch number is locked & unchanged)
+  if (!bkEditId) {
+    var numNorm = normBatchNum(num);
+    const { data: dupRows } = await db.from('batches').select('id').eq('num', num.trim());
+    if ((dupRows && dupRows.length > 0) || batches.find(function(b){ return normBatchNum(b.num) === numNorm; })) {
+      alert('Batch number ' + num + ' already exists. Please use a different number.');
+      return;
+    }
   }
 
-  const result = await insertBatch({ num, date, recipe:rec?rec.name:'', mult:m, madeBy, yield:yld, failed, bb, notes, occasion, variation, ingredients:ingUsed, chocolate:chocUsed, flavouring:flavUsed, campaign_id:campIdVal||null, extra_campaign_ids:bkExtraCampIds.length?bkExtraCampIds:null, order_ids:bkOrderIds.length?bkOrderIds:null, icingMaterials });
+  let result;
+  if (bkEditId) {
+    const _editFields = { date, recipe: rec ? rec.name : (_origBatch ? _origBatch.recipe : ''), mult:m, made_by:madeBy, yield:yld, failed, bb, notes, variation, ingredients:ingUsed, chocolate:chocUsed, flavouring:flavUsed, campaign_id:campIdVal||null, extra_campaign_ids:bkExtraCampIds.length?bkExtraCampIds:null, order_ids:bkOrderIds.length?bkOrderIds:null, icingMaterials };
+    const ok = await updateBatch(bkEditId, _editFields);
+    result = ok ? batches.find(x=>x.id===bkEditId) : null;
+  } else {
+    result = await insertBatch({ num, date, recipe:rec?rec.name:'', mult:m, madeBy, yield:yld, failed, bb, notes, occasion, variation, ingredients:ingUsed, chocolate:chocUsed, flavouring:flavUsed, campaign_id:campIdVal||null, extra_campaign_ids:bkExtraCampIds.length?bkExtraCampIds:null, order_ids:bkOrderIds.length?bkOrderIds:null, icingMaterials });
+  }
   if (result) {
-    // Re-seed batchCtr from the saved num to prevent gaps and multi-device conflicts
-    const savedNum = parseInt((result.num||'').replace(/\D/g,''))||0;
-    if (savedNum >= batchCtr) batchCtr = savedNum + 1;
-    bkPacketCounts = {};
-    bkChocCount = 0;
-    bkFlavourCount = 0;
-    setBakeD();
-    popBake();
-    renderRecentBatches();
-    document.getElementById('bk-notes').value = '';
-    const bkVar = document.getElementById('bk-variation'); if(bkVar) bkVar.value = '';
-
-    const bkFT = document.getElementById('bk-flavour-toggle'); if(bkFT) bkFT.checked = false;
-    const bkFP = document.getElementById('bk-flavour-panel'); if(bkFP) bkFP.style.display = 'none';
-    const bkFR = document.getElementById('bk-flavour-rows'); if(bkFR) bkFR.innerHTML = '';
-    document.getElementById('bk-failed').checked = false;
-    resetBkRecipients();
-    // Reset decoration panel
-    const bkDT = document.getElementById('bk-dec-toggle'); if(bkDT) bkDT.checked = false;
-    const bkDP = document.getElementById('bk-dec-panel'); if(bkDP) bkDP.style.display = 'none';
-    ['fondant','colour','flavour','other'].forEach(function(t){ var c = document.getElementById('bk-dec-' + t + '-rows'); if(c) c.innerHTML = ''; });
-    toggleBatchFailed();
-    // Update ingredient records: mark opened and record last-used batch
+    // Update ingredient records: mark opened and record last-used batch (both add and edit)
     const _consumedIngIds = new Set();
     ingUsed.forEach(function(x){ if (x.ingId) _consumedIngIds.add(x.ingId); });
     chocUsed.forEach(function(x){ if (x.ingId) _consumedIngIds.add(x.ingId); });
@@ -9978,6 +9986,49 @@ async function saveBake() {
         }
       }
     }
+
+    if (bkEditId) {
+      // Edit mode — handle a newly-toggled split, then return to wherever the user came from
+      const splitTog = document.getElementById('bk-split-toggle');
+      if (splitTog && splitTog.checked) {
+        await doFormSplit(result);
+      }
+      showSaveToast('Batch ' + num + ' updated');
+      const _returnTo = bkEditReturnTo;
+      bkEditId = null;
+      bkEditReturnTo = null;
+      const banner = document.getElementById('bk-edit-banner'); if (banner) banner.style.display = 'none';
+      const ro = document.getElementById('bk-readonly-info'); if (ro) { ro.style.display = 'none'; ro.innerHTML = ''; }
+      if (_returnTo === 'history') {
+        goHistSection('hist-batches');
+      } else {
+        go('production');
+      }
+      return;
+    }
+
+    // Add mode — re-seed batchCtr from the saved num to prevent gaps and multi-device conflicts
+    const savedNum = parseInt((result.num||'').replace(/\D/g,''))||0;
+    if (savedNum >= batchCtr) batchCtr = savedNum + 1;
+    bkPacketCounts = {};
+    bkChocCount = 0;
+    bkFlavourCount = 0;
+    setBakeD();
+    popBake();
+    renderRecentBatches();
+    document.getElementById('bk-notes').value = '';
+    const bkVar = document.getElementById('bk-variation'); if(bkVar) bkVar.value = '';
+
+    const bkFT = document.getElementById('bk-flavour-toggle'); if(bkFT) bkFT.checked = false;
+    const bkFP = document.getElementById('bk-flavour-panel'); if(bkFP) bkFP.style.display = 'none';
+    const bkFR = document.getElementById('bk-flavour-rows'); if(bkFR) bkFR.innerHTML = '';
+    document.getElementById('bk-failed').checked = false;
+    resetBkRecipients();
+    // Reset decoration panel
+    const bkDT = document.getElementById('bk-dec-toggle'); if(bkDT) bkDT.checked = false;
+    const bkDP = document.getElementById('bk-dec-panel'); if(bkDP) bkDP.style.display = 'none';
+    ['fondant','colour','flavour','other'].forEach(function(t){ var c = document.getElementById('bk-dec-' + t + '-rows'); if(c) c.innerHTML = ''; });
+    toggleBatchFailed();
     // Handle split if toggle was checked
     const splitTog = document.getElementById('bk-split-toggle');
     if (splitTog && splitTog.checked) {
@@ -10015,6 +10066,20 @@ function collectEbRecipients() {
 }
 
 function cancelBake() {
+  if (bkEditId) {
+    // Editing — discard changes and return to wherever the user came from, no save
+    const _returnTo = bkEditReturnTo;
+    bkEditId = null;
+    bkEditReturnTo = null;
+    const banner = document.getElementById('bk-edit-banner'); if (banner) banner.style.display = 'none';
+    const ro = document.getElementById('bk-readonly-info'); if (ro) { ro.style.display = 'none'; ro.innerHTML = ''; }
+    if (_returnTo === 'history') {
+      goHistSection('hist-batches');
+    } else {
+      go('production');
+    }
+    return;
+  }
   setBakeD();
   popBake();
   document.getElementById('bk-notes').value = '';
@@ -10032,6 +10097,227 @@ function cancelBake() {
   toggleBatchFailed();
   document.getElementById('bk-msg').style.display = 'none';
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ═══════════════════════════════════════════════════════
+// BAKE — Edit existing batch via the Add Batch form
+// ═══════════════════════════════════════════════════════
+
+function openBakeFormForEdit(id, returnTo) {
+  const b = batches.find(x => x.id === id);
+  if (!b) return;
+  bkEditId = id;
+  bkEditReturnTo = returnTo || 'production';
+  go('production');
+  _populateBakeFormForEdit(b);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function _populateBakeFormForEdit(b) {
+  const banner = document.getElementById('bk-edit-banner');
+  const bannerNum = document.getElementById('bk-edit-banner-num');
+  if (banner) banner.style.display = 'block';
+  if (bannerNum) bannerNum.textContent = b.num;
+
+  const numEl = document.getElementById('bk-n');
+  if (numEl) numEl.value = b.num;
+  const dateEl = document.getElementById('bk-d');
+  if (dateEl) dateEl.value = b.date || '';
+  const multEl = document.getElementById('bk-m');
+  if (multEl) multEl.value = b.mult || 1;
+
+  // Recipe — normal path if it still exists, retired-recipe path otherwise
+  const recIdx = (cfg.recipes || []).findIndex(r => r.name === b.recipe);
+  const retiredWarning = document.getElementById('bk-recipe-retired-warning');
+  const recipeField = document.getElementById('bk-recipe-field');
+  const recipeReadonlyField = document.getElementById('bk-recipe-readonly-field');
+  const recipeReadonly = document.getElementById('bk-recipe-readonly');
+  const rSel = document.getElementById('bk-r');
+  if (recIdx >= 0) {
+    if (retiredWarning) retiredWarning.style.display = 'none';
+    if (recipeField) recipeField.style.display = '';
+    if (recipeReadonlyField) recipeReadonlyField.style.display = 'none';
+    if (rSel) rSel.value = String(recIdx);
+    loadRecipe();
+    _populateBakeIngredientPackets(b);
+  } else if (b.recipe) {
+    if (retiredWarning) {
+      retiredWarning.textContent = '⚠️ Recipe ' + b.recipe + ' has been retired or renamed. Ingredient amounts shown below are from the original save and cannot be rescaled.';
+      retiredWarning.style.display = 'block';
+    }
+    if (recipeField) recipeField.style.display = 'none';
+    if (recipeReadonlyField) recipeReadonlyField.style.display = '';
+    if (recipeReadonly) recipeReadonly.textContent = b.recipe;
+    if (rSel) rSel.value = '';
+    const card = document.getElementById('bk-rec-card');
+    if (card) card.style.display = 'none';
+  } else {
+    if (retiredWarning) retiredWarning.style.display = 'none';
+    if (recipeField) recipeField.style.display = '';
+    if (recipeReadonlyField) recipeReadonlyField.style.display = 'none';
+    if (rSel) rSel.value = '';
+  }
+
+  const byEl = document.getElementById('bk-by');
+  if (byEl) byEl.value = b.made_by || '';
+
+  const failedEl = document.getElementById('bk-failed');
+  if (failedEl) failedEl.checked = !!b.failed;
+  toggleBatchFailed();
+  const yEl = document.getElementById('bk-y');
+  if (yEl && !b.failed) yEl.value = (b.yield != null ? b.yield : '');
+
+  const bbEl = document.getElementById('bk-bb');
+  if (bbEl) bbEl.value = b.bb || '';
+
+  const notesEl = document.getElementById('bk-notes');
+  if (notesEl) notesEl.value = b.notes || '';
+  const varEl = document.getElementById('bk-variation');
+  if (varEl) varEl.value = b.variation || '';
+
+  // Recipients — rebuild rows from saved order_ids / campaign_id / extra_campaign_ids
+  const recipContainer = document.getElementById('bk-recipient-rows');
+  if (recipContainer) recipContainer.innerHTML = '';
+  const orderIds = b.order_ids || [];
+  const campIds = [].concat(b.campaign_id ? [b.campaign_id] : [], b.extra_campaign_ids || []);
+  const recipRowCount = Math.max(orderIds.length, campIds.length, 1);
+  for (let i = 0; i < recipRowCount; i++) {
+    addBkRecipientRow({ orderId: orderIds[i] || '', campId: campIds[i] || '' });
+  }
+
+  // Split toggle — hide entirely if this batch is already a split parent
+  const splitSection = document.getElementById('bk-split-section');
+  const splitToggle = document.getElementById('bk-split-toggle');
+  if (splitSection) splitSection.style.display = b.isSplitParent ? 'none' : '';
+  if (splitToggle) splitToggle.checked = false;
+  toggleSplitPanel();
+
+  _populateBakeChocRows(b.chocolate);
+  _populateBakeFlavourRows(b.flavouring);
+  _populateBakeDecRows(b);
+
+  _renderBakeReadonlyInfo(b);
+}
+
+function _populateBakeIngredientPackets(b) {
+  const rec = (cfg.recipes || []).find(r => r.name === b.recipe);
+  if (!rec) return;
+  const bIngs = b.ingredients || [];
+  let bIdx = 0;
+  (rec.ingredients || []).forEach((ing, idx) => {
+    if (isChocCategory(ing.category)) return;
+    const entry = bIngs[bIdx];
+    if (!entry || (entry.category || '').toLowerCase() !== (ing.category || '').toLowerCase()) return;
+    const idEl = document.getElementById('bk-id-' + idx + '-0');
+    const lotEl = document.getElementById('bk-lot-' + idx + '-0');
+    const amtEl = document.getElementById('bk-amt-' + idx + '-0');
+    if (idEl) idEl.value = entry.ingId || '';
+    if (lotEl) lotEl.value = entry.ingBatch || '';
+    if (amtEl) amtEl.value = (entry.amount_num != null ? entry.amount_num : (entry.amount || ''));
+    bIdx++;
+    let rowIdx = 1;
+    while (bIngs[bIdx] && bIngs[bIdx].multiPacket && (bIngs[bIdx].category || '').toLowerCase() === (ing.category || '').toLowerCase()) {
+      addPacketRow(idx);
+      const e2 = bIngs[bIdx];
+      const idEl2 = document.getElementById('bk-id-' + idx + '-' + rowIdx);
+      const lotEl2 = document.getElementById('bk-lot-' + idx + '-' + rowIdx);
+      const amtEl2 = document.getElementById('bk-amt-' + idx + '-' + rowIdx);
+      if (idEl2) idEl2.value = e2.ingId || '';
+      if (lotEl2) lotEl2.value = e2.ingBatch || '';
+      if (amtEl2) amtEl2.value = (e2.amount_num != null ? e2.amount_num : (e2.amount || ''));
+      bIdx++;
+      rowIdx++;
+    }
+  });
+}
+
+function _populateBakeChocRows(chocUsed) {
+  if (!chocUsed || !chocUsed.length) return;
+  if (!document.getElementById('bk-choc-sel-0')) {
+    const optChoc = document.getElementById('bk-optional-choc');
+    if (optChoc) { optChoc.checked = true; toggleOptionalChoc(); }
+  }
+  chocUsed.forEach((c, i) => {
+    if (!document.getElementById('bk-choc-sel-' + i)) addBkChocRow();
+    const sel = document.getElementById('bk-choc-sel-' + i);
+    const qtyEl = document.getElementById('bk-choc-qty-' + i);
+    const lotEl = document.getElementById('bk-choc-lot-' + i);
+    if (sel && c.ingId != null) {
+      for (const o of sel.options) { if (o.value == c.ingId) { sel.value = o.value; break; } }
+    }
+    if (qtyEl) qtyEl.value = c.qty || '';
+    if (lotEl) lotEl.value = c.lot || '';
+  });
+}
+
+function _populateBakeFlavourRows(flavUsed) {
+  if (!flavUsed || !flavUsed.length) return;
+  const flavToggle = document.getElementById('bk-flavour-toggle');
+  if (flavToggle) { flavToggle.checked = true; toggleBkFlavour(); }
+  flavUsed.forEach((f, i) => {
+    if (!document.getElementById('bk-flav-sel-' + i)) addFlavourRow();
+    const sel = document.getElementById('bk-flav-sel-' + i);
+    const qtyEl = document.getElementById('bk-flav-qty-' + i);
+    const lotEl = document.getElementById('bk-flav-lot-' + i);
+    if (sel && f.ingId != null) {
+      for (const o of sel.options) { if (o.value == f.ingId) { sel.value = o.value; break; } }
+    }
+    if (qtyEl) qtyEl.value = f.qty || '';
+    if (lotEl) lotEl.value = f.lot || '';
+  });
+}
+
+function _populateBakeDecRows(b) {
+  const icingMaterials = b.icingMaterials;
+  if (!Array.isArray(icingMaterials) || !icingMaterials.length) return;
+  if (!icingMaterials.some(m => m && m.type)) return;
+  const decToggle = document.getElementById('bk-dec-toggle');
+  if (decToggle) { decToggle.checked = true; toggleBkDec(); }
+  populateDecRows('bk', icingMaterials);
+}
+
+function _renderBakeReadonlyInfo(b) {
+  const container = document.getElementById('bk-readonly-info');
+  if (!container) return;
+  const ba = allocs.filter(a => normBatchNum(a.batch_num) === normBatchNum(b.num));
+  const tot = ba.reduce((s, a) => s + (a.qty || 0), 0);
+  let html = '<div class="card" style="margin-top:10px">'
+    + '<div class="card-title">Batch info (read-only)</div>'
+    + uField('Total allocated', tot + ' cookies');
+  if ((b.ingredients || []).length) {
+    html += `<div class="u-modal-field"><label>Ingredients</label><div style="font-size:13px;">${
+      b.ingredients.map(i=>`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><span>${esc(i.category||'')}</span><span style="color:var(--text-muted)">${esc(i.amount||'')}${i.ingBatch?' · lot: '+esc(i.ingBatch):''}</span></div>`).join('')
+    }</div></div>`;
+  }
+  if ((b.icingEntries || []).length) {
+    const icingEntries = b.icingEntries;
+    html += '<div class="u-modal-field"><label style="color:#7c5cbf;">&#x1F9C1; Icing / Decoration (' + icingEntries.length + (icingEntries.length === 1 ? ' run' : ' runs') + ')</label><div style="font-size:12px;font-family:sans-serif;">';
+    icingEntries.forEach(function(entry) {
+      const dec = entry.decoration || [];
+      const allDec = dec.map(function(d){
+        return esc(d.type||'') + ': ' + esc(d.ingName||'') + (d.amount ? ' — ' + esc(d.amount) : '');
+      });
+      html += '<div style="padding:4px 0;border-bottom:1px solid var(--gray-light);margin-bottom:3px;">'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+        + (entry.date ? '<span style="font-weight:600;">'+esc(entry.date)+'</span>' : '')
+        + (entry.qty ? '<span class="tag tag-blue" style="font-size:10px;">'+entry.qty+' cookies</span>' : '')
+        + (entry.isLegacy ? '<span class="tag tag-amber" style="font-size:10px;">legacy</span>' : '')
+        + '</div>'
+        + (entry.purpose ? '<div style="margin-top:2px;color:var(--navy);">&#x1F464; '+esc(entry.purpose)+'</div>' : '')
+        + (entry.occasion ? '<div style="color:var(--text-muted);margin-top:1px;">'+esc(entry.occasion)+'</div>' : '')
+        + (allDec.length ? '<div style="color:var(--text-muted);margin-top:2px;">'+allDec.join(' · ')+'</div>' : '')
+        + '</div>';
+    });
+    html += '</div></div>';
+  }
+  if (ba.length) {
+    html += `<div class="u-modal-field"><label>Allocations</label><div style="font-size:13px;">${
+      ba.map(a=>{const r=a.recipient||{};return `<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><strong>${esc(r.name||'—')}</strong> · ${a.qty} cookies · ${a.date||'—'} <span class="tag tag-blue" style="font-size:10px">${a.type}</span></div>`;}).join('')
+    }</div></div>`;
+  }
+  html += '</div>';
+  container.innerHTML = html;
+  container.style.display = 'block';
 }
 
 function cancelCL(type) {
@@ -16646,7 +16932,7 @@ function _prBuildCorpGifting(orderArr) {
     var cookieSum   = _orderCookieSummary(o);
     var qty         = cookieSum.qty || 0;
     var qtyDisplay  = cookieSum.allocated ? String(qty) : (qty ? qty + ' (not yet allocated)' : 'not yet allocated');
-    var varieties   = lines.length ? lines.map(function(l) { return (l.quantity || '?') + 'x ' + (l.cookie_type || '?'); }).join('; ') : '\u2014';
+    var varieties   = lines.length ? lines.map(function(l) { return (l.quantity || '?') + 'x ' + (l.cookie_type || '?'); }).join('; ') : '—';
     var batchNums   = (function() {
       var nums = _getOrderBatchNums(o);
       return nums.length ? nums.map(function(x) { return x.num; }).join(', ') : '—';
@@ -18213,8 +18499,7 @@ function renderHist() {
         })()}
         ${batchIntegrityHtml}
         <div style="display:flex;gap:6px;margin-top:8px">
-          <button class="btn-view" onclick="event.stopPropagation();viewBatch(${b.id})">👁 View</button>
-          <button class="btn-edit" onclick="event.stopPropagation();openEditBatch(${b.id})">✏️ Edit</button>
+          <button class="btn-edit" onclick="event.stopPropagation();openBakeFormForEdit(${b.id},'history')">✏️ Edit</button>
           <button class="btn-del" onclick="event.stopPropagation();confirmDeleteBatch(${b.id},'${b.num}')">🗑 Delete</button>
         </div>
       </div>` : '';
@@ -18237,8 +18522,7 @@ function renderHist() {
           ${b.variation?`<div style="font-size:11px;color:var(--orange);font-family:sans-serif;margin-top:2px;font-style:italic">${esc(b.variation)}</div>`:''}
         </div>
         <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;padding-left:8px" onclick="event.stopPropagation()">
-          <button class="btn-view" onclick="viewBatch(${b.id})" style="font-size:11px;padding:3px 8px">👁</button>
-          <button class="btn-edit" onclick="openEditBatch(${b.id})" style="font-size:11px;padding:3px 8px">✏️</button>
+          <button class="btn-edit" onclick="openBakeFormForEdit(${b.id},'history')" style="font-size:11px;padding:3px 8px">✏️</button>
           <button class="btn-del" onclick="confirmDeleteBatch(${b.id},'${b.num}')" style="font-size:11px;padding:3px 8px">🗑</button>
           <span onclick="event.stopPropagation();toggleBatchDetail(${b.id})" style="font-size:14px;color:var(--text-muted);cursor:pointer;padding:3px 4px">${isExp?'▲':'▼'}</span>
         </div>
@@ -18275,8 +18559,7 @@ function renderRecentBatches() {
     </div>
     ${b.bb&&!isSP?`<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;white-space:nowrap">BB ${b.bb.split('-').reverse().join('/')}</span>`:''}
     <div style="display:flex;gap:4px;flex-shrink:0">
-      <button class="btn-view" onclick="viewBatch(${b.id})" style="font-size:10px;padding:3px 8px">👁</button>
-      <button class="btn-edit" onclick="openEditBatch(${b.id})" style="font-size:10px;padding:3px 8px">✏️</button>
+      <button class="btn-edit" onclick="openBakeFormForEdit(${b.id},'production')" style="font-size:10px;padding:3px 8px">✏️</button>
       <button class="btn-del" onclick="confirmDeleteBatch(${b.id},'${b.num}')" style="font-size:10px;padding:3px 8px">🗑</button>
     </div>
   </div>`;
@@ -21151,7 +21434,7 @@ function openRF(idx) {
   document.getElementById('rf-cc-notes').value=r.choc_chip_notes||'';
   // Based on
   const boSel=document.getElementById('rf-bo');
-  boSel.innerHTML='<option value="">\u2014 none \u2014</option>'+cfg.recipes.filter((_,i)=>i!==idx).map(r=>`<option value="${r.name}">${r.name}</option>`).join('');
+  boSel.innerHTML='<option value="">— none —</option>'+cfg.recipes.filter((_,i)=>i!==idx).map(r=>`<option value="${r.name}">${r.name}</option>`).join('');
   boSel.value=r.based_on||'';
   document.getElementById('rec-viewer').style.display='none';
   const lv=document.getElementById('rec-list-view');if(lv)lv.style.display='none';
@@ -24405,7 +24688,7 @@ async function saveColInstance() {
       if (_tpl && (_tpl.slots || []).length) {
         var _instAllocs = allocs.filter(function(a){ return a.collection_instance_id === _instId; });
         if (_instAllocs.length) {
-          // Group existing allocs by recipient \u2014 use eng:XX notes tag when present for precision
+          // Group existing allocs by recipient — use eng:XX notes tag when present for precision
           var _recipGroups = {};
           _instAllocs.forEach(function(a) {
             var _rk = (a.notes && a.notes.indexOf('eng:') === 0) ? a.notes : ('n:' + (a.recipient || '').toLowerCase().trim());
@@ -24439,7 +24722,7 @@ async function saveColInstance() {
               if (!_bn && !_sl.random && _eid) {
                 batches.forEach(function(b){ (b.icingEntries||[]).forEach(function(ie){ if (String(ie.id) === String(_eid)) _bn = b.num; }); });
               }
-              if (!_bn) continue; // slot not yet assigned \u2014 skip
+              if (!_bn) continue; // slot not yet assigned — skip
               var _covered;
               if (_sl.random) {
                 _covered = _randProc < _nullCount;
@@ -27232,7 +27515,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v36.18',
+    app_version: 'v37.0',
     tables: {}
   };
 
@@ -28285,77 +28568,6 @@ async function doDeleteChecklist(id, type) {
 }
 
 // ═══════════════════════════════════════════════════════
-// BATCH — View
-// ═══════════════════════════════════════════════════════
-
-function viewBatch(id) {
-  const b = batches.find(x=>x.id===id); if (!b) return;
-  const ba = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
-  const tot = ba.reduce((s,a)=>s+(a.qty||0),0);
-  const campName = b.campaign_id ? (campaigns.find(x=>x.id===b.campaign_id)||{}).name||'' : '';
-  // Build split info field if applicable
-  let splitInfoHtml = '';
-  if (b.isSplitParent && b.splitInto) {
-    splitInfoHtml = uField('Split into', '<span class="tag tag-gray">Split</span> ' + b.splitInto.map(function(n){ return '<span class="tag tag-amber">'+esc(n)+'</span>'; }).join(' '));
-  }
-  if (b.parentBatchId) {
-    const parent = batches.find(function(x){ return x.id === b.parentBatchId; });
-    splitInfoHtml = uField('Split from', parent ? ('<span class="tag tag-gray">'+esc(parent.num)+'</span>') : 'Parent batch');
-    if (b.splitLabel) splitInfoHtml += uField('Mix-in portion', b.splitLabel);
-  }
-  let body = uField('Batch number', b.num)
-    + uField('Date', b.date)
-    + uField('Recipe', b.recipe + (b.mult>1?' x'+b.mult:''))
-    + uField('Made by', b.made_by)
-    + uField('Yield', b.failed ? '<span class="tag tag-red">Failed</span>' : (b.yield ? b.yield + ' cookies' : '—'))
-    + uField('Best before', b.bb)
-    + uField('Occasion', b.occasion)
-    + uField('Variation', b.variation)
-    + (campName ? uField('Campaign', campName) : '')
-    + uField('Notes', b.notes)
-    + uField('Total allocated', tot + ' cookies')
-    + splitInfoHtml;
-  if ((b.ingredients||[]).length) {
-    body += `<div class="u-modal-field"><label>Ingredients</label><div style="font-size:13px;">${
-      b.ingredients.map(i=>`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><span>${esc(i.category||'')}</span><span style="color:var(--text-muted)">${esc(i.amount||'')}${i.ingBatch?' · lot: '+esc(i.ingBatch):''}</span></div>`).join('')
-    }</div></div>`;
-  }
-  if ((b.icingEntries||[]).length) {
-    var icingEntries = b.icingEntries;
-    body += '<div class="u-modal-field"><label style="color:#7c5cbf;">&#x1F9C1; Icing / Decoration (' + icingEntries.length + (icingEntries.length === 1 ? ' run' : ' runs') + ')</label><div style="font-size:12px;font-family:sans-serif;">';
-    icingEntries.forEach(function(entry) {
-      var dec = entry.decoration || [];
-      var allDec = dec.map(function(d){
-        return esc(d.type||'') + ': ' + esc(d.ingName||'') + (d.amount ? ' — ' + esc(d.amount) : '');
-      });
-      body += '<div style="padding:4px 0;border-bottom:1px solid var(--gray-light);margin-bottom:3px;">'
-        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
-        + (entry.date ? '<span style="font-weight:600;">'+esc(entry.date)+'</span>' : '')
-        + (entry.qty ? '<span class="tag tag-blue" style="font-size:10px;">'+entry.qty+' cookies</span>' : '')
-        + (entry.isLegacy ? '<span class="tag tag-amber" style="font-size:10px;">legacy</span>' : '')
-        + '</div>'
-        + (entry.purpose ? '<div style="margin-top:2px;color:var(--navy);">&#x1F464; '+esc(entry.purpose)+'</div>' : '')
-        + (entry.occasion ? '<div style="color:var(--text-muted);margin-top:1px;">'+esc(entry.occasion)+'</div>' : '')
-        + (allDec.length ? '<div style="color:var(--text-muted);margin-top:2px;">'+allDec.join(' · ')+'</div>' : '')
-        + '</div>';
-    });
-    body += '</div></div>';
-  }
-  if (ba.length) {
-    body += `<div class="u-modal-field"><label>Allocations</label><div style="font-size:13px;">${
-      ba.map(a=>{const r=a.recipient||{};return `<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><strong>${esc(r.name||'—')}</strong> · ${a.qty} cookies · ${a.date||'—'} <span class="tag tag-blue" style="font-size:10px">${a.type}</span></div>`;}).join('')
-    }</div></div>`;
-  }
-  const splitBtnHtml = b.isSplitParent ? '' : `<button class="btn btn-sm" onclick="closeUModal();openSplitFromView(${id})" style="border-color:var(--orange);color:var(--orange);margin-top:0;">&#x2702;&#xFE0F; Split batch</button>`;
-  const footer = `
-    <button class="btn-edit" onclick="closeUModal();openEditBatch(${id})">✏️ Edit</button>
-    <button class="btn-del" onclick="closeUModal();confirmDeleteBatch(${id},'${b.num}')">🗑 Delete</button>
-    ${splitBtnHtml}
-    <button class="btn btn-sm" onclick="closeUModal()" style="margin-top:0">Close</button>`;
-  openUModal(`Batch ${b.num}`, body, footer);
-}
-
-// ═══════════════════════════════════════════════════════
 // SPLIT BATCH — Phase 1
 // ═══════════════════════════════════════════════════════
 
@@ -28550,7 +28762,7 @@ function scaleIngredientsByPct(ingredients, pct) {
   });
 }
 
-// ── Execute split (called after saveBake saves the parent, OR from openSplitFromView/Edit) ──
+// ── Execute split (called after saveBake saves the parent batch) ──
 async function executeSplit(parentBatch, splitRows) {
   const totalCookies = splitRows.reduce((s, r) => s + (r.count || 0), 0);
   const children = [];
@@ -28641,148 +28853,6 @@ async function doFormSplit(parentBatch) {
       if (children.length) {
         showSaveToast(children.length + ' child batches created \u2713');
       }
-    }
-  );
-}
-
-// ── Split from view modal ──
-function openSplitFromView(id) {
-  const b = batches.find(x => x.id === id);
-  if (!b) return;
-  if (b.isSplitParent) { alert('This batch has already been split.'); return; }
-  openSplitPanelModal(b);
-}
-
-// ── Split from edit modal ──
-function openSplitFromEdit() {
-  if (!editingBatchId) return;
-  const b = batches.find(x => x.id === editingBatchId);
-  if (!b) return;
-  if (b.isSplitParent) { alert('This batch has already been split.'); return; }
-  closeEditBatch();
-  openSplitPanelModal(b);
-}
-
-// ── Split panel modal (standalone trigger, post-save) ──
-let splitPanelTarget = null;
-
-function openSplitPanelModal(batch) {
-  splitPanelTarget = batch;
-  // Use universal modal to host the split configuration UI
-  const nextNum1 = 'B-' + String(batchCtr).padStart(3,'0');
-  const nextNum2 = 'B-' + String(batchCtr + 1).padStart(3,'0');
-  const body = `<div style="font-size:13px;font-family:sans-serif;color:var(--text-muted);margin-bottom:12px;">
-    Divide <strong>${batch.num}</strong> (${batch.yield || 0} cookies) into portions. Each becomes a separate traceable batch.
-  </div>
-  <div id="spm-rows">
-    ${buildSpmRow(0, nextNum1)}
-    ${buildSpmRow(1, nextNum2)}
-  </div>
-  <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap;">
-    <button type="button" class="btn btn-sm" onclick="addSpmRow()" id="spm-add-btn" style="font-size:11px;color:var(--navy)">+ Add another portion</button>
-    <span id="spm-total-label" style="font-size:12px;font-family:sans-serif;"></span>
-  </div>`;
-  const footer = `<button class="btn btn-primary" style="flex:1" onclick="confirmSpmSplit()">&#x2702;&#xFE0F; Split batch</button>
-    <button class="btn" style="flex:1;margin-top:0" onclick="closeUModal()">Cancel</button>`;
-  openUModal('Split batch ' + batch.num, body, footer);
-  setTimeout(() => updateSpmTotals(), 50);
-}
-
-let spmRowCtr = 2;
-
-function buildSpmRow(idx, defaultNum) {
-  const num = defaultNum || ('B-' + String(batchCtr + idx).padStart(3,'0'));
-  return '<div class="split-child-row" data-spm-idx="' + idx + '">'
-    + '<div class="split-child-row-header">'
-    + '<input value="' + num + '" placeholder="Batch no." data-spm-num style="width:80px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-family:sans-serif;font-weight:600;background:var(--white);color:var(--navy);">'
-    + '<input placeholder="Label (e.g. Ginger)" data-spm-label style="flex:2;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-family:sans-serif;background:var(--white);color:var(--text);">'
-    + '<input type="number" placeholder="Cookies" data-spm-count min="0" style="width:72px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-family:sans-serif;background:var(--white);color:var(--text);" oninput="updateSpmTotals()">'
-    + '<button type="button" onclick="removeSpmRow(this)" style="border:none;background:none;color:var(--danger);font-size:18px;cursor:pointer;padding:0 3px;line-height:1;flex-shrink:0;">&times;</button>'
-    + '</div>'
-    + '<div class="split-child-row-ings">'
-    + '<div style="font-size:11px;font-weight:600;color:var(--navy);font-family:sans-serif;margin-bottom:5px;opacity:0.7;">Unique ingredients for this portion <span style="font-weight:400;opacity:0.8;">(optional)</span></div>'
-    + '<div data-split-ing-rows></div>'
-    + '<button type="button" onclick="addSplitIngRow(this.closest(\'[data-spm-idx]\'))" style="font-size:11px;color:var(--navy);background:none;border:1px dashed var(--border);border-radius:var(--radius);padding:3px 8px;cursor:pointer;font-family:sans-serif;margin-top:2px;">+ Add ingredient</button>'
-    + '</div>'
-    + '</div>';
-}
-
-function addSpmRow() {
-  const container = document.getElementById('spm-rows');
-  if (!container) return;
-  const count = container.querySelectorAll('.split-child-row').length;
-  if (count >= 6) return;
-  const nextNum = 'B-' + String(batchCtr + spmRowCtr).padStart(3,'0');
-  spmRowCtr++;
-  const div = document.createElement('div');
-  div.innerHTML = buildSpmRow(spmRowCtr, nextNum);
-  container.appendChild(div.firstChild);
-  updateSpmTotals();
-  const btn = document.getElementById('spm-add-btn');
-  if (btn) btn.style.display = container.querySelectorAll('.split-child-row').length >= 6 ? 'none' : '';
-}
-
-function removeSpmRow(btn) {
-  const row = btn.closest('.split-child-row');
-  const container = document.getElementById('spm-rows');
-  if (!container) return;
-  if (container.querySelectorAll('.split-child-row').length <= 2) { alert('Need at least 2 portions.'); return; }
-  row.remove();
-  updateSpmTotals();
-}
-
-function updateSpmTotals() {
-  const container = document.getElementById('spm-rows');
-  const label = document.getElementById('spm-total-label');
-  if (!container || !label) return;
-  const parentYld = splitPanelTarget ? (splitPanelTarget.yield || 0) : 0;
-  let total = 0;
-  container.querySelectorAll('.split-child-row').forEach(row => {
-    const cnt = parseInt(row.querySelector('[data-spm-count]').value) || 0;
-    total += cnt;
-  });
-  const isExact = parentYld > 0 && total === parentYld;
-  const over = parentYld > 0 && total > parentYld;
-  if (parentYld > 0) {
-    label.innerHTML = 'Total: <span class="' + (isExact ? 'split-total-ok' : 'split-total-bad') + '">' + total + ' of ' + parentYld + ' cookies</span>' + (isExact ? ' &#x2713;' : over ? ' (over by ' + (total - parentYld) + ')' : ' (' + (parentYld - total) + ' remaining)');
-  } else {
-    label.innerHTML = '<span style="font-family:sans-serif;color:var(--text-muted);">Parent batch has no yield recorded</span>';
-  }
-  const confirmBtn = document.querySelector('#u-modal-footer .btn-primary');
-  if (confirmBtn) confirmBtn.disabled = !isExact;
-}
-
-function collectSpmRows() {
-  const container = document.getElementById('spm-rows');
-  if (!container) return [];
-  const result = [];
-  container.querySelectorAll('.split-child-row').forEach(row => {
-    const uniqueIngs = collectSplitIngRows(row);
-    result.push({
-      num: (row.querySelector('[data-spm-num]').value || '').trim(),
-      label: (row.querySelector('[data-spm-label]').value || '').trim(),
-      count: parseInt(row.querySelector('[data-spm-count]').value) || 0,
-      uniqueIngs: uniqueIngs
-    });
-  });
-  return result;
-}
-
-async function confirmSpmSplit() {
-  if (!splitPanelTarget) return;
-  const rows = collectSpmRows();
-  const err = validateSplitRows(rows, splitPanelTarget.yield);
-  if (err) { alert(err); return; }
-  closeUModal();
-  spmRowCtr = 2;
-  showConfirm(
-    'Split ' + splitPanelTarget.num + ' into ' + rows.length + ' batches?',
-    'This will create ' + rows.length + ' child batches (' + rows.map(r => r.num || '?').join(', ') + ') and set the parent yield to 0. This cannot be undone.',
-    'Split',
-    async function() {
-      const children = await executeSplit(splitPanelTarget, rows);
-      splitPanelTarget = null;
-      if (children.length) showSaveToast(children.length + ' child batches created \u2713');
     }
   );
 }
@@ -29388,7 +29458,7 @@ function printIcingFiltered() {
       recipParts.push((c?c.name:'Camp '+cid)+(q?' \u00b7 '+q+' cookies':''));
     });
     var dec = (e.decoration&&e.decoration.length)
-      ? e.decoration.map(function(d){ return d.type+': '+(d.ingName||'')+(d.ingId?' #'+d.ingId:'')+(d.amount?' \u2014 '+d.amount:''); }).join(' &nbsp;&middot;&nbsp; ')
+      ? e.decoration.map(function(d){ return d.type+': '+(d.ingName||'')+(d.ingId?' #'+d.ingId:'')+(d.amount?' — '+d.amount:''); }).join(' &nbsp;&middot;&nbsp; ')
       : '<em>No decoration recorded</em>';
     return '<div class="entry">'
       + '<span class="tag">'+esc(e.date||'')+'</span>'
@@ -29829,7 +29899,7 @@ function irEntryHtml(e) {
         var ingLabel = d.ingName || (d.ingId ? '#'+d.ingId : '');
         return '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">'
           + '<span style="font-size:10px;font-weight:700;color:var(--navy);text-transform:uppercase;margin-right:4px;">'+esc(d.type||'')+'</span>'
-          + esc(ingLabel) + (d.amount ? ' \u2014 '+esc(d.amount) : '') + '</div>';
+          + esc(ingLabel) + (d.amount ? ' — '+esc(d.amount) : '') + '</div>';
       }).join('')
     : '<div style="font-size:11px;color:var(--text-muted);font-style:italic;">No decoration recorded</div>';
   return '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">'
@@ -29945,7 +30015,7 @@ function printIcingReport() {
       recipParts.push((c?c.name:'Camp '+cid)+(q?' ('+q+' cookies)':''));
     });
     var decLines = (e.decoration&&e.decoration.length)
-      ? e.decoration.map(function(d){ return d.type+': '+(d.ingName||'')+(d.ingId?' #'+d.ingId:'')+(d.amount?' \u2014 '+d.amount:''); }).join(' &nbsp;&middot;&nbsp; ')
+      ? e.decoration.map(function(d){ return d.type+': '+(d.ingName||'')+(d.ingId?' #'+d.ingId:'')+(d.amount?' — '+d.amount:''); }).join(' &nbsp;&middot;&nbsp; ')
       : '<em>No decoration recorded</em>';
     return '<div class="entry">'
       + '<span class="tag">'+esc(e.date||'')+'</span><span class="tag">'+esc(e._batchNum||e.batchNum||'')+'</span>'+(e.qty?'<span class="tag">'+e.qty+' cookies</span>':'')
@@ -29967,7 +30037,7 @@ function printIcingReport() {
     '.dec{color:#666;font-size:11px;}',
     '@media print{h3{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}',
     '</style></head><body>',
-    '<h1>Cookie & Me \u2014 Icing Records</h1>',
+    '<h1>Cookie & Me — Icing Records</h1>',
     '<p style="color:#666;font-size:11px;">Printed: '+new Date().toLocaleDateString('en-NZ')+'</p>'];
   var orderKeys = Object.keys(g.orderGroups).sort();
   if (orderKeys.length) {
