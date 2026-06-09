@@ -10919,7 +10919,7 @@ function renderAllocIcingInstances() {
     var e = item.entry;
     var recip = recipientLabel(e);
     var design = designLabel(e);
-    var eidJson = JSON.stringify(String(e.id));
+    var eidAttr = String(e.id).replace(/'/g, "\\'");
     html += '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">';
     html += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
     html += '<span style="font-weight:700;font-size:13px;font-family:sans-serif;">' + esc(design) + '</span>';
@@ -10931,7 +10931,7 @@ function renderAllocIcingInstances() {
     html += ' · <span style="color:var(--orange);font-weight:600;">' + item.remaining + ' remaining</span>';
     html += '</div>';
     html += '<div style="margin-top:6px;">';
-    html += '<button class="btn btn-sm btn-primary" style="font-size:12px;width:auto;padding:5px 12px;" onclick="preAllocFromIcing(' + eidJson + ')">Allocate →</button>';
+    html += '<button class="btn btn-sm btn-primary" style="font-size:12px;width:auto;padding:5px 12px;" onclick="preAllocFromIcing(\'' + eidAttr + '\')">Allocate →</button>';
     html += '</div></div>';
   });
 
