@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v38.2</title>
+<title>Cookie & Me — Kitchen Manager v38.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10880,7 +10880,7 @@ function renderAllocIcingInstances() {
     var parts = [];
     (e.orderIds || []).forEach(function(oid) {
       var o = (orders || []).find(function(x) { return String(x.id) === String(oid); });
-      if (o) parts.push('Order ' + (o.num || oid));
+      parts.push(o ? (o.order_number || ('ORD-' + String(o.id).slice(-4))) : ('ORD-' + String(oid).slice(-4)));
     });
     (e.campaignIds || []).forEach(function(cid) {
       var c = (campaigns || []).find(function(x) { return String(x.id) === String(cid); });
@@ -10931,7 +10931,7 @@ function renderAllocIcingInstances() {
     html += ' · <span style="color:var(--orange);font-weight:600;">' + item.remaining + ' remaining</span>';
     html += '</div>';
     html += '<div style="margin-top:6px;">';
-    html += '<button class="btn btn-sm btn-primary" style="font-size:12px;width:auto;padding:5px 12px;" onclick="preAllocFromIcing(\'' + eidAttr + '\')">Allocate →</button>';
+    html += '<button class="btn btn-sm btn-primary" style="font-size:12px;width:auto;padding:5px 12px;" onclick="openIcingAllocModal(\'' + eidAttr + '\')">Allocate →</button>';
     html += '</div></div>';
   });
 
@@ -11017,6 +11017,126 @@ function preAllocUniced(qty) {
   if (remEl) remEl.textContent = '';
   var formEl = document.getElementById('al-form');
   if (formEl) formEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+var _iaiEntryId = null;
+
+function openIcingAllocModal(entryId) {
+  if (selBI < 0) return;
+  var b = batches[selBI];
+  var e = (b.icingEntries || []).find(function(x) { return String(x.id) === String(entryId); });
+  if (!e) return;
+  _iaiEntryId = String(entryId);
+
+  var fromOrders = (orders || []).reduce(function(s, o) {
+    return s + (o.cookie_allocations || []).reduce(function(s2, ca) {
+      return s2 + (String(ca.icing_entry_id) === String(entryId) ? (ca.qty || 0) : 0);
+    }, 0);
+  }, 0);
+  var fromDirect = allocs.filter(function(a) {
+    return a.icing_entry_id && String(a.icing_entry_id) === String(entryId);
+  }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
+  var remaining = (e.qty || 0) - (fromOrders + fromDirect);
+
+  var design = e.cookieDescription || e.occasion || e.purpose || 'Icing run';
+
+  var recipParts = [];
+  (e.orderIds || []).forEach(function(oid) {
+    var o = (orders || []).find(function(x) { return String(x.id) === String(oid); });
+    recipParts.push(o ? (o.order_number || ('ORD-' + String(o.id).slice(-4))) : ('ORD-' + String(oid).slice(-4)));
+  });
+  (e.campaignIds || []).forEach(function(cid) {
+    var c = (campaigns || []).find(function(x) { return String(x.id) === String(cid); });
+    recipParts.push(c ? (c.name || ('Campaign ' + cid)) : ('Campaign ' + cid));
+  });
+  (e.customerIds || []).forEach(function(custId) {
+    var c = (cfg.customers || []).find(function(x) { return String(x.id) === String(custId); });
+    recipParts.push(c ? custDisplayName(c) : ('Customer ' + custId));
+  });
+
+  var preFillCustId = '';
+  var preFillCustName = '';
+  if ((e.customerIds || []).length === 1) {
+    var pcid = e.customerIds[0];
+    var pc = (cfg.customers || []).find(function(x) { return String(x.id) === String(pcid); });
+    if (pc) { preFillCustId = String(pc.id); preFillCustName = custDisplayName(pc); }
+  }
+
+  var today = new Date().toISOString().slice(0, 10);
+
+  var body = '';
+  body += '<div style="background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:14px;">';
+  body += '<div style="font-size:14px;font-weight:700;color:var(--navy);font-family:sans-serif;">' + esc(design) + '</div>';
+  var metaLine = [];
+  if (e.date) metaLine.push(e.date);
+  if (recipParts.length) metaLine.push(recipParts.join(', '));
+  if (metaLine.length) body += '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-top:3px;">' + esc(metaLine.join(' · ')) + '</div>';
+  body += '</div>';
+  body += '<div class="u-modal-field"><label>Customer / Recipient <span style="font-weight:400;font-size:11px;color:var(--text-muted)">(optional)</span></label>';
+  body += '<div id="iai-cust-wrap" style="position:relative;">';
+  body += '<input class="cust-picker-input" placeholder="Search customers or type a name..." autocomplete="off" value="' + esc(preFillCustName) + '"/>';
+  body += '<div class="cust-picker-dropdown"></div></div>';
+  body += '<input type="hidden" id="iai-cust-id" value="' + esc(preFillCustId) + '"/></div>';
+  body += '<div class="u-modal-field"><label>Qty (cookies)</label>';
+  body += '<input id="iai-qty" type="number" min="1" value="' + (remaining > 0 ? remaining : '') + '"/></div>';
+  body += '<div class="u-modal-field"><label>Allocation type</label><select id="iai-type">';
+  body += '<option value="sold">Sold</option><option value="gifted">Gifted</option><option value="consumed">Consumed</option><option value="donated">Donated</option><option value="giveaway">Giveaway</option><option value="samples">Samples</option><option value="testing">Testing</option><option value="disposal">Thrown away</option>';
+  body += '</select></div>';
+  body += '<div class="u-modal-field"><label>Method</label><select id="iai-method">';
+  body += '<option value="pickup">Customer pickup</option><option value="delivery">Delivery to address</option><option value="market">Sold at market</option><option value="courier">Courier</option><option value="internal">Internal</option>';
+  body += '</select></div>';
+  body += '<div class="u-modal-field"><label>Date</label>';
+  body += '<input id="iai-date" type="date" value="' + today + '"/></div>';
+
+  var footer = '<button class="btn btn-primary" style="flex:1;" onclick="_iaiSave()">Save allocation</button>';
+  footer += '<button class="btn" style="flex:1;" onclick="closeUModal()">Cancel</button>';
+
+  openUModal('Allocate icing run', body, footer);
+
+  setTimeout(function() {
+    initCustPicker('iai-cust-wrap', {
+      onSelect: function(c) {
+        var hidEl = document.getElementById('iai-cust-id');
+        if (hidEl) hidEl.value = c ? String(c.id) : '';
+      }
+    });
+  }, 0);
+}
+
+async function _iaiSave() {
+  if (selBI < 0 || !_iaiEntryId) return;
+  var b = batches[selBI];
+  var qty = parseInt((document.getElementById('iai-qty') || {}).value) || 0;
+  if (!qty) { alert('Enter a quantity.'); return; }
+  var date = (document.getElementById('iai-date') || {}).value || '';
+  var dateErr = validateDate(date, 'Allocation date');
+  if (dateErr) { alert(dateErr); return; }
+  var type = (document.getElementById('iai-type') || {}).value || 'sold';
+  var method = (document.getElementById('iai-method') || {}).value || 'pickup';
+  var custId = (document.getElementById('iai-cust-id') || {}).value || '';
+  var pickerInput = document.querySelector('#iai-cust-wrap .cust-picker-input');
+  var pickerName = pickerInput ? pickerInput.value.trim() : '';
+  var c = custId ? (cfg.customers || []).find(function(x) { return String(x.id) === String(custId); }) : null;
+  var recipient = { type: type };
+  if (c) {
+    Object.assign(recipient, {
+      name: custDisplayName(c), org: c.org || '', contactName: c.name,
+      phone: c.phone, email: c.email, address: c.address, custType: c.type, customerId: c.id
+    });
+  } else if (pickerName) {
+    Object.assign(recipient, { name: pickerName, contactName: pickerName });
+  } else {
+    recipient.name = type;
+  }
+  closeUModal();
+  await insertAlloc({
+    batchNum: b.num, batchIdx: selBI, type: type, qty: qty,
+    recipient: recipient, dist: [], method: method, addr: '', market: '',
+    date: date, notes: null, icingEntryId: _iaiEntryId,
+    campaignIds: [], orderIds: [], costToMake: null
+  });
+  showSaveToast('Allocation saved');
+  renderAllocList(); renderAllocIcingInstances(); updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner();
 }
 
 function allocChkAll(custId, checked) {
@@ -27420,7 +27540,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v38.2',
+    app_version: 'v38.3',
     tables: {}
   };
 
