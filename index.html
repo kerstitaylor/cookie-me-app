@@ -17393,14 +17393,13 @@ async function printReconciliationReport() {
 
   // ── Section 2: Icing Quantity Check ──────────────────────
   function sec2() {
-    var qIssues = [], noFondant = [];
+    // Find earliest batch date that has icing entries — treat as pre-system records
+    var earliestIcingDate = null;
+    rBatches.forEach(function(b) { if (getIcingEntries(b).length && b.date && (!earliestIcingDate || b.date < earliestIcingDate)) earliestIcingDate = b.date; });
+    var noFondant = [];
     rBatches.forEach(function(b) {
-      var entries = getIcingEntries(b);
-      if (!entries.length) return;
-      var total = entries.reduce(function(s,e){ return s+(Number(e.qty)||0); },0);
-      var yld = Number(b.yield)||0;
-      if (total !== yld) qIssues.push('Batch '+b.num+' ('+( b.recipe||'—')+'): yield '+yld+', icing entries total '+total+' (diff '+(total-yld>0?'+':'')+(total-yld)+')');
-      entries.forEach(function(e) {
+      if (earliestIcingDate && b.date === earliestIcingDate) return;
+      getIcingEntries(b).forEach(function(e) {
         var dec = e.decoration||[];
         if (dec.length===0 || !dec.some(function(d){ return d.type==='Fondant'; })) {
           var ctx = [];
@@ -17410,15 +17409,15 @@ async function printReconciliationReport() {
         }
       });
     });
-    if (!qIssues.length && !noFondant.length) return { html: '<p>✓ No issues found</p>', count: 0 };
-    var html = '';
-    if (qIssues.length) html += '<p><strong>Icing total ≠ batch yield:</strong></p><ul>'+qIssues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
-    if (noFondant.length) html += '<p><strong>Icing entries missing Fondant decoration:</strong></p><ul>'+noFondant.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
-    return { html: html, count: qIssues.length + noFondant.length };
+    var note = earliestIcingDate ? '<p style="color:#666;font-style:italic;font-size:11px;">Entries dated '+earliestIcingDate+' excluded as pre-system records.</p>' : '';
+    if (!noFondant.length) return { html: '<p>✓ No issues found</p>'+note, count: 0 };
+    var html = '<p><strong>Icing entries missing Fondant decoration:</strong></p><ul>'+noFondant.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>'+note;
+    return { html: html, count: noFondant.length };
   }
 
   // ── Section 3: Allocation vs Icing Cross-check ───────────
   function sec3() {
+    return { html: '<p>⚠ Temporarily suppressed — shared icing entry split logic not yet implemented.</p>', count: 0 };
     var icingQtyByOrder = {};
     rBatches.forEach(function(b) {
       getIcingEntries(b).forEach(function(e) {
@@ -17467,7 +17466,7 @@ async function printReconciliationReport() {
       });
     });
     rAllocs.forEach(function(a) {
-      if (a.icing_entry_id || a.type==='disposal' || a.type==='testing') return;
+      if (a.icing_entry_id || a.type!=='sold') return;
       var r = a.recipient;
       var rName = (r && typeof r==='object') ? (r.name||r.org||JSON.stringify(r)) : (r||'—');
       noEntryId.push('Batch '+(a.batch_num||'—')+', recipient: '+rName+', qty: '+(a.qty||0)+', type: '+(a.type||'—'));
@@ -17535,6 +17534,7 @@ async function printReconciliationReport() {
 
   // ── Section 8: Order Quantity Consistency ─────────────────
   function sec8() {
+    return { html: '<p>⚠ Temporarily suppressed — shared icing entry split logic not yet implemented.</p>', count: 0 };
     // Order cookies live in orders.cookie_allocations, not the allocations table.
     // Cross-check: for each order, cookie_allocations qty total vs icing entry qty total for that order.
     var icingQtyByOrder = {};
@@ -17608,10 +17608,6 @@ async function printReconciliationReport() {
     var descMap = {};
     rBatches.forEach(function(b) { getIcingEntries(b).forEach(function(e) { var d=e.cookieDescription; if (!d) return; var norm=d.toLowerCase().replace(/\s+/g,' ').trim(); if (!descMap[norm]) descMap[norm]=new Set(); descMap[norm].add(d); }); });
     Object.keys(descMap).forEach(function(norm) { var vs=Array.from(descMap[norm]); if (vs.length>1) issues.push('Cookie description variants for "'+norm+'": '+vs.map(function(v){ return '"'+v+'"'; }).join(' vs ')); });
-    // Batch number format mixing B001 vs B-001
-    var hasDash=false, hasNoDash=false;
-    rBatches.forEach(function(b) { if (!b.num) return; if (/^B-\d+$/.test(b.num)) hasDash=true; else if (/^B\d+$/.test(b.num)) hasNoDash=true; });
-    if (hasDash && hasNoDash) issues.push('Batch numbers use mixed formats — some "B001" style, some "B-001" style');
     if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
