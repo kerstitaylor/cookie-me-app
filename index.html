@@ -16900,6 +16900,11 @@ function _prBuildIcingBody(g) {
       var q = rq['campaign:'+cid];
       recipParts.push((c?c.name:'Camp '+cid)+(q?' · '+q+' cookies':''));
     });
+    (e.customerIds||[]).forEach(function(custId){
+      var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(custId); });
+      var q = rq['customer:'+custId];
+      recipParts.push((c?custDisplayName(c):'Customer '+custId)+(q?' · '+q+' cookies':''));
+    });
     var dec = (e.decoration&&e.decoration.length)
       ? e.decoration.map(function(d){ return d.type+': '+(d.ingName||'')+(d.ingId?' #'+d.ingId:'')+(d.amount?' — '+d.amount:''); }).join(' &nbsp;&middot;&nbsp; ')
       : '<em>No decoration recorded</em>';
@@ -16920,6 +16925,8 @@ function _prBuildIcingBody(g) {
   if (ok2.length) { parts.push('<h2 style="font-size:13px;margin:16px 0 4px;color:#122640;">&#x1F4E6; Orders</h2>'); ok2.forEach(function(k){ parts.push(grpHtml(g.orderGroups[k].label, g.orderGroups[k].entries)); }); }
   var ck = Object.keys(g.campGroups).sort();
   if (ck.length) { parts.push('<h2 style="font-size:13px;margin:16px 0 4px;color:#122640;">&#x1F3A8; Campaigns</h2>'); ck.forEach(function(k){ parts.push(grpHtml(g.campGroups[k].label, g.campGroups[k].entries)); }); }
+  var csk = Object.keys(g.custGroups||{}).sort();
+  if (csk.length) { parts.push('<h2 style="font-size:13px;margin:16px 0 4px;color:#122640;">&#x1F464; Customers</h2>'); csk.forEach(function(k){ parts.push(grpHtml(g.custGroups[k].label, g.custGroups[k].entries)); }); }
   if (g.otherEntries.length) { parts.push('<h2 style="font-size:13px;margin:16px 0 4px;color:#122640;">&#x1F4CB; Other</h2>'); parts.push(grpHtml('Unlinked entries', g.otherEntries)); }
   return parts.join('');
 }
@@ -29622,6 +29629,12 @@ function irEntryHtml(e) {
     var q = rq['campaign:'+cid];
     recipParts.push(label + (q ? ' \u00b7 ' + q + ' cookies' : ''));
   });
+  (e.customerIds||[]).forEach(function(custId){
+    var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(custId); });
+    var label = c ? custDisplayName(c) : ('Customer '+custId);
+    var q = rq['customer:'+custId];
+    recipParts.push(label + (q ? ' \u00b7 ' + q + ' cookies' : ''));
+  });
   var decHtml = (e.decoration && e.decoration.length)
     ? e.decoration.map(function(d){
         var ingLabel = d.ingName || (d.ingId ? '#'+d.ingId : '');
@@ -29661,10 +29674,11 @@ function irToggleGroup(id) {
 }
 
 function irBuildGroups(filtered) {
-  var orderGroups = {}, campGroups = {}, otherEntries = [];
+  var orderGroups = {}, campGroups = {}, custGroups = {}, otherEntries = [];
   filtered.forEach(function(e){
     var hasOrder = (e.orderIds||[]).length > 0;
     var hasCamp  = (e.campaignIds||[]).length > 0;
+    var hasCust  = (e.customerIds||[]).length > 0;
     if (hasOrder) {
       (e.orderIds||[]).forEach(function(oid){
         var o = (orders||[]).find(function(x){ return String(x.id)===String(oid); });
@@ -29682,11 +29696,21 @@ function irBuildGroups(filtered) {
         if (!campGroups[key]) campGroups[key] = { label: label, entries: [] };
         campGroups[key].entries.push(e);
       });
-    } else {
+    }
+    if (hasCust) {
+      (e.customerIds||[]).forEach(function(custId){
+        var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(custId); });
+        var key = String(custId);
+        var label = c ? custDisplayName(c) : ('Customer '+custId);
+        if (!custGroups[key]) custGroups[key] = { label: label, entries: [] };
+        custGroups[key].entries.push(e);
+      });
+    }
+    if (!hasOrder && !hasCamp && !hasCust) {
       otherEntries.push(e);
     }
   });
-  return { orderGroups: orderGroups, campGroups: campGroups, otherEntries: otherEntries };
+  return { orderGroups: orderGroups, campGroups: campGroups, custGroups: custGroups, otherEntries: otherEntries };
 }
 
 function irGetFiltered() {
@@ -29716,6 +29740,11 @@ function renderIcingReport() {
   if (campKeys.length) {
     html += '<div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.07em;font-family:sans-serif;margin:8px 0 6px;">\ud83c\udfa8 Campaigns</div>';
     campKeys.forEach(function(k){ html += irGroupHtml(g.campGroups[k].label, g.campGroups[k].entries, 'camp-'+k); });
+  }
+  var custKeys = Object.keys(g.custGroups).sort();
+  if (custKeys.length) {
+    html += '<div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.07em;font-family:sans-serif;margin:8px 0 6px;">\ud83d\udc64 Customers</div>';
+    custKeys.forEach(function(k){ html += irGroupHtml(g.custGroups[k].label, g.custGroups[k].entries, 'cust-'+k.replace(/[^a-z0-9]/gi,'')); });
   }
   if (g.otherEntries.length) {
     html += '<div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.07em;font-family:sans-serif;margin:8px 0 6px;">\ud83d\udccb Other (unlinked)</div>';
