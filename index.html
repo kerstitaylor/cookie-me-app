@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v37.0</title>
+<title>Cookie & Me — Kitchen Manager v38.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -4868,7 +4868,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 // SUPABASE INIT
 // ═══════════════════════════════════════════════════════
 const SUPA_URL = 'https://fbtqvkxnpzaocuzrrfrb.supabase.co';
-const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZidHF2a3hucHphb2N1enJyZnJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MDE4ODcsImV4cCI6MjA4OTk3Nzg4N30.Gb1ttAH26Ry_5P44q5ZGEHBNv4EHAwbwxSLpTcO4TfU';
+const SUPA_KEY = 'sb_publishable_TXnkHlpcOU7HrCrkqNPhAg_BwpWzLN9';
 const { createClient } = supabase;
 const db = createClient(SUPA_URL, SUPA_KEY);
 const _sb = db; // alias used by notifications/tasks module
@@ -5915,10 +5915,12 @@ function icingEntryCardHtml(entryIdx, entry) {
     + '</div>'
     + '<div style="border:1px solid rgba(18,38,64,0.1);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;">'  
     + '<div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Recipients <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--text-muted)">(optional)</span></div>'
-    + '<div style="display:grid;grid-template-columns:2fr 1fr 2fr 1fr;gap:4px;margin-bottom:4px;">'
+    + '<div style="display:grid;grid-template-columns:2fr 1fr 2fr 1fr 2fr 1fr;gap:4px;margin-bottom:4px;">'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Order</span>'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</span>'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Campaign</span>'
+    + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</span>'
+    + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Customer</span>'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</span>'
     + '</div>'
     + '<div id="ie-recip-rows-' + entryIdx + '"></div>'
@@ -6127,14 +6129,25 @@ function _addIcingRecipRowToContainer(container, prefill) {
         var sel = prefill && String(prefill.campId)===String(c.id) ? ' selected' : '';
         return '<option value="'+c.id+'"'+sel+'>'+esc(c.name)+'</option>';
       }).join('');
+  var sortedCustomers = (cfg.customers||[]).slice().sort(function(a,b){
+    var an = custDisplayName(a).toLowerCase(), bn = custDisplayName(b).toLowerCase();
+    return an < bn ? -1 : an > bn ? 1 : 0;
+  });
+  var custOpts = '<option value="">— No customer —</option>'
+    + sortedCustomers.map(function(c){
+        var sel = prefill && String(prefill.custId)===String(c.id) ? ' selected' : '';
+        return '<option value="'+c.id+'"'+sel+'>'+esc(custDisplayName(c))+'</option>';
+      }).join('');
   var s = 'padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);width:100%;background:var(--white);color:var(--text);font-family:sans-serif;';
   var row = document.createElement('div');
   row.setAttribute('data-ie-recip', idx);
-  row.style.cssText = 'display:grid;grid-template-columns:2fr 1fr 2fr 1fr auto;gap:4px;align-items:center;margin-bottom:6px;';
+  row.style.cssText = 'display:grid;grid-template-columns:2fr 1fr 2fr 1fr 2fr 1fr auto;gap:4px;align-items:center;margin-bottom:6px;';
   row.innerHTML = '<select data-ie-recip-order style="'+s+'">'+orderOpts+'</select>'
     + '<input data-ie-recip-order-qty type="number" min="0" placeholder="Qty" value="'+(prefill&&prefill.orderQty||'')+'" style="'+s+'">'
     + '<select data-ie-recip-camp style="'+s+'">'+campOpts+'</select>'
     + '<input data-ie-recip-camp-qty type="number" min="0" placeholder="Qty" value="'+(prefill&&prefill.campQty||'')+'" style="'+s+'">'
+    + '<select data-ie-recip-cust style="'+s+'">'+custOpts+'</select>'
+    + '<input data-ie-recip-cust-qty type="number" min="0" placeholder="Qty" value="'+(prefill&&prefill.custQty||'')+'" style="'+s+'">'
     + '<button type="button" onclick="this.closest(\'[data-ie-recip]\').remove()" style="background:none;border:none;color:var(--danger);font-size:18px;cursor:pointer;padding:0 4px;line-height:1;">×</button>';
   container.appendChild(row);
 }
@@ -6167,20 +6180,23 @@ function collectIcingEntryData(card) {
   // Recipient rows
   var entryIdx = card.getAttribute('data-icing-entry') || '';
   var recipContainer = document.getElementById('ie-recip-rows-' + entryIdx);
-  var campaignIds = [], orderIds = [];
+  var campaignIds = [], orderIds = [], customerIds = [];
   var recipientQtys = {};
   if (recipContainer) {
     recipContainer.querySelectorAll('[data-ie-recip]').forEach(function(row) {
       var ordId = (row.querySelector('[data-ie-recip-order]')||{}).value||'';
       var campId = (row.querySelector('[data-ie-recip-camp]')||{}).value||'';
+      var custId = (row.querySelector('[data-ie-recip-cust]')||{}).value||'';
       var ordQty = parseInt((row.querySelector('[data-ie-recip-order-qty]')||{}).value||'')||null;
       var campQty = parseInt((row.querySelector('[data-ie-recip-camp-qty]')||{}).value||'')||null;
+      var custQty = parseInt((row.querySelector('[data-ie-recip-cust-qty]')||{}).value||'')||null;
       if (ordId) { orderIds.push(ordId); if (ordQty) recipientQtys['order:'+ordId] = ordQty; }
       if (campId) { campaignIds.push(campId); if (campQty) recipientQtys['campaign:'+campId] = campQty; }
+      if (custId) { customerIds.push(custId); if (custQty) recipientQtys['customer:'+custId] = custQty; }
     });
   }
   // Build legacy purpose string for backwards-compat search/display
-  var purpose = buildPurposeFromIds(campaignIds, orderIds, purposeNotes);
+  var purpose = buildPurposeFromIds(campaignIds, orderIds, customerIds, purposeNotes);
   var decoration = [];
   card.querySelectorAll('[data-icing-dec-row]').forEach(function(row) {
     var typeVal = (row.querySelector('[data-dec-type]') || {}).value || '';
@@ -6192,7 +6208,7 @@ function collectIcingEntryData(card) {
       decoration.push({ type: typeVal, ingId: ingId, ingName: ingName, amount: amount });
     }
   });
-  return { batchId: batchId, batchNum: batch ? batch.num : '', qty: qty, purpose: purpose, purposeNotes: purposeNotes, campaignIds: campaignIds, orderIds: orderIds, recipientQtys: recipientQtys, occasion: occasion, cookieDescription: cookieDescription, decoration: decoration };
+  return { batchId: batchId, batchNum: batch ? batch.num : '', qty: qty, purpose: purpose, purposeNotes: purposeNotes, campaignIds: campaignIds, orderIds: orderIds, customerIds: customerIds, recipientQtys: recipientQtys, occasion: occasion, cookieDescription: cookieDescription, decoration: decoration };
 }
 
 // Save all entries in the current session
@@ -6219,6 +6235,13 @@ async function saveIcingSession() {
       var _ordCust = (cfg.customers || []).find(function(c){ return String(c.id) === String(_ord.customer_id); });
       if (!_ordCust) {
         errors.push('Order ' + (_ord.order_number || '#' + ordId) + ' references a deleted customer. Correct the order before linking it here.');
+      }
+    });
+    (entry.customerIds || []).forEach(function(custId) {
+      if (!custId) return;
+      var _cust = (cfg.customers || []).find(function(c){ return String(c.id) === String(custId); });
+      if (!_cust) {
+        errors.push('Customer ID ' + custId + ' no longer exists. Remove it from the recipient list before saving.');
       }
     });
   });
@@ -6408,6 +6431,12 @@ function icingEntryReadCard(e, showEditBtn) {
           var q = rq['campaign:'+cid];
           parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
         });
+        (e.customerIds||[]).forEach(function(custId){
+          var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(custId); });
+          var label = c ? custDisplayName(c) : ('Customer '+custId);
+          var q = rq['customer:'+custId];
+          parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
+        });
         var display = parts.length ? parts.join(', ') : e.purpose;
         return '<div style="font-size:13px;color:var(--navy);margin-bottom:2px;">&#x1F464; ' + esc(display) + '</div>';
       })() : '')
@@ -6444,10 +6473,12 @@ function openIcingEntryEdit(elOrId, batchIdArg) {
     + '<div class="field"><label>Batch</label><select id="ie-edit-batch" style="' + s + '">' + batchOpts + '</select></div>'
     + '<div style="border:1px solid rgba(18,38,64,0.1);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;">'
     + '<div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Recipients <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--text-muted)">(optional)</span></div>'
-    + '<div style="display:grid;grid-template-columns:2fr 1fr 2fr 1fr;gap:4px;margin-bottom:4px;">'
+    + '<div style="display:grid;grid-template-columns:2fr 1fr 2fr 1fr 2fr 1fr;gap:4px;margin-bottom:4px;">'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Order</span>'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</span>'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Campaign</span>'
+    + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</span>'
+    + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Customer</span>'
     + '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Qty</span>'
     + '</div>'
     + '<div id="ie-edit-recip-rows"></div>'
@@ -6471,16 +6502,20 @@ function openIcingEntryEdit(elOrId, batchIdArg) {
     var recipRows = document.getElementById('ie-edit-recip-rows'); if (!recipRows) return;
     var campIds = entry.campaignIds || [];
     var ordIds = entry.orderIds || [];
+    var custIds = entry.customerIds || [];
     var rq = entry.recipientQtys || {};
-    var maxRows = Math.max(1, campIds.length, ordIds.length);
+    var maxRows = Math.max(1, campIds.length, ordIds.length, custIds.length);
     for (var ri = 0; ri < maxRows; ri++) {
       var oid = ordIds[ri]||'';
       var cid = campIds[ri]||'';
+      var csid = custIds[ri]||'';
       _addIcingRecipRowToContainer(recipRows, {
         orderId: oid,
         campId: cid,
+        custId: csid,
         orderQty: oid ? (rq['order:'+oid]||'') : '',
-        campQty: cid ? (rq['campaign:'+cid]||'') : ''
+        campQty: cid ? (rq['campaign:'+cid]||'') : '',
+        custQty: csid ? (rq['customer:'+csid]||'') : ''
       });
     }
   }, 0);
@@ -6519,15 +6554,18 @@ async function saveIcingEntryEdit() {
   var date = (document.getElementById('ie-edit-date')||{}).value || today();
   var qty = parseInt((document.getElementById('ie-edit-qty')||{}).value) || null;
   var purposeNotes = ((document.getElementById('ie-edit-purpose')||{}).value || '').trim() || null;
-  var editCampaignIds = [], editOrderIds = [];
+  var editCampaignIds = [], editOrderIds = [], editCustomerIds = [];
   var editRecipientQtys = {};
   document.querySelectorAll('#ie-edit-recip-rows [data-ie-recip]').forEach(function(row) {
     var ordId = (row.querySelector('[data-ie-recip-order]')||{}).value||'';
     var campId = (row.querySelector('[data-ie-recip-camp]')||{}).value||'';
+    var custId = (row.querySelector('[data-ie-recip-cust]')||{}).value||'';
     var ordQty = parseInt((row.querySelector('[data-ie-recip-order-qty]')||{}).value||'')||null;
     var campQty = parseInt((row.querySelector('[data-ie-recip-camp-qty]')||{}).value||'')||null;
+    var custQty = parseInt((row.querySelector('[data-ie-recip-cust-qty]')||{}).value||'')||null;
     if (ordId) { editOrderIds.push(ordId); if (ordQty) editRecipientQtys['order:'+ordId] = ordQty; }
     if (campId) { editCampaignIds.push(campId); if (campQty) editRecipientQtys['campaign:'+campId] = campQty; }
+    if (custId) { editCustomerIds.push(custId); if (custQty) editRecipientQtys['customer:'+custId] = custQty; }
   });
   // Validate per-recipient qty sum against total qty
   if (qty) {
@@ -6537,7 +6575,7 @@ async function saveIcingEntryEdit() {
       return;
     }
   }
-  var purpose = buildPurposeFromIds(editCampaignIds, editOrderIds, purposeNotes);
+  var purpose = buildPurposeFromIds(editCampaignIds, editOrderIds, editCustomerIds, purposeNotes);
   var occasion = ((document.getElementById('ie-edit-occasion')||{}).value || '').trim() || null;
   var cookieDescription = ((document.getElementById('ie-edit-cookiedesc')||{}).value || '').trim() || null;
   var decoration = [];
@@ -6574,7 +6612,7 @@ async function saveIcingEntryEdit() {
     }
     var nb = batches.find(function(b){ return b.id === newBatchId; });
     if (nb) {
-      var newEntry = { id: entryId, date: date, batchId: newBatchId, batchNum: nb.num, qty: qty, purpose: purpose, purposeNotes: purposeNotes, campaignIds: editCampaignIds, orderIds: editOrderIds, recipientQtys: editRecipientQtys, occasion: occasion, cookieDescription: cookieDescription, decoration: decoration };
+      var newEntry = { id: entryId, date: date, batchId: newBatchId, batchNum: nb.num, qty: qty, purpose: purpose, purposeNotes: purposeNotes, campaignIds: editCampaignIds, orderIds: editOrderIds, customerIds: editCustomerIds, recipientQtys: editRecipientQtys, occasion: occasion, cookieDescription: cookieDescription, decoration: decoration };
       nb.icingEntries = (nb.icingEntries||[]).concat([newEntry]);
       var step2Ok = await updateBatch(newBatchId, { icingMaterials: { _v: 3, entries: nb.icingEntries } });
       if (!step2Ok) {
@@ -6588,7 +6626,7 @@ async function saveIcingEntryEdit() {
     }
   } else {
     batch.icingEntries = (batch.icingEntries||[]).map(function(e) {
-      return e.id !== entryId ? e : Object.assign({}, e, { date: date, qty: qty, purpose: purpose, purposeNotes: purposeNotes, campaignIds: editCampaignIds, orderIds: editOrderIds, recipientQtys: editRecipientQtys, occasion: occasion, cookieDescription: cookieDescription, decoration: decoration });
+      return e.id !== entryId ? e : Object.assign({}, e, { date: date, qty: qty, purpose: purpose, purposeNotes: purposeNotes, campaignIds: editCampaignIds, orderIds: editOrderIds, customerIds: editCustomerIds, recipientQtys: editRecipientQtys, occasion: occasion, cookieDescription: cookieDescription, decoration: decoration });
     });
     var saveOk = await updateBatch(origBatchId, { icingMaterials: { _v: 3, entries: batch.icingEntries } });
     if (!saveOk) {
@@ -19734,13 +19772,13 @@ async function orfRemoveIcingFromOrder(entryId, batchId, orderId) {
   var origOrderIds = entry.orderIds ? entry.orderIds.slice() : [];
   entry.orderIds = newOrderIds;
   // Also rebuild purpose string
-  entry.purpose = buildPurposeFromIds(entry.campaignIds || [], newOrderIds, entry.purposeNotes || null);
+  entry.purpose = buildPurposeFromIds(entry.campaignIds || [], newOrderIds, entry.customerIds || [], entry.purposeNotes || null);
 
   var batchOk = await updateBatch(batch.id, { icingMaterials: { _v: 3, entries: batch.icingEntries } });
   if (!batchOk) {
     // Rollback in-memory change
     entry.orderIds = origOrderIds;
-    entry.purpose = buildPurposeFromIds(entry.campaignIds || [], origOrderIds, entry.purposeNotes || null);
+    entry.purpose = buildPurposeFromIds(entry.campaignIds || [], origOrderIds, entry.customerIds || [], entry.purposeNotes || null);
     showSaveError('Remove failed — batch record not saved. No changes were made.');
     return;
   }
@@ -19753,7 +19791,7 @@ async function orfRemoveIcingFromOrder(entryId, batchId, orderId) {
     if (!orderOk) {
       // Step 1 succeeded but Step 2 failed — roll back Step 1 to keep counts consistent
       entry.orderIds = origOrderIds;
-      entry.purpose = buildPurposeFromIds(entry.campaignIds || [], origOrderIds, entry.purposeNotes || null);
+      entry.purpose = buildPurposeFromIds(entry.campaignIds || [], origOrderIds, entry.customerIds || [], entry.purposeNotes || null);
       await updateBatch(batch.id, { icingMaterials: { _v: 3, entries: batch.icingEntries } });
       showSaveError('Remove failed — the order record could not be updated. No changes were saved.');
       return;
@@ -26978,7 +27016,7 @@ function getOrderMultiPickerIds(containerId) {
 }
 
 // Build a purpose string from campaign+order ids (used to maintain legacy search compatibility)
-function buildPurposeFromIds(campaignIds, orderIds, extraText) {
+function buildPurposeFromIds(campaignIds, orderIds, customerIds, extraText) {
   var parts = [];
   (campaignIds||[]).forEach(function(id) {
     var c = campaigns.find(function(x){ return String(x.id)===String(id); });
@@ -26991,6 +27029,10 @@ function buildPurposeFromIds(campaignIds, orderIds, extraText) {
       var name = cust ? custDisplayName(cust) : '';
       parts.push((o.order_number||'ORD-'+o.id) + (name?' — '+name:''));
     }
+  });
+  (customerIds||[]).forEach(function(id) {
+    var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(id); });
+    if (c) parts.push(custDisplayName(c));
   });
   if (extraText && extraText.trim()) parts.push(extraText.trim());
   return parts.join(', ');
@@ -27201,7 +27243,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v37.0',
+    app_version: 'v38.0',
     tables: {}
   };
 
