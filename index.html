@@ -17327,7 +17327,7 @@ async function printReconciliationReport() {
 
   function custName(customerId) {
     var c = (cfg.customers||[]).find(function(x){ return String(x.id) === String(customerId); });
-    return c ? (c.name || c.org || String(customerId)) : String(customerId||'—');
+    return c ? (c.org || c.name || String(customerId)) : String(customerId||'—');
   }
   function orderLabel(o) { return (o.order_number||String(o.id)) + ' (' + custName(o.customer_id) + ')'; }
 
@@ -17361,8 +17361,11 @@ async function printReconciliationReport() {
 
   function batchArith(b) {
     var ba = rAllocs.filter(function(a){ return a.batch_num === b.num; });
-    var allocated = ba.filter(function(a){ return a.type !== 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
-    var disposed  = ba.filter(function(a){ return a.type === 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
+    var directAlloc = ba.filter(function(a){ return a.type !== 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
+    var disposed    = ba.filter(function(a){ return a.type === 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
+    var batchIcingIds = new Set(getIcingEntries(b).map(function(e){ return String(e.id); }));
+    var orderAlloc  = rOrders.reduce(function(s,o){ return s+(o.cookie_allocations||[]).reduce(function(s2,ca){ return s2+(batchIcingIds.has(String(ca.icing_entry_id))?(Number(ca.qty)||0):0); },0); },0);
+    var allocated   = directAlloc + orderAlloc;
     var yld = Number(b.yield)||0;
     return { allocated: allocated, disposed: disposed, yld: yld, unaccounted: yld - allocated - disposed };
   }
@@ -17532,17 +17535,19 @@ async function printReconciliationReport() {
 
   // ── Section 8: Order Quantity Consistency ─────────────────
   function sec8() {
+    // Order cookies live in orders.cookie_allocations, not the allocations table.
+    // Cross-check: for each order, cookie_allocations qty total vs icing entry qty total for that order.
+    var icingQtyByOrder = {};
+    rBatches.forEach(function(b) {
+      getIcingEntries(b).forEach(function(e) {
+        (e.orderIds||[]).forEach(function(oid) { icingQtyByOrder[String(oid)] = (icingQtyByOrder[String(oid)]||0)+(Number(e.qty)||0); });
+      });
+    });
     var issues = [];
     rOrders.forEach(function(o) {
-      var caQty = (o.cookie_allocations||[]).reduce(function(s,c){ return s+(Number(c.qty)||0); },0);
-      var aQty = 0;
-      rAllocs.forEach(function(a) {
-        var oids = a.order_ids;
-        if (!oids) return;
-        if (!Array.isArray(oids)) { try { oids = JSON.parse(oids); } catch(e) { return; } }
-        if (Array.isArray(oids) && oids.some(function(id){ return String(id)===String(o.id); })) aQty += Number(a.qty)||0;
-      });
-      if (caQty !== aQty) issues.push('Order '+orderLabel(o)+': cookie_allocations sum '+caQty+', allocations table sum '+aQty+', diff '+(aQty-caQty));
+      var caQty  = (o.cookie_allocations||[]).reduce(function(s,c){ return s+(Number(c.qty)||0); },0);
+      var iQty   = icingQtyByOrder[String(o.id)]||0;
+      if (caQty !== iQty) issues.push('Order '+orderLabel(o)+': cookie_allocations total '+caQty+', icing entries total '+iQty+', diff '+(iQty-caQty));
     });
     if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
