@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v38.3</title>
+<title>Cookie & Me — Kitchen Manager v38.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10242,7 +10242,7 @@ function _renderBakeReadonlyInfo(b) {
   }
   if (ba.length) {
     html += `<div class="u-modal-field"><label>Allocations</label><div style="font-size:13px;">${
-      ba.map(a=>{const r=a.recipient||{};return `<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><strong>${esc(r.name||'—')}</strong> · ${a.qty} cookies · ${a.date||'—'} <span class="tag tag-blue" style="font-size:10px">${a.type}</span></div>`;}).join('')
+      ba.map(a=>{const r=a.recipient||{};const _ie=a.icing_entry_id?(b.icingEntries||[]).find(e=>String(e.id)===String(a.icing_entry_id)):null;const _desc=(_ie&&_ie.cookieDescription)?` <span style="color:#888;font-size:0.85em">· ${esc(_ie.cookieDescription)}</span>`:'';return `<div style="padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><strong>${esc(r.name||'—')}</strong> · ${a.qty} cookies · ${a.date||'—'} <span class="tag tag-blue" style="font-size:10px">${a.type}</span>${_desc}</div>`;}).join('')
     }</div></div>`;
   }
   html += '</div>';
@@ -10842,12 +10842,14 @@ function renderAllocList() {
     const methodPart = a.method ? '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif">'+esc(a.method)+'</span>' : '';
     const distPart = (a.dist&&a.dist.length) ? '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif">'+a.dist.join(', ')+'</span>' : '';
     const addrPart = a.addr ? '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif">→ '+esc(a.addr)+'</span>' : '';
+    const _ie = a.icing_entry_id ? (b.icingEntries||[]).find(function(e){ return String(e.id)===String(a.icing_entry_id); }) : null;
+    const cookieDescPart = (_ie && _ie.cookieDescription) ? '<span style="color:#888;font-size:11px;font-family:sans-serif;">'+esc(_ie.cookieDescription)+'</span>' : '';
     const actionBtns = '<button class="btn-view" onclick="viewAlloc('+a.id+')">&#128065; View</button>'
       +'<button class="btn-edit" onclick="jumpToEditAlloc('+a.id+')">&#9998; Edit</button>'
       +'<button class="btn-del" onclick="confirmDeleteAlloc('+a.id+')">&#128465; Delete</button>';
     return '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">'
       + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'+typeBadge+namePart+phonePart+qtyPart+'</div>'
-      + '<div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">'+datePart+methodPart+addrPart+distPart+'</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">'+datePart+methodPart+addrPart+distPart+cookieDescPart+'</div>'
       + '<div class="rec-actions" style="margin-top:6px;padding-top:6px;">'+actionBtns+'</div>'
       + '</div>';
   }).join('');
@@ -27540,7 +27542,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v38.3',
+    app_version: 'v38.4',
     tables: {}
   };
 
@@ -29999,6 +30001,20 @@ function irBuildGroups(filtered) {
     if (!hasOrder && !hasCamp && !hasCust) {
       otherEntries.push(e);
     }
+  });
+  // Second pass: group icing entries into custGroups from direct alloc records (no campaign, no order link)
+  (allocs || []).forEach(function(a) {
+    if (!a.icing_entry_id) return;
+    if (a.campaign_ids && a.campaign_ids.length) return;
+    if (a.order_ids && a.order_ids.length) return;
+    var matchEntry = filtered.find(function(e) { return String(e.id) === String(a.icing_entry_id); });
+    if (!matchEntry) return;
+    var r = a.recipient || {};
+    var key = r.name ? ('rname:' + r.name) : (r.customerId ? String(r.customerId) : null);
+    if (!key) return;
+    var label = r.name || ('Customer ' + r.customerId);
+    if (!custGroups[key]) custGroups[key] = { label: label, entries: [] };
+    if (custGroups[key].entries.indexOf(matchEntry) === -1) custGroups[key].entries.push(matchEntry);
   });
   return { orderGroups: orderGroups, campGroups: campGroups, custGroups: custGroups, otherEntries: otherEntries };
 }
