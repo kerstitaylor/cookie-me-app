@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v38.0</title>
+<title>Cookie & Me — Kitchen Manager v38.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -1323,6 +1323,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <div class="field"><select id="al-b" onchange="loadAllocBatch()"><option value="">Select batch...</option></select></div>
         <div id="al-bi" style="display:none;font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-top:-4px;margin-bottom:6px"></div>
       </div>
+      <div id="al-icing-instances" style="display:none;margin-bottom:0"></div>
       <div id="al-form" style="display:none">
         <div class="card">
           <div class="card-title">Add allocation</div>
@@ -1384,6 +1385,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </div>
           <div class="field"><label>Date</label><input id="al-dt" type="date"/></div>
           <button class="btn btn-primary" onclick="addAlloc()">Add allocation</button>
+          <input type="hidden" id="al-icing-entry-id"/>
         </div>
         <div class="card">
           <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -10706,7 +10708,8 @@ function loadAllocBatch() {
   const af = document.getElementById('al-af'); if (af) af.style.display = 'none';
   const cb = document.getElementById('al-cancel-edit'); if (cb) cb.style.display = 'none';
   const saveBtn = document.querySelector('[onclick="addAlloc()"]'); if (saveBtn) saveBtn.textContent = 'Add allocation';
-  renderAllocList(); updateAllocTally(); prefillRemainingQty();
+  var _aiei = document.getElementById('al-icing-entry-id'); if (_aiei) _aiei.value = '';
+  renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderAllocIcingInstances();
 }
 
 async function addAlloc() {
@@ -10791,7 +10794,9 @@ async function addAlloc() {
       alert(msg);
       return;
     }
-    await insertAlloc({ batchNum:b.num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes, campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake });
+    const _aieEl = document.getElementById('al-icing-entry-id');
+    const _aieId = _aieEl ? (_aieEl.value || null) : null;
+    await insertAlloc({ batchNum:b.num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes, campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake, icingEntryId: _aieId });
     showSaveToast('Allocation saved');
     document.getElementById('al-q').value = '';
     const alNotesEl = document.getElementById('al-notes'); if (alNotesEl) alNotesEl.value = '';
@@ -10801,13 +10806,14 @@ async function addAlloc() {
     const alPhoneEl = document.getElementById('al-addr-phone'); if (alPhoneEl) alPhoneEl.value = '';
     const alCustId = document.getElementById('al-cust-id'); if (alCustId) alCustId.value = '';
     const alPickerInput = document.querySelector('#al-cust-picker-wrap .cust-picker-input'); if (alPickerInput) alPickerInput.value = '';
+    if (_aieEl) _aieEl.value = '';
     // Reset campaign/order pickers
     const alLinksPanel = document.getElementById('al-links-panel'); if (alLinksPanel) alLinksPanel.style.display = 'none';
     const alLinksToggle = document.getElementById('al-links-toggle'); if (alLinksToggle) alLinksToggle.textContent = '+ Link to campaign / order (optional)';
     renderCampMultiPicker('al-camp-picker', []);
     renderOrderMultiPicker('al-order-picker', []);
   }
-  renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner();
+  renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner(); renderAllocIcingInstances();
 }
 
 
@@ -10849,6 +10855,158 @@ function renderAllocList() {
   el.innerHTML = rows;
 }
 
+function renderAllocIcingInstances() {
+  var container = document.getElementById('al-icing-instances');
+  if (!container) return;
+  if (selBI < 0) { container.style.display = 'none'; return; }
+  var b = batches[selBI];
+  var entries = (b.icingEntries || []).filter(function(e) { return !e.isLegacy; });
+  var totalIced = entries.reduce(function(s, e) { return s + (e.qty || 0); }, 0);
+  var uniced = (b.yield || 0) - totalIced;
+
+  function allocatedForEntry(entryId) {
+    return allocs.filter(function(a) {
+      return a.icing_entry_id && String(a.icing_entry_id) === String(entryId);
+    }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
+  }
+
+  function recipientLabel(e) {
+    var parts = [];
+    (e.orderIds || []).forEach(function(oid) {
+      var o = (orders || []).find(function(x) { return String(x.id) === String(oid); });
+      if (o) parts.push('Order ' + (o.num || oid));
+    });
+    (e.campaignIds || []).forEach(function(cid) {
+      var c = (campaigns || []).find(function(x) { return String(x.id) === String(cid); });
+      if (c) parts.push(c.name || ('Campaign ' + cid));
+    });
+    (e.customerIds || []).forEach(function(custId) {
+      var c = (cfg.customers || []).find(function(x) { return String(x.id) === String(custId); });
+      if (c) parts.push(custDisplayName(c));
+    });
+    return parts.join(', ');
+  }
+
+  function designLabel(e) {
+    return e.cookieDescription || e.occasion || e.purpose || ('Icing run ' + (e.date || ''));
+  }
+
+  var partial = [], full = [];
+  entries.forEach(function(e) {
+    var allocated = allocatedForEntry(e.id);
+    var remaining = (e.qty || 0) - allocated;
+    if (remaining <= 0) {
+      full.push({ entry: e, allocated: allocated });
+    } else {
+      partial.push({ entry: e, allocated: allocated, remaining: remaining });
+    }
+  });
+
+  var hasContent = partial.length || full.length || uniced > 0;
+  if (!hasContent) { container.style.display = 'none'; return; }
+
+  var html = '<div class="card" style="margin-bottom:10px;">';
+  html += '<div class="card-title" style="margin-bottom:8px;">Icing instances</div>';
+
+  // Partially or unallocated
+  partial.forEach(function(item) {
+    var e = item.entry;
+    var recip = recipientLabel(e);
+    var design = designLabel(e);
+    var eidJson = JSON.stringify(String(e.id));
+    html += '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">';
+    html += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+    html += '<span style="font-weight:700;font-size:13px;font-family:sans-serif;">' + esc(design) + '</span>';
+    if (recip) html += '<span style="font-size:12px;color:var(--text-muted);font-family:sans-serif;">' + esc(recip) + '</span>';
+    html += '</div>';
+    html += '<div style="font-size:12px;font-family:sans-serif;color:var(--text-muted);margin-top:3px;">';
+    html += 'Iced: ' + (e.qty || 0);
+    if (item.allocated > 0) html += ' · Allocated: ' + item.allocated;
+    html += ' · <span style="color:var(--orange);font-weight:600;">' + item.remaining + ' remaining</span>';
+    html += '</div>';
+    html += '<div style="margin-top:6px;">';
+    html += '<button class="btn btn-sm btn-primary" style="font-size:12px;width:auto;padding:5px 12px;" onclick="preAllocFromIcing(' + eidJson + ')">Allocate →</button>';
+    html += '</div></div>';
+  });
+
+  // Uniced cookies
+  if (uniced > 0) {
+    html += '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">';
+    html += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+    html += '<span style="font-weight:700;font-size:13px;font-family:sans-serif;">Uniced cookies</span>';
+    html += '<span style="font-size:12px;color:var(--text-muted);font-family:sans-serif;">' + uniced + ' not yet iced</span>';
+    html += '</div>';
+    html += '<div style="margin-top:6px;">';
+    html += '<button class="btn btn-sm" style="font-size:12px;width:auto;padding:5px 12px;" onclick="preAllocUniced(' + uniced + ')">Allocate →</button>';
+    html += '</div></div>';
+  }
+
+  // Fully allocated — collapsed
+  if (full.length) {
+    html += '<details style="margin-top:6px;">';
+    html += '<summary style="font-size:12px;color:var(--text-muted);font-family:sans-serif;cursor:pointer;padding:4px 0;">Fully allocated (' + full.length + ')</summary>';
+    html += '<div>';
+    full.forEach(function(item) {
+      var e = item.entry;
+      var recip = recipientLabel(e);
+      var design = designLabel(e);
+      html += '<div style="padding:6px 0;border-bottom:1px solid var(--gray-light);opacity:0.55;">';
+      html += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+      html += '<span style="font-size:13px;font-weight:700;font-family:sans-serif;">' + esc(design) + '</span>';
+      if (recip) html += '<span style="font-size:12px;color:var(--text-muted);font-family:sans-serif;">' + esc(recip) + '</span>';
+      html += '<span style="font-size:11px;color:var(--success);font-family:sans-serif;">✓ ' + item.allocated + ' allocated</span>';
+      html += '</div></div>';
+    });
+    html += '</div></details>';
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+  container.style.display = 'block';
+}
+
+function preAllocFromIcing(entryId) {
+  if (selBI < 0) return;
+  var b = batches[selBI];
+  var e = (b.icingEntries || []).find(function(x) { return String(x.id) === String(entryId); });
+  if (!e) return;
+  var allocated = allocs.filter(function(a) {
+    return a.icing_entry_id && String(a.icing_entry_id) === String(entryId);
+  }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
+  var remaining = (e.qty || 0) - allocated;
+  var qEl = document.getElementById('al-q');
+  if (qEl) qEl.value = remaining > 0 ? remaining : '';
+  var hidEl = document.getElementById('al-icing-entry-id');
+  if (hidEl) hidEl.value = entryId;
+  var remEl = document.getElementById('al-remaining');
+  if (remEl) remEl.textContent = remaining > 0 ? (remaining + ' of ' + (e.qty || 0) + ' left to allocate') : ('All ' + (e.qty || 0) + ' cookies allocated');
+  // Pre-fill customer picker if exactly one customer linked
+  var custIds = e.customerIds || [];
+  if (custIds.length === 1) {
+    var custId = custIds[0];
+    var c = (cfg.customers || []).find(function(x) { return String(x.id) === String(custId); });
+    if (c) {
+      var custIdEl = document.getElementById('al-cust-id');
+      var pickerInput = document.querySelector('#al-cust-picker-wrap .cust-picker-input');
+      if (custIdEl) custIdEl.value = c.id;
+      if (pickerInput) pickerInput.value = custDisplayName(c);
+    }
+  }
+  var formEl = document.getElementById('al-form');
+  if (formEl) formEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function preAllocUniced(qty) {
+  var hidEl = document.getElementById('al-icing-entry-id');
+  if (hidEl) hidEl.value = '';
+  var qEl = document.getElementById('al-q');
+  if (qEl) qEl.value = qty;
+  var remEl = document.getElementById('al-remaining');
+  if (remEl) remEl.textContent = '';
+  var formEl = document.getElementById('al-form');
+  if (formEl) formEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function allocChkAll(custId, checked) {
   const panel = document.getElementById(custId+'-rows');
   if (panel) panel.querySelectorAll('.al-chk').forEach(cb => cb.checked = checked);
@@ -10862,7 +11020,7 @@ async function allocDelSelected(custId, occId) {
   const ids = Array.from(checkboxes).map(cb => parseInt(cb.dataset.id));
   if (!confirm(`Delete ${ids.length} allocation record${ids.length!==1?'s':''}?`)) return;
   for (const id of ids) { await deleteAlloc(id); }
-  renderAllocList();
+  renderAllocList(); renderAllocIcingInstances();
   updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner();
 }
 
@@ -10872,7 +11030,7 @@ async function delAllocConfirm(id) {
   const qty = a ? a.qty : '';
   if (!confirm('Delete allocation of ' + (qty?qty+' cookies to ':'') + r + '? This cannot be undone.')) return;
   await deleteAlloc(id);
-  renderAllocList();
+  renderAllocList(); renderAllocIcingInstances();
   updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner();
 }
 
@@ -11219,7 +11377,7 @@ async function delAllocFromRecent(id) {
   if (!confirm('Remove this allocation?')) return;
   await deleteAlloc(id);
   renderRecentAllocBatches(); renderUnallocBanner();
-  if (selBI >= 0) { renderAllocList(); updateAllocTally(); prefillRemainingQty(); }
+  if (selBI >= 0) { renderAllocList(); renderAllocIcingInstances(); updateAllocTally(); prefillRemainingQty(); }
 }
 
 function jumpToEditAlloc(id) {
@@ -11238,7 +11396,7 @@ function jumpToEditAlloc(id) {
       const b = batches[bi];
       form.style.display = 'block'; info.style.display = 'block';
       info.textContent = `${b.recipe||'No recipe'} · ${b.date} · ${b.yield||'?'} cookies · made by ${b.made_by||'—'}`;
-      renderAllocList(); updateAllocTally(); prefillRemainingQty();
+      renderAllocList(); renderAllocIcingInstances(); updateAllocTally(); prefillRemainingQty();
       editAlloc(id);
       var backBtn = document.getElementById('al-back-to-records');
       if (backBtn) backBtn.style.display = 'block';
@@ -27250,7 +27408,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v38.0',
+    app_version: 'v38.1',
     tables: {}
   };
 
