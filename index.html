@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v38.4</title>
+<title>Cookie & Me — Kitchen Manager v39.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -4497,7 +4497,8 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <button id="rec-btn-export" class="btn btn-primary" onclick="showRecordsView('export')" style="padding:12px;font-size:13px;">📤 Export</button>
     </div>
     <div id="print-records-panel" style="display:none;background:var(--gray-light);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:10px;">
-      <button class="btn btn-primary" style="width:100%;margin-bottom:14px;padding:11px;font-size:13px;font-weight:700;background:#122640;border-color:#122640;" onclick="printAllInspectionPack()">📋 Print All — Inspection Pack</button>
+      <button class="btn btn-primary" style="width:100%;margin-bottom:8px;padding:11px;font-size:13px;font-weight:700;background:#122640;border-color:#122640;" onclick="printAllInspectionPack()">📋 Print All — Inspection Pack</button>
+      <button class="btn btn-primary" style="width:100%;margin-bottom:14px;padding:11px;font-size:13px;font-weight:700;background:#2d4a1e;border-color:#2d4a1e;" onclick="printReconciliationReport()">🔍 Print Reconciliation Report</button>
       <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.07em;font-family:sans-serif;margin-bottom:10px;">🗓 Date range (leave blank for all records)</div>
       <div class="r2" style="margin-bottom:12px;">
         <div class="field" style="margin:0"><label>From</label><input type="date" id="pr-from" /></div>
@@ -17286,6 +17287,363 @@ async function printAllInspectionPack() {
   _prOpenWindow('Inspection_Pack', styles, '', sections.join(br) + _prFooter(version,now), '');
 }
 
+async function printReconciliationReport() {
+  var version = (document.title.match(/v[\d.]+/) || [''])[0] || '';
+  var now = new Date().toLocaleString('en-NZ',{day:'2-digit',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  var todayStr = today();
+
+  // Fetch all tables fresh in one pass
+  var results = await Promise.all([
+    db.from('batches').select('*').order('id'),
+    db.from('allocations').select('*').order('id'),
+    db.from('orders').select('*').order('id'),
+    db.from('ingredients').select('*').order('id'),
+    db.from('campaigns').select('*').order('id'),
+    db.from('campaign_engagements').select('*').order('id')
+  ]);
+  var rBatches   = results[0].data || [];
+  var rAllocs    = results[1].data || [];
+  var rOrders    = results[2].data || [];
+  var rIngs      = results[3].data || [];
+  var rCamps     = results[4].data || [];
+
+  // Restore split metadata from notes (same as loadBatches)
+  rBatches = rBatches.map(function(b) {
+    if (b.notes && b.notes.includes('[split:')) {
+      try {
+        var ms = b.notes.match(/\[split:(\{.*?\})\]/s);
+        if (ms) { var meta = JSON.parse(ms[1]); if (meta.isSplitParent) b.isSplitParent = true; if (meta.parentBatchId) b.parentBatchId = meta.parentBatchId; if (meta.splitInto) b.splitInto = meta.splitInto; }
+      } catch(e) {}
+    }
+    return b;
+  });
+
+  // Lookups
+  var orderIdSet  = new Set(rOrders.map(function(o){ return String(o.id); }));
+  var campIdSet   = new Set(rCamps.map(function(c){ return String(c.id); }));
+  var ingById     = {};  rIngs.forEach(function(i){ ingById[String(i.id)] = i; });
+  var batchByNum  = {};  rBatches.forEach(function(b){ if (b.num) batchByNum[b.num] = b; });
+  var batchById   = {};  rBatches.forEach(function(b){ batchById[String(b.id)] = b; });
+
+  function custName(customerId) {
+    var c = (cfg.customers||[]).find(function(x){ return String(x.id) === String(customerId); });
+    return c ? (c.name || c.org || String(customerId)) : String(customerId||'—');
+  }
+  function orderLabel(o) { return (o.order_number||String(o.id)) + ' (' + custName(o.customer_id) + ')'; }
+
+  function getIcingEntries(b) {
+    var im = b.icingMaterials;
+    if (!im) return [];
+    if (Array.isArray(im)) return im;
+    return im.entries || [];
+  }
+
+  function parseBBText(val) {
+    if (!val) return null;
+    val = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+    var m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) return m[3] + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
+    var months = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+    m = val.match(/([a-zA-Z]+)\s+(\d{4})/);
+    if (m) { var mon = months[m[1].toLowerCase().slice(0,3)]; if (mon) { var ld = new Date(Number(m[2]),mon,0).getDate(); return m[2]+'-'+String(mon).padStart(2,'0')+'-'+String(ld).padStart(2,'0'); } }
+    var d = new Date(val); return isNaN(d.getTime()) ? null : d.toISOString().slice(0,10);
+  }
+
+  function isParentBatch(b) {
+    if (b.isSplitParent) return true;
+    var cs = b.cookie_split;
+    if (!cs) return false;
+    if (Array.isArray(cs)) return cs.length > 0;
+    if (typeof cs === 'object') return Object.keys(cs).length > 0;
+    return false;
+  }
+
+  function batchArith(b) {
+    var ba = rAllocs.filter(function(a){ return a.batch_num === b.num; });
+    var allocated = ba.filter(function(a){ return a.type !== 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
+    var disposed  = ba.filter(function(a){ return a.type === 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
+    var yld = Number(b.yield)||0;
+    return { allocated: allocated, disposed: disposed, yld: yld, unaccounted: yld - allocated - disposed };
+  }
+
+  // ── Section 1: Batch Arithmetic ──────────────────────────
+  function sec1() {
+    var issues = [], urgent = [];
+    var warn7 = new Date(todayStr); warn7.setDate(warn7.getDate()+7);
+    var warn7Str = warn7.toISOString().slice(0,10);
+    rBatches.forEach(function(b) {
+      if (isParentBatch(b)) return;
+      var a = batchArith(b);
+      if (a.unaccounted !== 0) {
+        issues.push('Batch '+b.num+' ('+( b.recipe||'—')+'): yield '+a.yld+', allocated '+a.allocated+', disposed '+a.disposed+', unaccounted '+(a.unaccounted>0?'+':'')+a.unaccounted);
+        if (a.unaccounted > 0 && b.bb && b.bb <= warn7Str) {
+          urgent.push('Batch '+b.num+': '+a.unaccounted+' unaccounted — BB '+b.bb+(b.bb < todayStr ? ' <strong>(EXPIRED)</strong>' : ' (within 7 days)'));
+        }
+      }
+    });
+    if (!issues.length && !urgent.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var html = '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (urgent.length) html += '<div style="background:#fff4e0;border:1px solid #f0a500;border-radius:5px;padding:10px 12px;margin-top:8px;"><strong style="color:#a05a00;">⚠ Unaccounted cookies approaching or past best-before:</strong><ul style="margin:6px 0 0;">'+urgent.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul></div>';
+    return { html: html, count: issues.length };
+  }
+
+  // ── Section 2: Icing Quantity Check ──────────────────────
+  function sec2() {
+    var qIssues = [], noFondant = [];
+    rBatches.forEach(function(b) {
+      var entries = getIcingEntries(b);
+      if (!entries.length) return;
+      var total = entries.reduce(function(s,e){ return s+(Number(e.qty)||0); },0);
+      var yld = Number(b.yield)||0;
+      if (total !== yld) qIssues.push('Batch '+b.num+' ('+( b.recipe||'—')+'): yield '+yld+', icing entries total '+total+' (diff '+(total-yld>0?'+':'')+(total-yld)+')');
+      entries.forEach(function(e) {
+        var dec = e.decoration||[];
+        if (dec.length===0 || !dec.some(function(d){ return d.type==='Fondant'; })) {
+          var ctx = [];
+          if (e.orderIds && e.orderIds.length) ctx.push('orders: '+e.orderIds.join(', '));
+          if (e.campaignIds && e.campaignIds.length) ctx.push('campaigns: '+e.campaignIds.join(', '));
+          noFondant.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": '+(dec.length===0?'no decoration':'no Fondant item')+(ctx.length?' ['+ctx.join('; ')+']':''));
+        }
+      });
+    });
+    if (!qIssues.length && !noFondant.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var html = '';
+    if (qIssues.length) html += '<p><strong>Icing total ≠ batch yield:</strong></p><ul>'+qIssues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (noFondant.length) html += '<p><strong>Icing entries missing Fondant decoration:</strong></p><ul>'+noFondant.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    return { html: html, count: qIssues.length + noFondant.length };
+  }
+
+  // ── Section 3: Allocation vs Icing Cross-check ───────────
+  function sec3() {
+    var icingQtyByOrder = {};
+    rBatches.forEach(function(b) {
+      getIcingEntries(b).forEach(function(e) {
+        (e.orderIds||[]).forEach(function(oid) { icingQtyByOrder[String(oid)] = (icingQtyByOrder[String(oid)]||0)+(Number(e.qty)||0); });
+      });
+    });
+    var issues = [];
+    rOrders.forEach(function(o) {
+      var caQty = (o.cookie_allocations||[]).reduce(function(s,c){ return s+(Number(c.qty)||0); },0);
+      var iQty = icingQtyByOrder[String(o.id)]||0;
+      if (caQty !== iQty) issues.push('Order '+orderLabel(o)+': order confirms '+caQty+', icing entries sum '+iQty+', diff '+(iQty-caQty));
+    });
+    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+  }
+
+  // ── Section 4: Batches Needing Disposal Records ──────────
+  function sec4() {
+    var rows = [];
+    rBatches.forEach(function(b) {
+      if (!b.bb || b.bb >= todayStr) return;
+      var a = batchArith(b);
+      if (a.unaccounted <= 0) return;
+      var hasDisposal = rAllocs.some(function(x){ return x.batch_num===b.num && x.type==='disposal'; });
+      if (hasDisposal) return;
+      var days = Math.floor((new Date(todayStr)-new Date(b.bb))/86400000);
+      rows.push({ b: b, unaccounted: a.unaccounted, days: days });
+    });
+    rows.sort(function(a,b){ return b.days - a.days; });
+    if (!rows.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var html = '<ul>'+rows.map(function(r){ return '<li>Batch '+r.b.num+' ('+( r.b.recipe||'—')+'): '+r.unaccounted+' unaccounted, BB '+r.b.bb+', '+r.days+' day'+(r.days===1?'':'s')+' overdue</li>'; }).join('')+'</ul>';
+    return { html: html, count: rows.length };
+  }
+
+  // ── Section 5: Missing or Incomplete Icing Data ──────────
+  function sec5() {
+    var noFondant = [], noEntryId = [];
+    var seen = new Set();
+    rBatches.forEach(function(b) {
+      getIcingEntries(b).forEach(function(e) {
+        var key = b.num+'|'+(e.id||e.cookieDescription||'');
+        if (seen.has(key)) return;
+        seen.add(key);
+        var dec = e.decoration||[];
+        if (dec.length===0 || !dec.some(function(d){ return d.type==='Fondant'; })) noFondant.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": '+(dec.length===0?'no decoration':'no Fondant item'));
+      });
+    });
+    rAllocs.forEach(function(a) {
+      if (a.icing_entry_id || a.type==='disposal' || a.type==='testing') return;
+      var r = a.recipient;
+      var rName = (r && typeof r==='object') ? (r.name||r.org||JSON.stringify(r)) : (r||'—');
+      noEntryId.push('Batch '+(a.batch_num||'—')+', recipient: '+rName+', qty: '+(a.qty||0)+', type: '+(a.type||'—'));
+    });
+    if (!noFondant.length && !noEntryId.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var html = '';
+    if (noFondant.length) html += '<p><strong>Icing entries with no Fondant decoration:</strong></p><ul>'+noFondant.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (noEntryId.length) html += '<p><strong>Allocations with no icing entry ID (not disposal/testing):</strong></p><ul>'+noEntryId.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    return { html: html, count: noFondant.length + noEntryId.length };
+  }
+
+  // ── Section 6: Ingredient Traceability Gaps ──────────────
+  function sec6() {
+    var missing = [], lotMismatch = [];
+    rBatches.forEach(function(b) {
+      var bIngs = b.ingredients;
+      if (!bIngs) return;
+      if (!Array.isArray(bIngs)) { try { bIngs = JSON.parse(bIngs); } catch(e) { return; } }
+      if (!Array.isArray(bIngs)) return;
+      bIngs.forEach(function(bi) {
+        if (!bi.id) return;
+        var rec = ingById[String(bi.id)];
+        if (!rec) {
+          missing.push('Batch '+b.num+': ingredient ID '+bi.id+' ("'+(bi.name||bi.product||'—')+'") not found in ingredients table');
+        } else {
+          var lotRec   = rec.batch||'';
+          var lotBatch = bi.batch||bi.lot||'';
+          if (lotBatch && lotRec && lotBatch !== lotRec) lotMismatch.push('Batch '+b.num+': ingredient "'+(rec.product||bi.name||'—')+'" (ID '+bi.id+') — batch lot "'+lotBatch+'", ingredient record lot "'+lotRec+'"');
+        }
+      });
+    });
+    if (!missing.length && !lotMismatch.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var html = '';
+    if (missing.length) html += '<p><strong>Ingredient IDs not in ingredients table:</strong></p><ul>'+missing.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (lotMismatch.length) html += '<p><strong>Lot number mismatches:</strong></p><ul>'+lotMismatch.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    return { html: html, count: missing.length + lotMismatch.length };
+  }
+
+  // ── Section 7: Date Logic ─────────────────────────────────
+  function sec7() {
+    var issues = [];
+    rBatches.forEach(function(b) {
+      if (b.date && b.bb && b.date > b.bb) issues.push('Batch '+b.num+': bake date '+b.date+' is after best-before '+b.bb);
+      var bIngs = b.ingredients;
+      if (!bIngs) return;
+      if (!Array.isArray(bIngs)) { try { bIngs = JSON.parse(bIngs); } catch(e) { return; } }
+      if (!Array.isArray(bIngs)) return;
+      bIngs.forEach(function(bi) {
+        if (!bi.id || !b.date) return;
+        var rec = ingById[String(bi.id)];
+        if (!rec) return;
+        var ingBB = parseBBText(rec.best_before);
+        if (ingBB && ingBB < b.date) issues.push('Batch '+b.num+' ('+b.date+'): ingredient "'+(rec.product||bi.name||'—')+'" (ID '+bi.id+') BB '+ingBB+' was before bake date');
+      });
+    });
+    rIngs.forEach(function(ing) {
+      if (!ing.opened_date) return;
+      var bb = parseBBText(ing.best_before);
+      if (!bb) return;
+      if (ing.opened_date > bb) issues.push('Ingredient "'+(ing.product||'—')+'" (ID '+ing.id+'): opened '+ing.opened_date+' after BB '+bb);
+    });
+    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+  }
+
+  // ── Section 8: Order Quantity Consistency ─────────────────
+  function sec8() {
+    var issues = [];
+    rOrders.forEach(function(o) {
+      var caQty = (o.cookie_allocations||[]).reduce(function(s,c){ return s+(Number(c.qty)||0); },0);
+      var aQty = 0;
+      rAllocs.forEach(function(a) {
+        var oids = a.order_ids;
+        if (!oids) return;
+        if (!Array.isArray(oids)) { try { oids = JSON.parse(oids); } catch(e) { return; } }
+        if (Array.isArray(oids) && oids.some(function(id){ return String(id)===String(o.id); })) aQty += Number(a.qty)||0;
+      });
+      if (caQty !== aQty) issues.push('Order '+orderLabel(o)+': cookie_allocations sum '+caQty+', allocations table sum '+aQty+', diff '+(aQty-caQty));
+    });
+    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+  }
+
+  // ── Section 9: Orphaned Records ───────────────────────────
+  function sec9() {
+    var orphanOrders = [], orphanCamps = [], emptyOrders = [];
+    rBatches.forEach(function(b) {
+      getIcingEntries(b).forEach(function(e) {
+        var eOids = e.orderIds||[];
+        if (eOids.length > 0 && !eOids.some(function(id){ return orderIdSet.has(String(id)); })) orphanOrders.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": orderIds ['+eOids.join(', ')+'] — none found in orders');
+        var eCids = e.campaignIds||[];
+        if (eCids.length > 0 && !eCids.some(function(id){ return campIdSet.has(String(id)); })) orphanCamps.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": campaignIds ['+eCids.join(', ')+'] — none found in campaigns');
+      });
+    });
+    rOrders.forEach(function(o) {
+      var ca = o.cookie_allocations;
+      if ((!ca || !Array.isArray(ca) || ca.length===0) && (o.status||'').toLowerCase() !== 'cancelled') emptyOrders.push('Order '+orderLabel(o)+': no cookie allocations, status "'+(o.status||'—')+'"');
+    });
+    if (!orphanOrders.length && !orphanCamps.length && !emptyOrders.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var html = '';
+    if (orphanOrders.length) html += '<p><strong>Icing entries referencing non-existent orders:</strong></p><ul>'+orphanOrders.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (orphanCamps.length) html += '<p><strong>Icing entries referencing non-existent campaigns:</strong></p><ul>'+orphanCamps.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (emptyOrders.length) html += '<p><strong>Orders with no cookie allocations (not cancelled):</strong></p><ul>'+emptyOrders.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    return { html: html, count: orphanOrders.length + orphanCamps.length + emptyOrders.length };
+  }
+
+  // ── Section 10: Split Batch Completeness ─────────────────
+  function sec10() {
+    var issues = [];
+    rBatches.forEach(function(b) {
+      if (!isParentBatch(b)) return;
+      var childNums = [];
+      if (b.splitInto && Array.isArray(b.splitInto)) { childNums = b.splitInto.slice(); }
+      else { var cs = b.cookie_split; if (cs) { if (Array.isArray(cs)) childNums = cs.map(function(c){ return typeof c==='object'?(c.num||c.batch_num||String(c)):String(c); }); else if (typeof cs==='object') childNums = Object.values(cs).map(function(v){ return typeof v==='object'?(v.num||String(v)):String(v); }); } }
+      childNums.forEach(function(cn) { if (!batchByNum[cn]) issues.push('Parent batch '+b.num+': child batch "'+cn+'" not found in batches table'); });
+    });
+    rBatches.forEach(function(b) {
+      var pid = b.parent_batch_id||b.parentBatchId;
+      if (!pid) return;
+      if (!batchById[String(pid)]) issues.push('Child batch '+b.num+': parent_batch_id '+pid+' not found');
+      if (!b.yield || Number(b.yield)===0) issues.push('Child batch '+b.num+': yield is null or 0');
+    });
+    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+  }
+
+  // ── Section 11: Name and String Consistency ───────────────
+  function sec11() {
+    var issues = [];
+    // Customer names: same customerId, different name strings
+    var custNameMap = {};
+    rOrders.forEach(function(o) { if (!o.customer_id) return; var cid=String(o.customer_id); if (!custNameMap[cid]) custNameMap[cid]=new Set(); custNameMap[cid].add(custName(cid)); });
+    rAllocs.forEach(function(a) { var r=a.recipient; if (!r||typeof r!=='object') return; var cid=r.customerId||r.customer_id; if (!cid) return; var nm=r.name||r.org||''; if (!nm) return; if (!custNameMap[String(cid)]) custNameMap[String(cid)]=new Set(); custNameMap[String(cid)].add(nm); });
+    Object.keys(custNameMap).forEach(function(cid) { var names=Array.from(custNameMap[cid]); if (names.length>1) issues.push('Customer ID '+cid+': multiple name strings — '+names.map(function(n){ return '"'+n+'"'; }).join(', ')); });
+    // Cookie descriptions: same text, different capitalisation/spacing
+    var descMap = {};
+    rBatches.forEach(function(b) { getIcingEntries(b).forEach(function(e) { var d=e.cookieDescription; if (!d) return; var norm=d.toLowerCase().replace(/\s+/g,' ').trim(); if (!descMap[norm]) descMap[norm]=new Set(); descMap[norm].add(d); }); });
+    Object.keys(descMap).forEach(function(norm) { var vs=Array.from(descMap[norm]); if (vs.length>1) issues.push('Cookie description variants for "'+norm+'": '+vs.map(function(v){ return '"'+v+'"'; }).join(' vs ')); });
+    // Batch number format mixing B001 vs B-001
+    var hasDash=false, hasNoDash=false;
+    rBatches.forEach(function(b) { if (!b.num) return; if (/^B-\d+$/.test(b.num)) hasDash=true; else if (/^B\d+$/.test(b.num)) hasNoDash=true; });
+    if (hasDash && hasNoDash) issues.push('Batch numbers use mixed formats — some "B001" style, some "B-001" style');
+    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+  }
+
+  // ── Build report ─────────────────────────────────────────
+  var secDefs = [
+    { n:1,  title:'Batch Arithmetic',                fn: sec1  },
+    { n:2,  title:'Icing Quantity Check',            fn: sec2  },
+    { n:3,  title:'Allocation vs Icing Cross-check', fn: sec3  },
+    { n:4,  title:'Batches Needing Disposal Records',fn: sec4  },
+    { n:5,  title:'Missing or Incomplete Icing Data',fn: sec5  },
+    { n:6,  title:'Ingredient Traceability Gaps',    fn: sec6  },
+    { n:7,  title:'Date Logic',                      fn: sec7  },
+    { n:8,  title:'Order Quantity Consistency',      fn: sec8  },
+    { n:9,  title:'Orphaned Records',                fn: sec9  },
+    { n:10, title:'Split Batch Completeness',        fn: sec10 },
+    { n:11, title:'Name and String Consistency',     fn: sec11 }
+  ];
+  var totalIssues = 0, sectionsWithIssues = 0, bodyParts = [];
+  secDefs.forEach(function(s) {
+    var res;
+    try { res = s.fn(); } catch(e) { res = { html: '<p>⚠ Could not compute — '+e.message+'</p>', count: 0 }; }
+    totalIssues += res.count||0;
+    if ((res.count||0) > 0) sectionsWithIssues++;
+    bodyParts.push('<h2>Section '+s.n+' — '+s.title+'</h2>'+res.html);
+  });
+
+  var summary = totalIssues === 0
+    ? '<p style="font-size:13px;font-weight:600;color:#2d7a4f;">✓ No issues found — all records reconcile</p>'
+    : '<p style="font-size:13px;font-weight:600;color:#c0392b;">'+totalIssues+' issue'+(totalIssues===1?'':'s')+' found across '+sectionsWithIssues+' section'+(sectionsWithIssues===1?'':'s')+'</p>';
+
+  var styles = _prSharedStyles();
+  var hdr = '<div class="hdr"><div class="hdr-left"><div class="brand-cookie">Cookie &amp; Me</div><div class="brand-sub">DATA RECONCILIATION REPORT '+version+'</div><h1 style="margin-top:6px">Data Reconciliation Report</h1><p>Generated: '+now+'</p></div><button class="no-print" onclick="window.print()" style="padding:8px 16px;background:#122640;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">&#x1F5A8; Print / Save PDF</button></div>';
+  var footer = '<div class="footer">Cookie &amp; Me Kitchen Manager '+version+' &nbsp;·&nbsp; Data Reconciliation Report &nbsp;·&nbsp; Generated: '+now+'</div>';
+  _prOpenWindow('Data_Reconciliation_Report', styles, hdr, summary+bodyParts.join(''), footer);
+}
+
 async function printAllSalesReports() {
   var from = (document.getElementById('pr-from')||{}).value || '';
   var to   = (document.getElementById('pr-to')||{}).value   || '';
@@ -27542,7 +27900,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v38.4',
+    app_version: 'v39.0',
     tables: {}
   };
 
