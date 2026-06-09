@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v38.1</title>
+<title>Cookie & Me — Kitchen Manager v38.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10865,9 +10865,15 @@ function renderAllocIcingInstances() {
   var uniced = (b.yield || 0) - totalIced;
 
   function allocatedForEntry(entryId) {
-    return allocs.filter(function(a) {
+    var fromOrders = (orders || []).reduce(function(s, o) {
+      return s + (o.cookie_allocations || []).reduce(function(s2, ca) {
+        return s2 + (String(ca.icing_entry_id) === String(entryId) ? (ca.qty || 0) : 0);
+      }, 0);
+    }, 0);
+    var fromDirect = allocs.filter(function(a) {
       return a.icing_entry_id && String(a.icing_entry_id) === String(entryId);
     }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
+    return fromOrders + fromDirect;
   }
 
   function recipientLabel(e) {
@@ -10970,9 +10976,15 @@ function preAllocFromIcing(entryId) {
   var b = batches[selBI];
   var e = (b.icingEntries || []).find(function(x) { return String(x.id) === String(entryId); });
   if (!e) return;
-  var allocated = allocs.filter(function(a) {
+  var fromOrders = (orders || []).reduce(function(s, o) {
+    return s + (o.cookie_allocations || []).reduce(function(s2, ca) {
+      return s2 + (String(ca.icing_entry_id) === String(entryId) ? (ca.qty || 0) : 0);
+    }, 0);
+  }, 0);
+  var fromDirect = allocs.filter(function(a) {
     return a.icing_entry_id && String(a.icing_entry_id) === String(entryId);
   }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
+  var allocated = fromOrders + fromDirect;
   var remaining = (e.qty || 0) - allocated;
   var qEl = document.getElementById('al-q');
   if (qEl) qEl.value = remaining > 0 ? remaining : '';
@@ -27408,7 +27420,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v38.1',
+    app_version: 'v38.2',
     tables: {}
   };
 
