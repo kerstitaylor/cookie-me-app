@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v39.3</title>
+<title>Cookie & Me — Kitchen Manager v40.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2328,31 +2328,58 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 
     <!-- SEARCH SUB-TAB -->
     <div id="rc-panel-search">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-family:sans-serif;padding:6px 0;margin-bottom:10px;cursor:pointer;">
+        <input type="checkbox" id="rc-mock" style="width:16px;height:16px;accent-color:var(--orange)"/>
+        <span>This is a mock recall / drill only</span>
+      </label>
+
       <div class="card">
-        <div class="card-title">Recall / trace search</div>
-        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">Search by ingredient lot number, batch number, ingredient name, customer, or supplier name.</p>
+        <div class="card-title">1. By ingredient or lot</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A supplier has recalled an ingredient, or I suspect one.</p>
         <div class="field">
-          <input class="search-input" id="rc-q" placeholder="e.g. FR271 or B001 or flour or Woolworths" style="margin-bottom:6px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRecall();}"/>
+          <input class="search-input" id="rc1-q" placeholder="e.g. flour or 23368427" style="margin-bottom:6px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRecallByIngredient();}"/>
         </div>
-        <div class="r2">
-          <div class="field"><label>Or filter by customer</label>
-            <select id="rc-cust" onchange="if(this.value){document.getElementById('rc-q').value=this.value;}">
-              <option value="">All customers...</option>
-            </select>
-          </div>
-          <div class="field"><label>Or filter by supplier</label>
-            <select id="rc-sup" onchange="if(this.value){document.getElementById('rc-q').value=this.value;}">
-              <option value="">All suppliers...</option>
-            </select>
-          </div>
-        </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-family:sans-serif;padding:6px 0;margin-bottom:6px;cursor:pointer;">
-          <input type="checkbox" id="rc-mock" style="width:16px;height:16px;accent-color:var(--orange)"/>
-          <span>This is a mock recall / drill only</span>
-        </label>
-        <button class="btn btn-primary" onclick="doRecall()">Search</button>
+        <button class="btn btn-primary" onclick="doRecallByIngredient()">Search</button>
       </div>
-      <div id="rc-res"></div>
+      <div id="rc1-res"></div>
+
+      <div class="card">
+        <div class="card-title">2. By batch number</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A customer reported a problem with cookies from a specific batch.</p>
+        <div class="field">
+          <input class="search-input" id="rc2-q" placeholder="e.g. B001" style="margin-bottom:6px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRecallByBatch();}"/>
+        </div>
+        <button class="btn btn-primary" onclick="doRecallByBatch()">Search</button>
+      </div>
+      <div id="rc2-res"></div>
+
+      <div class="card">
+        <div class="card-title">3. By customer</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A customer reported a problem but doesn't know their batch.</p>
+        <div class="field">
+          <input class="search-input" id="rc3-q" placeholder="e.g. Jane Smith" style="margin-bottom:6px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRecallByCustomer();}"/>
+        </div>
+        <button class="btn btn-primary" onclick="doRecallByCustomer()">Search</button>
+      </div>
+      <div id="rc3-res"></div>
+
+      <div class="card">
+        <div class="card-title">4. By date range</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">I need to recall everything in a period while I investigate.</p>
+        <div class="r2">
+          <div class="field"><label>Start date</label><input type="date" id="rc4-start"/></div>
+          <div class="field"><label>End date</label><input type="date" id="rc4-end"/></div>
+        </div>
+        <div class="field">
+          <label>Range looks at</label>
+          <select id="rc4-mode">
+            <option value="baked" selected>Baked (batch date)</option>
+            <option value="delivered">Delivered / sold</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="doRecallByDateRange()">Search</button>
+      </div>
+      <div id="rc4-res"></div>
     </div>
 
     <!-- CHECKLIST SUB-TAB -->
@@ -18207,6 +18234,240 @@ function _recallFuzzySuggest(q) {
     .slice(0, 8);
 }
 
+// ── Recall screen: 4 independent searches, one per option ───────────────
+let _recallIngGroups = [];
+let _recallConfirmedIds = [];
+let _recallConfirmedGroups = [];
+
+// A query is treated as a lot-number search if it's mostly digits, with at
+// most one trailing non-digit char (e.g. "23368427" or "23368427 F").
+function _recallDetectMode(q) {
+  const stripped = q.replace(/\s+/g,'');
+  const digitCount = (stripped.match(/\d/g)||[]).length;
+  if (digitCount >= 4 && digitCount >= stripped.length - 1) return 'lot';
+  return 'ingredient';
+}
+
+// Group ingredient records by their exact lot text (case/whitespace
+// insensitive). Records with no lot recorded each become their own group —
+// "no lot" is never treated as a shared lot, and different lot texts are
+// never merged.
+function _recallGroupByLot(matches) {
+  const groups = new Map();
+  matches.forEach(i => {
+    const lotRaw = (i.batch||'').trim();
+    const key = lotRaw ? lotRaw.toLowerCase() : '__nolot_'+i.id;
+    if (!groups.has(key)) groups.set(key, {lot: lotRaw||'(no lot recorded)', ids:[], records:[]});
+    const g = groups.get(key);
+    g.ids.push(i.id);
+    g.records.push(i);
+  });
+  return [...groups.values()];
+}
+
+// Ingredient-name mode: match brand/product/category text, group by lot.
+function _recallSearchByIngredientName(q) {
+  const matches = ings.filter(i => {
+    const hay = ((i.category||i.cat||'')+' '+(i.brand||'')+' '+(i.product||'')).toLowerCase();
+    return hay.includes(q);
+  });
+  return _recallGroupByLot(matches);
+}
+
+// Lot-number mode: exact normalized matches first, then near-matches that
+// share the same digit core ignoring spaces/case and an optional trailing
+// letter (so "23368427", "23368427F" and "23368427 F" surface together).
+// Genuinely different lot numbers stay as separate groups.
+function _recallSearchByLot(q) {
+  const qNorm = q.replace(/\s+/g,'').toLowerCase();
+  const qCore = qNorm.replace(/[a-z]+$/,'');
+  const matches = ings.filter(i => {
+    const bNorm = (i.batch||'').replace(/\s+/g,'').toLowerCase();
+    if (!bNorm) return false;
+    if (bNorm === qNorm) return true;
+    const bCore = bNorm.replace(/[a-z]+$/,'');
+    return !!qCore && bCore === qCore;
+  });
+  matches.sort((a,b) => {
+    const aExact = (a.batch||'').replace(/\s+/g,'').toLowerCase()===qNorm ? 0 : 1;
+    const bExact = (b.batch||'').replace(/\s+/g,'').toLowerCase()===qNorm ? 0 : 1;
+    return aExact - bExact;
+  });
+  return _recallGroupByLot(matches);
+}
+
+function _recallFmtShortDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  return d.toLocaleDateString('en-NZ',{day:'numeric',month:'short'});
+}
+
+// Builds the "bought as Woolworths 12 May, Pams 3 June" detail line for a lot group.
+function _recallLotDetailLine(g) {
+  return g.records.map(r => {
+    const sup = r.supplier || 'Unknown supplier';
+    const dt = _recallFmtShortDate(r.date_added);
+    return dt ? sup+' '+dt : sup;
+  }).join(', ');
+}
+
+// Builds the best-before line for a lot group — a single date if all records
+// agree, or every distinct date if they differ.
+function _recallLotBestBeforeLine(g) {
+  const dates = [...new Set(g.records.map(r=>r.best_before).filter(Boolean))];
+  if (!dates.length) return '—';
+  return dates.map(d=>_recallFmtShortDate(d)).join(', ');
+}
+
+function _recallNoMatchHtml(q) {
+  const suggestions = _recallFuzzySuggest(q);
+  const suggestHtml = suggestions.length
+    ? `<div style="margin-top:12px">
+        <div style="font-size:12px;font-weight:700;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">Did you mean…?</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">` +
+        suggestions.map(s =>
+          `<button onclick="document.getElementById('rc1-q').value=${JSON.stringify(s.display)};doRecallByIngredient();"
+            style="padding:5px 12px;border:1px solid var(--border);border-radius:99px;background:var(--white);font-size:13px;font-family:sans-serif;cursor:pointer;color:var(--navy);transition:all 0.15s;"
+            onmouseover="this.style.background='var(--gray-light)'" onmouseout="this.style.background='var(--white)'"
+          >${esc(s.display)} <span style="font-size:10px;color:var(--text-muted);font-weight:400">${s.category}</span></button>`
+        ).join('') +
+        `</div></div>`
+    : `<div style="margin-top:10px;padding:10px 12px;background:var(--warning-bg);border-radius:var(--radius);font-size:12px;color:var(--warning);font-family:sans-serif;line-height:1.6">
+        <strong>Suggestions:</strong><br>
+        • Check that the lot number was recorded when the ingredient was opened.<br>
+        • Try searching by ingredient name (e.g. "flour" or "butter").<br>
+        • Try a partial batch number (e.g. "B001").
+      </div>`;
+  return `<div class="card">
+    <div class="empty" style="line-height:1.6">No ingredient records found for "<strong>${esc(q)}</strong>".</div>
+    ${suggestHtml}
+  </div>`;
+}
+
+// ── 1. By ingredient or lot ───────────────────────────────────────────────
+function doRecallByIngredient() {
+  const q = document.getElementById('rc1-q').value.trim().toLowerCase();
+  const el = document.getElementById('rc1-res');
+  _recallIngGroups = []; _recallConfirmedIds = []; _recallConfirmedGroups = [];
+  if (!q) { el.innerHTML=''; return; }
+
+  const mode = _recallDetectMode(q);
+  const groups = mode==='lot' ? _recallSearchByLot(q) : _recallSearchByIngredientName(q);
+
+  if (!groups.length) { el.innerHTML = _recallNoMatchHtml(q); return; }
+
+  _recallIngGroups = groups;
+  let h = `<div class="alert alert-warning" style="font-weight:600">${groups.length} lot${groups.length>1?'s':''} found — tick the lots to trace, then confirm</div>`;
+  groups.forEach((g, gi) => {
+    h += `<div class="card" style="margin-bottom:8px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+        <input type="checkbox" class="rc-ing-check" data-gi="${gi}" style="margin-top:3px;width:18px;height:18px;flex-shrink:0"/>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-family:sans-serif;font-size:14px">Lot ${esc(g.lot)}</div>
+          <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-top:2px">${g.records.length} bag${g.records.length>1?'s':''} · best before ${esc(_recallLotBestBeforeLine(g))}</div>
+          <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-top:2px">bought as ${esc(_recallLotDetailLine(g))}</div>
+        </div>
+      </label>
+    </div>`;
+  });
+  h += `<button class="btn btn-primary" onclick="_recallConfirmSelection()">Confirm selection</button>`;
+  h += `<div id="rc-confirm"></div>`;
+  el.innerHTML = h;
+}
+
+// Reads ticked lot checkboxes, collects underlying ingredient record IDs into
+// _recallConfirmedIds, and shows exactly what was selected so a mistyped
+// search can be caught before Build 2 builds anything from it.
+function _recallConfirmSelection() {
+  const checks = [...document.querySelectorAll('.rc-ing-check:checked')];
+  const selectedGroups = checks.map(c => _recallIngGroups[parseInt(c.dataset.gi,10)]).filter(Boolean);
+  _recallConfirmedGroups = selectedGroups;
+  _recallConfirmedIds = selectedGroups.flatMap(g => g.ids);
+
+  const confirmEl = document.getElementById('rc-confirm');
+  if (!confirmEl) return;
+  if (!selectedGroups.length) {
+    confirmEl.innerHTML = `<div class="alert alert-warning" style="margin-top:8px">Tick at least one lot before confirming.</div>`;
+    return;
+  }
+  let h = `<div class="card" style="border-color:var(--success);margin-top:8px;background:#f0f7f0">
+    <div style="font-weight:700;font-family:sans-serif;font-size:13px;margin-bottom:6px">✓ Confirmed selection — ${_recallConfirmedIds.length} record${_recallConfirmedIds.length>1?'s':''} across ${selectedGroups.length} lot${selectedGroups.length>1?'s':''}</div>`;
+  selectedGroups.forEach(g => {
+    h += `<div style="margin-bottom:6px">
+      <div style="font-weight:600;font-family:sans-serif;font-size:13px">Lot ${esc(g.lot)}</div>
+      ${g.records.map(r => `<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;padding-left:10px">#${r.id} · ${esc(r.supplier||'Unknown supplier')}${r.date_added?' · '+esc(_recallFmtShortDate(r.date_added)):''}${r.best_before?' · best before '+esc(_recallFmtShortDate(r.best_before)):''}</div>`).join('')}
+    </div>`;
+  });
+  h += `</div>`;
+  confirmEl.innerHTML = h;
+}
+
+// Shared renderer for the simple "list of batches" results (options 2–4).
+function _recallRenderBatchList(el, matches, emptyMsg) {
+  if (!matches.length) { el.innerHTML = `<div class="card"><div class="empty">${esc(emptyMsg)}</div></div>`; return; }
+  let h = `<div class="alert alert-warning" style="font-weight:600">${matches.length} batch${matches.length>1?'es':''} matched</div>`;
+  matches.forEach(b => {
+    h += `<div class="card" style="margin-bottom:8px">
+      <div style="font-weight:700;font-family:sans-serif">${esc(b.num)}</div>
+      <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif">${esc(b.recipe||'')} · ${b.date||''} · ${b.yield||'?'} cookies</div>
+    </div>`;
+  });
+  el.innerHTML = h;
+}
+
+// ── 2. By batch number — reuses doRecall()'s b.num contains-match (line ~18248) ─
+function doRecallByBatch() {
+  const q = document.getElementById('rc2-q').value.trim().toLowerCase();
+  const el = document.getElementById('rc2-res');
+  if (!q) { el.innerHTML=''; return; }
+  const matches = batches.filter(b => b.num && b.num.toLowerCase().includes(q));
+  _recallRenderBatchList(el, matches, `No batches found for "${q}".`);
+}
+
+// ── 3. By customer — reuses doRecall()'s alloc-recipient and order-customer
+// name matches (the GAP 6 FIX block) ────────────────────────────────────────
+function doRecallByCustomer() {
+  const q = document.getElementById('rc3-q').value.trim().toLowerCase();
+  const el = document.getElementById('rc3-res');
+  if (!q) { el.innerHTML=''; return; }
+  const mb = new Set();
+  allocs.forEach(a=>{ if((a.recipient?.name||'').toLowerCase().includes(q)){const bi=batches.findIndex(b=>b.num===a.batch_num);if(bi>-1){mb.add(bi);}} });
+  orders.forEach(o=>{
+    const oc = (cfg.customers||[]).find(x=>x&&x.id==o.customer_id);
+    const oName = (oc ? custDisplayName(oc) : (o.customer_name||'')).toLowerCase();
+    if (oName && oName.includes(q)) {
+      (o.cookie_allocations||[]).forEach(ca=>{
+        const bi = batches.findIndex(b=>(b.icingEntries||[]).some(e=>String(e.id)===String(ca.icing_entry_id)));
+        if (bi>-1) mb.add(bi);
+      });
+    }
+  });
+  _recallRenderBatchList(el, [...mb].map(bi=>batches[bi]), `No batches found for "${q}".`);
+}
+
+// ── 4. By date range — "baked" uses b.date; "delivered/sold" uses alloc
+// dates (a.date) and order dates (o.delivery_date || o.date_placed) ────────
+function doRecallByDateRange() {
+  const start = document.getElementById('rc4-start').value;
+  const end = document.getElementById('rc4-end').value;
+  const mode = document.getElementById('rc4-mode').value;
+  const el = document.getElementById('rc4-res');
+  if (!start || !end) { el.innerHTML = `<div class="card"><div class="empty">Pick a start and end date.</div></div>`; return; }
+  let matches;
+  if (mode === 'baked') {
+    matches = batches.filter(b => b.date && b.date >= start && b.date <= end);
+  } else {
+    matches = batches.filter(b => {
+      const allocDates = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num)).map(a=>a.date).filter(Boolean);
+      const batchIcingIds = new Set((b.icingEntries||[]).map(e=>String(e.id)));
+      const orderDates = orders.filter(o=>(o.cookie_allocations||[]).some(a=>batchIcingIds.has(String(a.icing_entry_id)))).map(o=>o.delivery_date||o.date_placed).filter(Boolean);
+      return [...allocDates, ...orderDates].some(d=>d>=start&&d<=end);
+    });
+  }
+  _recallRenderBatchList(el, matches, 'No batches found in that range.');
+}
+
 async function doRecall() {
   const q = document.getElementById('rc-q').value.trim().toLowerCase();
   const el = document.getElementById('rc-res');
@@ -27908,7 +28169,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v39.3',
+    app_version: 'v40.0',
     tables: {}
   };
 
