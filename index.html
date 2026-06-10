@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v39.2</title>
+<title>Cookie & Me — Kitchen Manager v39.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -5146,6 +5146,17 @@ let expandedIngId = null; // which inventory row is expanded for detail view
 
 // HTML escape helper
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// Display name for an allocation recipient (object {name, org,...} or legacy string).
+// Org takes priority over individual name; legacy "Org - Contact" strings show only the org part.
+function recipDisplayName(r) {
+  if (r == null) return '';
+  if (typeof r === 'string') {
+    var i = r.indexOf(' - ');
+    return i === -1 ? r : r.slice(0, i).trim();
+  }
+  return (r.org && r.org.trim()) ? r.org : (r.name || '');
+}
 // -- Task type helpers --
 function taskTypeOptions(selected) {
   const base = ['Bake','Ice'];
@@ -10833,7 +10844,7 @@ function renderAllocList() {
 
   const rows = list.map(a => {
     const r = a.recipient || {};
-    const rname = typeof r === 'string' ? r : (r.name || '--');
+    const rname = recipDisplayName(a.recipient) || '--';
     const rphone = typeof r === 'object' ? (r.phone || '') : '';
     const typeBadge = '<span class="tag '+(tagCls[a.type]||'tag-gray')+'" style="font-size:10px">'+(tl[a.type]||a.type)+'</span>';
     const namePart = '<span style="font-weight:700;font-family:sans-serif;font-size:13px">'+esc(rname)+'</span>';
@@ -11161,7 +11172,7 @@ async function allocDelSelected(custId, occId) {
 
 async function delAllocConfirm(id) {
   const a = allocs.find(x=>x.id===id);
-  const r = a ? (typeof a.recipient==='string' ? a.recipient : (a.recipient?.name||'this record')) : 'this record';
+  const r = a ? (recipDisplayName(a.recipient)||'this record') : 'this record';
   const qty = a ? a.qty : '';
   if (!confirm('Delete allocation of ' + (qty?qty+' cookies to ':'') + r + '? This cannot be undone.')) return;
   await deleteAlloc(id);
@@ -11482,7 +11493,7 @@ function renderRecentAllocBatches() {
     const isExp = expandedAllocBatchNum === b.num;
     const detail = isExp ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-light)">
-        ${ba.map(a=>{const r=a.recipient||{};const rName=typeof r==='string'?r:(r.name||'—');return `<div class="row" style="padding:5px 0">
+        ${ba.map(a=>{const r=a.recipient||{};const rName=recipDisplayName(a.recipient)||'—';return `<div class="row" style="padding:5px 0">
           <span class="tag ${a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber'}" style="font-size:10px">${tl[a.type]||a.type}</span>
           <div style="flex:1;font-family:sans-serif;font-size:12px">${rName}${r.phone?' · <a href="tel:'+r.phone+'" style="color:var(--navy);text-decoration:none;">'+r.phone+'</a>':''}<br>
             <span style="font-size:11px;color:var(--text-muted)">${a.date} · ${a.method}${a.dist&&a.dist.length?' · '+a.dist.join(', '):''}</span>
@@ -11720,7 +11731,7 @@ function renderAllocHistory() {
     function recipRow(item, groupId) {
       var a = item._a;
       var r = a.recipient||{};
-      var rname = typeof r==='string' ? r : (r.name||'');
+      var rname = recipDisplayName(a.recipient);
       var rphone = typeof r==='object' ? (r.phone||'') : '';
       var typeBadge = '<span class="tag '+typeTagClass(a.type)+'" style="font-size:10px">'+(tl[a.type]||a.type)+'</span>';
       var namePart = '<span style="font-weight:700;font-family:sans-serif;font-size:13px">'+esc(rname||'--')+'</span>';
@@ -11774,7 +11785,7 @@ function renderAllocHistory() {
       // Multiple entries for same recipient — render as collapsible group
       var first = groupItems[0]._a;
       var r = first.recipient||{};
-      var rname = typeof r==='string' ? r : (r.name||'');
+      var rname = recipDisplayName(first.recipient);
       var rphone = typeof r==='object' ? (r.phone||'') : '';
       var totalQty = groupItems.reduce(function(s,i){ return s+(i._a.qty||0); }, 0);
       var typeBadge = '<span class="tag '+typeTagClass(first.type)+'" style="font-size:10px">'+(tl[first.type]||first.type)+'</span>';
@@ -11815,8 +11826,7 @@ function renderAllocHistory() {
       var recipGroupMap = {};
       srcItems.forEach(function(item) {
         var a = item._a;
-        var r = a.recipient||{};
-        var rname = typeof r==='string' ? r : (r.name||'');
+        var rname = recipDisplayName(a.recipient);
         var gkey = src==='order' ? (rname+'||'+(a._orderNum||'')) : rname;
         if (!recipGroupMap[gkey]) { recipGroupMap[gkey]=[]; recipGroupOrder.push(gkey); }
         recipGroupMap[gkey].push(item);
@@ -11918,7 +11928,7 @@ function exportAllocations(src) {
   const rows = list.map(a=>{
     const r = a.recipient||{};
     const b = batches.find(x=>x.num===a.batch_num)||{};
-    return [a.date||'', a.batch_num||'', b.recipe||'', a.type||'', r.name||'', r.phone||r.email||'', a.qty||'', a.method||'', a.market||'', a.addr||'', (a.dist||[]).join('; ')];
+    return [a.date||'', a.batch_num||'', b.recipe||'', a.type||'', recipDisplayName(a.recipient), r.phone||r.email||'', a.qty||'', a.method||'', a.market||'', a.addr||'', (a.dist||[]).join('; ')];
   });
   downloadCSV('cookie_me_allocations.csv', headers, rows);
 }
@@ -15052,7 +15062,7 @@ function rclBuildRecipients() {
       if (a.type==='disposal') return;
       // Prefer live customer record for name/phone/email over stored snapshot
       const liveCust = r.custId ? (cfg.customers||[]).find(c=>String(c.id)===String(r.custId)) : null;
-      const name = liveCust ? (liveCust.org||liveCust.name||r.name||'') : (r.name||'');
+      const name = (liveCust && (liveCust.org||liveCust.name)) || recipDisplayName(a.recipient);
       const phone = liveCust ? (liveCust.phone||r.phone||r.contact||'') : (r.phone||r.contact||'');
       const email = liveCust ? (liveCust.email||r.email||'') : (r.email||'');
       rclRecipients.push({ name, type: a.type, phone, email, batch: num, qty: a.qty||0, _custId: r.custId||null });
@@ -15419,7 +15429,7 @@ function recallExportCSV(mb, q, deliveryLogs, icingFilter) {
           const _rPhone = rec._cr?(rec._cr.phone||''):(typeof r==='string'?'':(r.phone||r.contact||''));
           const _rEmail = rec._cr?(rec._cr.email||''):(typeof r==='string'?'':(r.email||''));
           const _soc2 = rec._cr?(()=>{const s=rec._cr.social_media||{};return['instagram','facebook','messenger','whatsapp','linkedin'].map(k=>s[k]?k+': '+s[k]:'').filter(Boolean).join(' | ');})()||'':'';
-          rows.push([b.num,b.date,b.recipe||'',b.made_by||'',b.yield||'',ing.category||ing.description||'',lot,rec._rn,rec.type||'',rec.qty||'',rec.method||'',rec.date||'',_rPhone,_rEmail,_soc2,delivery?.supplier||'',delivery?.date||'',delivery?.condition||'']);
+          rows.push([b.num,b.date,b.recipe||'',b.made_by||'',b.yield||'',ing.category||ing.description||'',lot,recipDisplayName(rec._a.recipient),rec.type||'',rec.qty||'',rec.method||'',rec.date||'',_rPhone,_rEmail,_soc2,delivery?.supplier||'',delivery?.date||'',delivery?.condition||'']);
         });
       }
     });
@@ -15879,8 +15889,7 @@ function _prBuildBatches(rows) {
       var directMap = {};
       var directKeys = [];
       batchDirectP.forEach(function(a) {
-        var r = a.recipient || {};
-        var rName = typeof r === 'string' ? r : (r.name || '—');
+        var rName = recipDisplayName(a.recipient) || '—';
         var typeLabel = {customer:'Customer',family:'Family',friends:'Friends',donated:'Donated',gifted:'Gifted',testing:'Testing / Sample',sold:'Sold'};
         var tl = typeLabel[a.type] || a.type || '—';
         var key = rName.toLowerCase() + '|' + (a.type||'') + '|' + (a.method||'');
@@ -16119,8 +16128,7 @@ function _prBuildAllocs(rows) {
       var recipKeys = [];
       var recipMap = {};
       instAllocs.forEach(function(a) {
-        var r = a.recipient || {};
-        var rn = typeof r === 'string' ? r : (r.name || '—');
+        var rn = recipDisplayName(a.recipient) || '—';
         var key = (rn + '|' + (a.type||'') + '|' + (a.method||'')).toLowerCase();
         if (!recipMap[key]) { recipMap[key] = { name: rn, type: a.type, method: a.method, date: a.date, cookies: [] }; recipKeys.push(key); }
         // Resolve cookie description from icing_entry_id
@@ -16155,8 +16163,7 @@ function _prBuildAllocs(rows) {
       var otherKeys = [];
       var otherMap = {};
       otherAllocs.forEach(function(a) {
-        var r = a.recipient || {};
-        var rn = typeof r === 'string' ? r : (r.name || '—');
+        var rn = recipDisplayName(a.recipient) || '—';
         var key = (rn + '|' + (a.type||'') + '|' + (a.method||'')).toLowerCase();
         if (!otherMap[key]) { otherMap[key] = { name: rn, type: a.type, method: a.method, date: a.date, cookies: [] }; otherKeys.push(key); }
         if (a.icing_entry_id) {
@@ -18005,7 +18012,7 @@ function recallExportPrint(mb, q, deliveryLogs, icingFilter) {
       const _p=rec._cr?(rec._cr.phone||''):(typeof _rr==='string'?'':(_rr.phone||_rr.contact||''));
       const _e=rec._cr?(rec._cr.email||''):(typeof _rr==='string'?'':(_rr.email||''));
       const _sm=rec._cr?(()=>{const s=rec._cr.social_media||{};return['instagram','facebook','messenger','whatsapp','linkedin'].map(k=>s[k]?k+': '+s[k]:'').filter(Boolean).join(', ');})():'';
-      return '<tr><td>'+rec._rn+'</td><td>'+rec.type+'</td><td>'+rec.qty+'</td><td>'+(rec.method||'')+'</td><td>'+(rec.date||'')+'</td><td>'+(_p||'—')+'</td><td>'+(_e||'—')+'</td><td>'+(_sm||'—')+'</td></tr>';
+      return '<tr><td>'+recipDisplayName(rec._a.recipient)+'</td><td>'+rec.type+'</td><td>'+rec.qty+'</td><td>'+(rec.method||'')+'</td><td>'+(rec.date||'')+'</td><td>'+(_p||'—')+'</td><td>'+(_e||'—')+'</td><td>'+(_sm||'—')+'</td></tr>';
     }).join('');
     const _prBIcingIds = _prIef || new Set((b.icingEntries||[]).map(e=>String(e.id)));
     const _prORecips = orders.filter(o=>(o.cookie_allocations||[]).some(a=>_prBIcingIds.has(String(a.icing_entry_id))));
@@ -18045,11 +18052,12 @@ function recallExportPrint(mb, q, deliveryLogs, icingFilter) {
       +'</div>';
     // Accumulate into print master list (non-disposal only)
     [..._prrmap.values()].filter(r=>r.type!=='disposal').forEach(rec=>{
-      const _pmKey = rec._cr?'cid:'+rec._cr.id:'name:'+(rec._rn||'').toLowerCase().trim();
+      const _pmDispName = recipDisplayName(rec._a.recipient);
+      const _pmKey = rec._cr?'cid:'+rec._cr.id:'name:'+(_pmDispName||'').toLowerCase().trim();
       const _pmPhone=rec._cr?(rec._cr.phone||''):(typeof(rec._a.recipient||{})==='string'?'':((rec._a.recipient||{}).phone||(rec._a.recipient||{}).contact||''));
       const _pmEmail=rec._cr?(rec._cr.email||''):(typeof(rec._a.recipient||{})==='string'?'':((rec._a.recipient||{}).email||''));
       const _pmSoc=rec._cr?(()=>{const s=rec._cr.social_media||{};return['instagram','facebook','messenger','whatsapp','linkedin'].map(k=>s[k]?k+': '+s[k]:'').filter(Boolean).join(', ');})()||'':'';
-      _prMasterAdd(_pmKey,rec._rn,_pmPhone,_pmEmail,_pmSoc,rec.type,b.num,rec.qty,rec.method,'');
+      _prMasterAdd(_pmKey,_pmDispName,_pmPhone,_pmEmail,_pmSoc,rec.type,b.num,rec.qty,rec.method,'');
     });
     _prORecips.forEach(o=>{
       const _oc2=(cfg.customers||[]).find(x=>x&&x.id==o.customer_id);
@@ -18573,6 +18581,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
       h += _recipHeader;
       recipMap.forEach(rec => {
         const {rName, custRec, type, qty, method, date, collection_instance_id, market, addr, _a} = rec;
+        const dispName = recipDisplayName(_a.recipient);
         const _r = _a.recipient||{};
         const phone = (custRec ? custRec.phone||'' : (typeof _r==='string'?'':(_r.phone||_r.contact||''))).trim();
         const email = (custRec ? custRec.email||'' : (typeof _r==='string'?'':(_r.email||''))).trim();
@@ -18601,7 +18610,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
           + '<div style="flex:1;min-width:0">'
           + '<div style="font-size:13px;font-family:sans-serif;margin-bottom:2px">'
           + '<span class="tag '+typeClass+'">'+type+'</span> '
-          + '<strong>'+esc(rName||type)+'</strong>'
+          + '<strong>'+esc(dispName||type)+'</strong>'
           + viewBtn
           + '</div>'
           + contactHtml
@@ -18976,8 +18985,7 @@ function renderHist() {
       const directAllocs = ba.filter(function(a){return !a.collection_instance_id;});
       const campGroups = {};
       campAllocs.forEach(function(a){
-        const r=a.recipient||{};
-        const rname=typeof r==='string'?r:(r.name||'—');
+        const rname=recipDisplayName(a.recipient)||'—';
         if(!campGroups[rname]) campGroups[rname]={name:rname,totalQty:0,rows:[],instIds:[]};
         campGroups[rname].totalQty+=(a.qty||0);
         campGroups[rname].rows.push(a);
@@ -19003,8 +19011,7 @@ function renderHist() {
           +'</div>';
       }).join('');
       const directAllocHtml = directAllocs.map(function(a){
-        const r=a.recipient||{};
-        const rname=typeof r==='string'?r:(r.name||'—');
+        const rname=recipDisplayName(a.recipient)||'—';
         const tagCol=a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber';
         return '<div style="font-size:11px;font-family:sans-serif;padding:5px 0;border-bottom:1px solid var(--gray-light);display:flex;gap:8px;align-items:center;">'
           +'<span class="tag '+tagCol+'" style="font-size:10px">'+_bS(a.type)+'</span>'
@@ -27901,7 +27908,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v39.2',
+    app_version: 'v39.3',
     tables: {}
   };
 
@@ -29446,7 +29453,7 @@ function viewAlloc(id) {
   const b = batches.find(x=>x.num===a.batch_num)||{};
   const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing'};
   const body = uField('Type', tl[a.type]||a.type)
-    + uField('Recipient', r.name)
+    + uField('Recipient', recipDisplayName(a.recipient))
     + uField('Phone', r.phone)
     + uField('Batch', a.batch_num + (b.recipe?' · '+b.recipe:''))
     + uField('Quantity', a.qty + ' cookies')
@@ -29463,8 +29470,7 @@ function viewAlloc(id) {
 
 function confirmDeleteAlloc(id) {
   const a = allocs.find(x=>x.id===id); if (!a) return;
-  const r = a.recipient||{};
-  showConfirm('Delete allocation', `Delete allocation of ${a.qty} cookies to ${r.name||'—'}? It will move to Trash.`, 'Delete', () => doDeleteAlloc(id));
+  showConfirm('Delete allocation', `Delete allocation of ${a.qty} cookies to ${recipDisplayName(a.recipient)||'—'}? It will move to Trash.`, 'Delete', () => doDeleteAlloc(id));
 }
 
 async function doDeleteAlloc(id) {
@@ -30542,9 +30548,7 @@ function frFmt(n) {
 }
 
 function frAllocRecipName(a) {
-  if (!a.recipient) return '—';
-  if (typeof a.recipient === 'string') return a.recipient || '—';
-  return a.recipient.name || a.recipient.org || '—';
+  return recipDisplayName(a.recipient) || '—';
 }
 
 function frAllocTypeTag(type) {
