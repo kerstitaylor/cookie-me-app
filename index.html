@@ -2345,7 +2345,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <div id="rc-basket-confirm"></div>
       </div>
 
-      <div class="card">
+      <div class="card" style="margin-top:18px;">
         <div class="card-title">1. By ingredient or lot</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A supplier has recalled an ingredient, or I suspect one.</p>
         <div class="field">
@@ -2358,7 +2358,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       </div>
       <div id="rc1-res"></div>
 
-      <div class="card">
+      <div class="card" style="margin-top:18px;">
         <div class="card-title">2. By batch number</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A customer reported a problem with cookies from a specific batch.</p>
         <div class="field">
@@ -2371,7 +2371,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       </div>
       <div id="rc2-res"></div>
 
-      <div class="card">
+      <div class="card" style="margin-top:18px;">
         <div class="card-title">3. By customer / organisation</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A customer reported a problem but doesn't know their batch.</p>
         <div class="field">
@@ -2398,7 +2398,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       </div>
       <div id="rc3-res"></div>
 
-      <div class="card">
+      <div class="card" style="margin-top:18px;">
         <div class="card-title">4. By date range</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">I need to recall everything baked in a period while I investigate.</p>
         <div class="r2">
@@ -18544,16 +18544,8 @@ function _recallAddLotsToBasket() {
   });
   _renderRecallBasket();
 
-  let h = `<div class="card" style="border-color:var(--success);margin-top:8px;background:#f0f7f0">
-    <div style="font-weight:700;font-family:sans-serif;font-size:13px;margin-bottom:6px">✓ Added ${selectedGroups.length} lot${selectedGroups.length>1?'s':''} to the basket</div>`;
-  selectedGroups.forEach(g => {
-    h += `<div style="margin-bottom:6px">
-      <div style="font-weight:600;font-family:sans-serif;font-size:13px">Lot ${esc(g.lot)}</div>
-      ${g.records.map(r => `<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;padding-left:10px">#${r.id} · ${esc(r.supplier||'Unknown supplier')}${r.date_added?' · '+esc(_recallFmtShortDate(r.date_added)):''}${r.best_before?' · best before '+esc(_recallFmtShortDate(r.best_before)):''}</div>`).join('')}
-    </div>`;
-  });
-  h += `</div>`;
-  confirmEl.innerHTML = h;
+  const lotNames = selectedGroups.map(g => esc(g.lot)).join(', ');
+  confirmEl.innerHTML = `<div style="font-size:12px;color:var(--success);font-family:sans-serif;margin-top:8px;">✓ Added ${selectedGroups.length} lot${selectedGroups.length>1?'s':''} to the basket (${lotNames})</div>`;
 }
 
 function recallClearSearch1() {
@@ -18569,12 +18561,12 @@ function _recallRenderBatchListWithAdd(el, matches, emptyMsg) {
   let h = `<div class="alert alert-warning" style="font-weight:600">${matches.length} batch${matches.length>1?'es':''} matched</div>`;
   matches.forEach(b => {
     h += `<div class="card" style="margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
         <div style="flex:1;min-width:0;">
           <div style="font-weight:700;font-family:sans-serif">${esc(b.num)}</div>
           <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif">${esc(b.recipe||'')} · ${b.date||''} · ${b.yield||'?'} cookies</div>
         </div>
-        <button class="btn btn-primary rc-add-batch" data-batch-num="${esc(b.num)}" style="flex-shrink:0;">Add</button>
+        <button class="btn btn-primary btn-sm rc-add-batch" data-batch-num="${esc(b.num)}" style="flex:0 0 auto;white-space:nowrap;">Add</button>
       </div>
     </div>`;
   });
@@ -18641,7 +18633,7 @@ function recallAddCustomerToBasket() {
     _recallBasket.customers.push({ id: c.id, name: custDisplayName(c) });
   }
   _renderRecallBasket();
-  el.innerHTML = `<div class="alert alert-success">Added ${esc(custDisplayName(c))} to the basket.</div>`;
+  el.innerHTML = `<div style="font-size:12px;color:var(--success);font-family:sans-serif;margin-top:8px;">✓ Added ${esc(custDisplayName(c))} to the basket</div>`;
 }
 
 function recallAddOrgToBasket() {
@@ -18659,7 +18651,7 @@ function recallAddOrgToBasket() {
     _recallBasket.orgs.push({ org: orgName, customerIds: ids });
   }
   _renderRecallBasket();
-  el.innerHTML = `<div class="alert alert-success">Added ${esc(orgName)} (${ids.length} contact${ids.length>1?'s':''}) to the basket.</div>`;
+  el.innerHTML = `<div style="font-size:12px;color:var(--success);font-family:sans-serif;margin-top:8px;">✓ Added ${esc(orgName)} (${ids.length} contact${ids.length>1?'s':''}) to the basket</div>`;
 }
 
 function recallClearSearch3() {
@@ -18686,7 +18678,7 @@ function doRecallAddDateRange() {
   if (start > end) { el.innerHTML = `<div class="card"><div class="empty">Start date must be on or before the end date.</div></div>`; return; }
   _recallBasket.dateRanges.push({ start, end, mode: 'baked' });
   _renderRecallBasket();
-  el.innerHTML = `<div class="alert alert-success">Added baked range ${esc(_recallFmtShortDate(start))} – ${esc(_recallFmtShortDate(end))} to the basket.</div>`;
+  el.innerHTML = `<div style="font-size:12px;color:var(--success);font-family:sans-serif;margin-top:8px;">✓ Added baked range ${esc(_recallFmtShortDate(start))} – ${esc(_recallFmtShortDate(end))} to the basket</div>`;
 }
 
 function recallClearSearch4() {
