@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v40.0</title>
+<title>Cookie & Me — Kitchen Manager v40.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2333,13 +2333,28 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <span>This is a mock recall / drill only</span>
       </label>
 
+      <!-- RECALL BASKET -->
+      <div class="card" id="rc-basket-panel" style="border-color:var(--navy);background:#eef3f8;">
+        <div class="card-title">🧺 Recall basket</div>
+        <div id="rc-basket-summary" style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;"></div>
+        <div id="rc-basket-items"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn" onclick="recallBasketClear()">Clear all</button>
+          <button class="btn btn-primary" onclick="recallBasketConfirm()">Confirm recall</button>
+        </div>
+        <div id="rc-basket-confirm"></div>
+      </div>
+
       <div class="card">
         <div class="card-title">1. By ingredient or lot</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A supplier has recalled an ingredient, or I suspect one.</p>
         <div class="field">
           <input class="search-input" id="rc1-q" placeholder="e.g. flour or 23368427" style="margin-bottom:6px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRecallByIngredient();}"/>
         </div>
-        <button class="btn btn-primary" onclick="doRecallByIngredient()">Search</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="doRecallByIngredient()">Search</button>
+          <button class="btn" onclick="recallClearSearch1()">Clear</button>
+        </div>
       </div>
       <div id="rc1-res"></div>
 
@@ -2349,35 +2364,58 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <div class="field">
           <input class="search-input" id="rc2-q" placeholder="e.g. B001" style="margin-bottom:6px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRecallByBatch();}"/>
         </div>
-        <button class="btn btn-primary" onclick="doRecallByBatch()">Search</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="doRecallByBatch()">Search</button>
+          <button class="btn" onclick="recallClearSearch2()">Clear</button>
+        </div>
       </div>
       <div id="rc2-res"></div>
 
       <div class="card">
-        <div class="card-title">3. By customer</div>
+        <div class="card-title">3. By customer / organisation</div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">A customer reported a problem but doesn't know their batch.</p>
         <div class="field">
-          <input class="search-input" id="rc3-q" placeholder="e.g. Jane Smith" style="margin-bottom:6px;" onkeydown="if(event.key==='Enter'){event.preventDefault();doRecallByCustomer();}"/>
+          <label>Individual customer</label>
+          <div id="rc3-cust-picker" class="cust-picker-wrap">
+            <input class="cust-picker-input search-input" placeholder="Search by name..." autocomplete="off" style="margin-bottom:0;"/>
+            <div class="cust-picker-dropdown"></div>
+          </div>
         </div>
-        <button class="btn btn-primary" onclick="doRecallByCustomer()">Search</button>
+        <div style="margin-bottom:14px;">
+          <button class="btn btn-primary" id="rc3-cust-add">Add customer</button>
+        </div>
+        <div class="field">
+          <label>Organisation</label>
+          <div id="rc3-org-picker" class="cust-picker-wrap">
+            <input class="cust-picker-input search-input" placeholder="Search by organisation name..." autocomplete="off" style="margin-bottom:0;"/>
+            <div class="cust-picker-dropdown"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" id="rc3-org-add">Add organisation</button>
+          <button class="btn" onclick="recallClearSearch3()">Clear</button>
+        </div>
       </div>
       <div id="rc3-res"></div>
 
       <div class="card">
         <div class="card-title">4. By date range</div>
-        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">I need to recall everything in a period while I investigate.</p>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">I need to recall everything baked in a period while I investigate.</p>
         <div class="r2">
           <div class="field"><label>Start date</label><input type="date" id="rc4-start"/></div>
           <div class="field"><label>End date</label><input type="date" id="rc4-end"/></div>
         </div>
         <div class="field">
           <label>Range looks at</label>
-          <select id="rc4-mode">
+          <select id="rc4-mode" disabled>
             <option value="baked" selected>Baked (batch date)</option>
-            <option value="delivered">Delivered / sold</option>
+            <option value="delivered">Delivered / sold — coming soon</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="doRecallByDateRange()">Search</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="doRecallAddDateRange()">Add to basket</button>
+          <button class="btn" onclick="recallClearSearch4()">Clear</button>
+        </div>
       </div>
       <div id="rc4-res"></div>
     </div>
@@ -13293,6 +13331,24 @@ function initCustPicker(wrapperId, opts) {
 function refreshCustPickerDropdown(wrap, input, dropdown, opts) {
   const wrapperId = wrap.id;
   const q = input.value.toLowerCase().trim();
+  if (opts && opts.mode === 'org') {
+    const orgMap = new Map();
+    (cfg.customers || []).filter(c => c.status !== 'closed' && (c.org||'').trim()).forEach(c => {
+      const key = c.org.trim().toLowerCase();
+      if (!orgMap.has(key)) orgMap.set(key, {org: c.org.trim(), count: 0});
+      orgMap.get(key).count++;
+    });
+    let orgs = [...orgMap.values()];
+    orgs = q ? orgs.filter(o => o.org.toLowerCase().includes(q)) : orgs.slice(0, 12);
+    orgs.sort((a,b) => a.org.localeCompare(b.org));
+    const html = orgs.map(o => `<div class="cust-picker-item" data-wrapid="${wrapperId}" data-org="${esc(o.org)}" onclick="custPickerSelectOrg(this.dataset.wrapid, this.dataset.org)" ontouchend="event.preventDefault();custPickerSelectOrg(this.dataset.wrapid, this.dataset.org)">
+      <span>${esc(o.org)}</span> <span style="font-size:11px;color:var(--text-muted)">(${o.count} contact${o.count>1?'s':''})</span>
+    </div>`).join('');
+    dropdown.innerHTML = html || '<div style="padding:8px 10px;font-size:12px;color:var(--text-muted);font-family:sans-serif;">No organisations found</div>';
+    dropdown.classList.add('open');
+    wrap._pickerOpts = opts;
+    return;
+  }
   const list = (cfg.customers || []).filter(c => c.status !== 'closed');
   const filtered = q ? list.filter(c => custDisplayName(c).toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q)) : list.slice(0, 12);
   let html = filtered.map(c => {
@@ -13323,6 +13379,19 @@ function custPickerSelect(wrapperId, custId) {
   if (c && input) input.value = c.name;
   if (dropdown) dropdown.classList.remove('open');
   if (wrap._pickerOpts && wrap._pickerOpts.onSelect) wrap._pickerOpts.onSelect(c);
+}
+
+// Org-mode selection — keeps the org name in the box and sweeps in every
+// customer record sharing that org name (org is a field on each person's
+// record, not a separate record).
+function custPickerSelectOrg(wrapperId, orgName) {
+  const wrap = document.getElementById(wrapperId); if (!wrap) return;
+  const input = wrap.querySelector('.cust-picker-input');
+  const dropdown = wrap.querySelector('.cust-picker-dropdown');
+  const matches = (cfg.customers||[]).filter(c => c.status !== 'closed' && (c.org||'').trim().toLowerCase() === orgName.trim().toLowerCase());
+  if (input) input.value = orgName;
+  if (dropdown) dropdown.classList.remove('open');
+  if (wrap._pickerOpts && wrap._pickerOpts.onSelect) wrap._pickerOpts.onSelect({orgName, customers: matches});
 }
 
 function custPickerAddNew(wrapperId, name) {
@@ -15016,6 +15085,9 @@ function goRecall(t) {
 }
 
 function initRecallTab() {
+  // Recall basket — always visible, persists across searches
+  _renderRecallBasket();
+  _recallInitCustPickers();
   // Search dropdowns
   const custSel = document.getElementById('rc-cust');
   const supSel = document.getElementById('rc-sup');
@@ -18234,10 +18306,82 @@ function _recallFuzzySuggest(q) {
     .slice(0, 8);
 }
 
-// ── Recall screen: 4 independent searches, one per option ───────────────
+// ── Recall screen: 4 independent searches feeding a shared basket ───────
 let _recallIngGroups = [];
-let _recallConfirmedIds = [];
-let _recallConfirmedGroups = [];
+
+// The basket persists as the user moves between the four searches. Nothing
+// is added except via an explicit "Add" action.
+let _recallBasket = { lots: [], batches: [], customers: [], orgs: [], dateRanges: [] };
+
+function _recallBasketRow(label, group, idx) {
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--gray-light);font-size:13px;font-family:sans-serif;">
+    <span>${label}</span>
+    <button class="rc-basket-del" data-group="${group}" data-idx="${idx}" style="font-size:11px;padding:2px 9px;border:1px solid var(--danger);border-radius:99px;background:transparent;color:var(--danger);cursor:pointer;flex-shrink:0;">Remove</button>
+  </div>`;
+}
+
+function _renderRecallBasket() {
+  const b = _recallBasket;
+  const parts = [];
+  if (b.lots.length) parts.push(`${b.lots.length} lot${b.lots.length>1?'s':''}`);
+  if (b.batches.length) parts.push(`${b.batches.length} batch${b.batches.length>1?'es':''}`);
+  if (b.customers.length) parts.push(`${b.customers.length} customer${b.customers.length>1?'s':''}`);
+  if (b.orgs.length) parts.push(`${b.orgs.length} org${b.orgs.length>1?'s':''}`);
+  if (b.dateRanges.length) parts.push(`${b.dateRanges.length} date range${b.dateRanges.length>1?'s':''}`);
+
+  const summaryEl = document.getElementById('rc-basket-summary');
+  if (summaryEl) summaryEl.textContent = parts.length
+    ? 'Current recall: ' + parts.join(' · ')
+    : 'Basket is empty — use the searches below to add lots, batches, customers, organisations, or date ranges.';
+
+  const itemsEl = document.getElementById('rc-basket-items');
+  if (itemsEl) {
+    let h = '';
+    b.lots.forEach((item, i) => h += _recallBasketRow(`Lot ${esc(item.lot)} (${item.ids.length} record${item.ids.length>1?'s':''})`, 'lots', i));
+    b.batches.forEach((item, i) => h += _recallBasketRow(`Batch ${esc(item.num)}`, 'batches', i));
+    b.customers.forEach((item, i) => h += _recallBasketRow(esc(item.name), 'customers', i));
+    b.orgs.forEach((item, i) => h += _recallBasketRow(`${esc(item.org)} — ${item.customerIds.length} contact${item.customerIds.length>1?'s':''}`, 'orgs', i));
+    b.dateRanges.forEach((item, i) => h += _recallBasketRow(`Baked ${esc(_recallFmtShortDate(item.start))} – ${esc(_recallFmtShortDate(item.end))}`, 'dateRanges', i));
+    itemsEl.innerHTML = h;
+    itemsEl.querySelectorAll('.rc-basket-del').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const group = this.dataset.group;
+        const idx = parseInt(this.dataset.idx, 10);
+        _recallBasket[group].splice(idx, 1);
+        _renderRecallBasket();
+      });
+    });
+  }
+
+  const confirmEl = document.getElementById('rc-basket-confirm');
+  if (confirmEl) confirmEl.innerHTML = '';
+}
+
+function recallBasketClear() {
+  _recallBasket = { lots: [], batches: [], customers: [], orgs: [], dateRanges: [] };
+  _renderRecallBasket();
+}
+
+function recallBasketConfirm() {
+  const confirmEl = document.getElementById('rc-basket-confirm');
+  if (!confirmEl) return;
+  const b = _recallBasket;
+  const total = b.lots.length + b.batches.length + b.customers.length + b.orgs.length + b.dateRanges.length;
+  if (!total) {
+    confirmEl.innerHTML = `<div class="alert alert-warning" style="margin-top:8px">The basket is empty — add at least one item before confirming.</div>`;
+    return;
+  }
+  let h = `<div class="card" style="border-color:var(--success);margin-top:8px;background:#f0f7f0">
+    <div style="font-weight:700;font-family:sans-serif;font-size:13px;margin-bottom:6px">✓ Recall scope confirmed</div>
+    <ul style="margin:0;padding-left:18px;font-size:12px;font-family:sans-serif;color:var(--text-muted);line-height:1.7">`;
+  b.lots.forEach(item => h += `<li>Lot ${esc(item.lot)} (${item.ids.length} record${item.ids.length>1?'s':''})</li>`);
+  b.batches.forEach(item => h += `<li>Batch ${esc(item.num)}</li>`);
+  b.customers.forEach(item => h += `<li>${esc(item.name)}</li>`);
+  b.orgs.forEach(item => h += `<li>${esc(item.org)} — ${item.customerIds.length} contact${item.customerIds.length>1?'s':''}</li>`);
+  b.dateRanges.forEach(item => h += `<li>Baked ${esc(_recallFmtShortDate(item.start))} – ${esc(_recallFmtShortDate(item.end))}</li>`);
+  h += `</ul><p style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:8px;">This is the recall scope. The full report is generated in a later step.</p></div>`;
+  confirmEl.innerHTML = h;
+}
 
 // A query is treated as a lot-number search if it's mostly digits, with at
 // most one trailing non-digit char (e.g. "23368427" or "23368427 F").
@@ -18349,7 +18493,7 @@ function _recallNoMatchHtml(q) {
 function doRecallByIngredient() {
   const q = document.getElementById('rc1-q').value.trim().toLowerCase();
   const el = document.getElementById('rc1-res');
-  _recallIngGroups = []; _recallConfirmedIds = []; _recallConfirmedGroups = [];
+  _recallIngGroups = [];
   if (!q) { el.innerHTML=''; return; }
 
   const mode = _recallDetectMode(q);
@@ -18358,7 +18502,7 @@ function doRecallByIngredient() {
   if (!groups.length) { el.innerHTML = _recallNoMatchHtml(q); return; }
 
   _recallIngGroups = groups;
-  let h = `<div class="alert alert-warning" style="font-weight:600">${groups.length} lot${groups.length>1?'s':''} found — tick the lots to trace, then confirm</div>`;
+  let h = `<div class="alert alert-warning" style="font-weight:600">${groups.length} lot${groups.length>1?'s':''} found — tick the lots to trace, then add to the basket</div>`;
   groups.forEach((g, gi) => {
     h += `<div class="card" style="margin-bottom:8px">
       <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
@@ -18371,28 +18515,37 @@ function doRecallByIngredient() {
       </label>
     </div>`;
   });
-  h += `<button class="btn btn-primary" onclick="_recallConfirmSelection()">Confirm selection</button>`;
+  h += `<button class="btn btn-primary" onclick="_recallAddLotsToBasket()">Add these lots to the basket</button>`;
   h += `<div id="rc-confirm"></div>`;
   el.innerHTML = h;
 }
 
-// Reads ticked lot checkboxes, collects underlying ingredient record IDs into
-// _recallConfirmedIds, and shows exactly what was selected so a mistyped
-// search can be caught before Build 2 builds anything from it.
-function _recallConfirmSelection() {
+// Reads ticked lot checkboxes, merges their underlying ingredient record IDs
+// into the basket (merging with any existing lot of the same name), and
+// shows exactly what was added.
+function _recallAddLotsToBasket() {
   const checks = [...document.querySelectorAll('.rc-ing-check:checked')];
   const selectedGroups = checks.map(c => _recallIngGroups[parseInt(c.dataset.gi,10)]).filter(Boolean);
-  _recallConfirmedGroups = selectedGroups;
-  _recallConfirmedIds = selectedGroups.flatMap(g => g.ids);
 
   const confirmEl = document.getElementById('rc-confirm');
   if (!confirmEl) return;
   if (!selectedGroups.length) {
-    confirmEl.innerHTML = `<div class="alert alert-warning" style="margin-top:8px">Tick at least one lot before confirming.</div>`;
+    confirmEl.innerHTML = `<div class="alert alert-warning" style="margin-top:8px">Tick at least one lot before adding to the basket.</div>`;
     return;
   }
+  selectedGroups.forEach(g => {
+    const key = (g.lot||'').trim().toLowerCase();
+    const existing = _recallBasket.lots.find(x => (x.lot||'').trim().toLowerCase() === key);
+    if (existing) {
+      g.ids.forEach(id => { if (!existing.ids.includes(id)) existing.ids.push(id); });
+    } else {
+      _recallBasket.lots.push({ lot: g.lot, ids: [...g.ids] });
+    }
+  });
+  _renderRecallBasket();
+
   let h = `<div class="card" style="border-color:var(--success);margin-top:8px;background:#f0f7f0">
-    <div style="font-weight:700;font-family:sans-serif;font-size:13px;margin-bottom:6px">✓ Confirmed selection — ${_recallConfirmedIds.length} record${_recallConfirmedIds.length>1?'s':''} across ${selectedGroups.length} lot${selectedGroups.length>1?'s':''}</div>`;
+    <div style="font-weight:700;font-family:sans-serif;font-size:13px;margin-bottom:6px">✓ Added ${selectedGroups.length} lot${selectedGroups.length>1?'s':''} to the basket</div>`;
   selectedGroups.forEach(g => {
     h += `<div style="margin-bottom:6px">
       <div style="font-weight:600;font-family:sans-serif;font-size:13px">Lot ${esc(g.lot)}</div>
@@ -18403,69 +18556,143 @@ function _recallConfirmSelection() {
   confirmEl.innerHTML = h;
 }
 
-// Shared renderer for the simple "list of batches" results (options 2–4).
-function _recallRenderBatchList(el, matches, emptyMsg) {
+function recallClearSearch1() {
+  document.getElementById('rc1-q').value = '';
+  document.getElementById('rc1-res').innerHTML = '';
+  _recallIngGroups = [];
+}
+
+// Renderer for the "by batch number" results — each match gets its own Add
+// button, plus a "+ add another batch" affordance to clear and search again.
+function _recallRenderBatchListWithAdd(el, matches, emptyMsg) {
   if (!matches.length) { el.innerHTML = `<div class="card"><div class="empty">${esc(emptyMsg)}</div></div>`; return; }
   let h = `<div class="alert alert-warning" style="font-weight:600">${matches.length} batch${matches.length>1?'es':''} matched</div>`;
   matches.forEach(b => {
     h += `<div class="card" style="margin-bottom:8px">
-      <div style="font-weight:700;font-family:sans-serif">${esc(b.num)}</div>
-      <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif">${esc(b.recipe||'')} · ${b.date||''} · ${b.yield||'?'} cookies</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:700;font-family:sans-serif">${esc(b.num)}</div>
+          <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif">${esc(b.recipe||'')} · ${b.date||''} · ${b.yield||'?'} cookies</div>
+        </div>
+        <button class="btn btn-primary rc-add-batch" data-batch-num="${esc(b.num)}" style="flex-shrink:0;">Add</button>
+      </div>
     </div>`;
   });
+  h += `<button class="btn" id="rc2-add-another" type="button">+ add another batch</button>`;
   el.innerHTML = h;
+
+  el.querySelectorAll('.rc-add-batch').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const num = this.dataset.batchNum;
+      if (!_recallBasket.batches.find(x => x.num === num)) _recallBasket.batches.push({ num });
+      _renderRecallBasket();
+      this.textContent = 'Added ✓';
+      this.disabled = true;
+    });
+  });
+  const addAnother = document.getElementById('rc2-add-another');
+  if (addAnother) addAnother.addEventListener('click', function() {
+    document.getElementById('rc2-q').value = '';
+    el.innerHTML = '';
+    document.getElementById('rc2-q').focus();
+  });
 }
 
-// ── 2. By batch number — reuses doRecall()'s b.num contains-match (line ~18248) ─
+// ── 2. By batch number — reuses doRecall()'s b.num contains-match ───────
 function doRecallByBatch() {
   const q = document.getElementById('rc2-q').value.trim().toLowerCase();
   const el = document.getElementById('rc2-res');
   if (!q) { el.innerHTML=''; return; }
   const matches = batches.filter(b => b.num && b.num.toLowerCase().includes(q));
-  _recallRenderBatchList(el, matches, `No batches found for "${q}".`);
+  _recallRenderBatchListWithAdd(el, matches, `No batches found for "${q}".`);
 }
 
-// ── 3. By customer — reuses doRecall()'s alloc-recipient and order-customer
-// name matches (the GAP 6 FIX block) ────────────────────────────────────────
-function doRecallByCustomer() {
-  const q = document.getElementById('rc3-q').value.trim().toLowerCase();
-  const el = document.getElementById('rc3-res');
-  if (!q) { el.innerHTML=''; return; }
-  const mb = new Set();
-  allocs.forEach(a=>{ if((a.recipient?.name||'').toLowerCase().includes(q)){const bi=batches.findIndex(b=>b.num===a.batch_num);if(bi>-1){mb.add(bi);}} });
-  orders.forEach(o=>{
-    const oc = (cfg.customers||[]).find(x=>x&&x.id==o.customer_id);
-    const oName = (oc ? custDisplayName(oc) : (o.customer_name||'')).toLowerCase();
-    if (oName && oName.includes(q)) {
-      (o.cookie_allocations||[]).forEach(ca=>{
-        const bi = batches.findIndex(b=>(b.icingEntries||[]).some(e=>String(e.id)===String(ca.icing_entry_id)));
-        if (bi>-1) mb.add(bi);
-      });
-    }
+function recallClearSearch2() {
+  document.getElementById('rc2-q').value = '';
+  document.getElementById('rc2-res').innerHTML = '';
+}
+
+// ── 3. By customer / organisation — both use the Universal Customer Picker ─
+let _rc3SelectedCustomer = null;
+let _rc3SelectedOrg = null;
+
+function _recallInitCustPickers() {
+  initCustPicker('rc3-cust-picker', {
+    onSelect: c => { _rc3SelectedCustomer = c; }
   });
-  _recallRenderBatchList(el, [...mb].map(bi=>batches[bi]), `No batches found for "${q}".`);
+  initCustPicker('rc3-org-picker', {
+    mode: 'org',
+    onSelect: data => { _rc3SelectedOrg = data; }
+  });
+  const custAddBtn = document.getElementById('rc3-cust-add');
+  if (custAddBtn) custAddBtn.addEventListener('click', recallAddCustomerToBasket);
+  const orgAddBtn = document.getElementById('rc3-org-add');
+  if (orgAddBtn) orgAddBtn.addEventListener('click', recallAddOrgToBasket);
 }
 
-// ── 4. By date range — "baked" uses b.date; "delivered/sold" uses alloc
-// dates (a.date) and order dates (o.delivery_date || o.date_placed) ────────
-function doRecallByDateRange() {
+function recallAddCustomerToBasket() {
+  const el = document.getElementById('rc3-res');
+  if (!_rc3SelectedCustomer) {
+    el.innerHTML = `<div class="alert alert-warning">Pick a customer from the dropdown first.</div>`;
+    return;
+  }
+  const c = _rc3SelectedCustomer;
+  if (!_recallBasket.customers.find(x => String(x.id) === String(c.id))) {
+    _recallBasket.customers.push({ id: c.id, name: custDisplayName(c) });
+  }
+  _renderRecallBasket();
+  el.innerHTML = `<div class="alert alert-success">Added ${esc(custDisplayName(c))} to the basket.</div>`;
+}
+
+function recallAddOrgToBasket() {
+  const el = document.getElementById('rc3-res');
+  if (!_rc3SelectedOrg) {
+    el.innerHTML = `<div class="alert alert-warning">Pick an organisation from the dropdown first.</div>`;
+    return;
+  }
+  const { orgName, customers } = _rc3SelectedOrg;
+  const ids = customers.map(c => c.id);
+  const existing = _recallBasket.orgs.find(x => x.org.trim().toLowerCase() === orgName.trim().toLowerCase());
+  if (existing) {
+    ids.forEach(id => { if (!existing.customerIds.includes(id)) existing.customerIds.push(id); });
+  } else {
+    _recallBasket.orgs.push({ org: orgName, customerIds: ids });
+  }
+  _renderRecallBasket();
+  el.innerHTML = `<div class="alert alert-success">Added ${esc(orgName)} (${ids.length} contact${ids.length>1?'s':''}) to the basket.</div>`;
+}
+
+function recallClearSearch3() {
+  ['rc3-cust-picker', 'rc3-org-picker'].forEach(id => {
+    const wrap = document.getElementById(id);
+    if (!wrap) return;
+    const input = wrap.querySelector('.cust-picker-input');
+    if (input) input.value = '';
+    const dropdown = wrap.querySelector('.cust-picker-dropdown');
+    if (dropdown) { dropdown.innerHTML = ''; dropdown.classList.remove('open'); }
+  });
+  _rc3SelectedCustomer = null;
+  _rc3SelectedOrg = null;
+  document.getElementById('rc3-res').innerHTML = '';
+}
+
+// ── 4. By date range — baked mode only (b.date). Delivered/sold mode is
+// disabled for now; see project notes on the date-backfill data issue. ───
+function doRecallAddDateRange() {
   const start = document.getElementById('rc4-start').value;
   const end = document.getElementById('rc4-end').value;
-  const mode = document.getElementById('rc4-mode').value;
   const el = document.getElementById('rc4-res');
   if (!start || !end) { el.innerHTML = `<div class="card"><div class="empty">Pick a start and end date.</div></div>`; return; }
-  let matches;
-  if (mode === 'baked') {
-    matches = batches.filter(b => b.date && b.date >= start && b.date <= end);
-  } else {
-    matches = batches.filter(b => {
-      const allocDates = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num)).map(a=>a.date).filter(Boolean);
-      const batchIcingIds = new Set((b.icingEntries||[]).map(e=>String(e.id)));
-      const orderDates = orders.filter(o=>(o.cookie_allocations||[]).some(a=>batchIcingIds.has(String(a.icing_entry_id)))).map(o=>o.delivery_date||o.date_placed).filter(Boolean);
-      return [...allocDates, ...orderDates].some(d=>d>=start&&d<=end);
-    });
-  }
-  _recallRenderBatchList(el, matches, 'No batches found in that range.');
+  if (start > end) { el.innerHTML = `<div class="card"><div class="empty">Start date must be on or before the end date.</div></div>`; return; }
+  _recallBasket.dateRanges.push({ start, end, mode: 'baked' });
+  _renderRecallBasket();
+  el.innerHTML = `<div class="alert alert-success">Added baked range ${esc(_recallFmtShortDate(start))} – ${esc(_recallFmtShortDate(end))} to the basket.</div>`;
+}
+
+function recallClearSearch4() {
+  document.getElementById('rc4-start').value = '';
+  document.getElementById('rc4-end').value = '';
+  document.getElementById('rc4-res').innerHTML = '';
 }
 
 async function doRecall() {
@@ -28169,7 +28396,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v40.0',
+    app_version: 'v40.1',
     tables: {}
   };
 
