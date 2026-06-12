@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v41.0</title>
+<title>Cookie & Me — Kitchen Manager v42.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18614,6 +18614,122 @@ function _recallGatherContacts(affected, directContacts) {
   return [...contacts.values()].map(c => ({...c, lines: [...c.lines]}));
 }
 
+// Reverse trace: given a customer ID, find every cookie they ever received —
+// from the allocations table (recipient.customerId match) and from
+// orders.cookie_allocations (order.customer_id match), resolved to the
+// originating batch and icing entry (for cookieDescription/qty), exactly as
+// the forward contact trace does.
+function _recallReverseTraceCustomer(custId) {
+  const items = []; // {batch, icingEntryId:string|null, qty, cookieDesc}
+
+  allocs.forEach(a => {
+    const r = a.recipient || {};
+    if (typeof r !== 'object' || r.customerId == null || r.customerId != custId) return;
+    const b = findBatchByNum(a.batch_num);
+    if (!b) return;
+    let icingEntryId = null, qty = a.qty || 0, cookieDesc = '';
+    if (a.icing_entry_id) {
+      const entry = (b.icingEntries || []).find(e => String(e.id) === String(a.icing_entry_id));
+      if (entry) {
+        icingEntryId = String(entry.id);
+        qty = entry.qty || a.qty || 0;
+        cookieDesc = entry.cookieDescription || '';
+      }
+    }
+    items.push({batch: b, icingEntryId, qty, cookieDesc});
+  });
+
+  orders.forEach(o => {
+    if (o.customer_id == null || o.customer_id != custId) return;
+    (o.cookie_allocations || []).forEach(ca => {
+      if (!ca.icing_entry_id || !ca.qty) return;
+      let foundBatch = null, foundEntry = null;
+      batches.forEach(b => {
+        (b.icingEntries || []).forEach(e => { if (String(e.id) === String(ca.icing_entry_id)) { foundBatch = b; foundEntry = e; } });
+      });
+      if (!foundBatch) return;
+      items.push({batch: foundBatch, icingEntryId: String(ca.icing_entry_id), qty: ca.qty, cookieDesc: foundEntry.cookieDescription || ''});
+    });
+  });
+
+  return items;
+}
+
+// Combined-filter resolution: the basket holds cookie-filters (lots, batches,
+// date ranges) and people-filters (customers, orgs). Cookie-filters narrow
+// WHICH cookies; people-filters narrow WHICH customers; the two intersect.
+//
+// - No people-filters: Pass 1 behaviour unchanged (cookie scope -> everyone reached).
+// - People-filters present: reverse-trace each in-scope person's cookies,
+//   then (if cookie-filters are also present) keep only the items that fall
+//   within the cookie scope. The resulting batches/entries become "affected"
+//   for the report, and totals are computed from the intersected items.
+function _recallResolveCombined(basket) {
+  const hasCookieFilters = basket.lots.length > 0 || basket.batches.length > 0 || basket.dateRanges.length > 0;
+  const hasPeopleFilters = basket.customers.length > 0 || basket.orgs.length > 0;
+
+  const cookieScope = _recallResolveBasket(basket);
+
+  if (!hasPeopleFilters) {
+    const contacts = _recallGatherContacts(cookieScope.affected, cookieScope.directContacts);
+    return {affected: cookieScope.affected, contacts, totalCookiesOverride: null};
+  }
+
+  const affected = new Map(); // batchNum -> {batch, wholeBatch, icingEntryIds:Set|null, reasons:Set}
+  const contacts = [];
+  let totalCookies = 0;
+
+  cookieScope.directContacts.forEach(custId => {
+    const custRec = (cfg.customers || []).find(c => c && c.id == custId);
+    if (!custRec) return;
+
+    const items = _recallReverseTraceCustomer(custId);
+    const lines = new Set();
+
+    items.forEach(item => {
+      const b = item.batch;
+      if (!b) return;
+
+      if (hasCookieFilters) {
+        const info = cookieScope.affected.get(b.num);
+        if (!info) return; // batch not in cookie scope at all
+        if (!info.wholeBatch && info.icingEntryIds) {
+          if (!item.icingEntryId || !info.icingEntryIds.has(item.icingEntryId)) return; // entry not in cookie scope
+        }
+      }
+
+      if (!affected.has(b.num)) affected.set(b.num, {batch: b, wholeBatch: false, icingEntryIds: new Set(), reasons: new Set()});
+      const a = affected.get(b.num);
+      if (item.icingEntryId && !a.wholeBatch) {
+        if (!a.icingEntryIds) a.icingEntryIds = new Set();
+        a.icingEntryIds.add(item.icingEntryId);
+      } else {
+        a.wholeBatch = true;
+        a.icingEntryIds = null;
+      }
+      if (hasCookieFilters) {
+        const cookieInfo = cookieScope.affected.get(b.num);
+        if (cookieInfo) cookieInfo.reasons.forEach(r => a.reasons.add(r));
+      }
+      a.reasons.add(`Reached ${custDisplayName(custRec)}`);
+
+      const particular = item.cookieDesc || b.recipe || '';
+      lines.add(`${item.qty} ${particular} cookies stamped ${b.num}`);
+      totalCookies += item.qty || 0;
+    });
+
+    contacts.push({
+      custId,
+      name: custDisplayName(custRec),
+      phone: custRec.phone || '',
+      email: custRec.email || '',
+      lines: [...lines]
+    });
+  });
+
+  return {affected, contacts, totalCookiesOverride: totalCookies};
+}
+
 // Builds the report (resolution + on-screen render) for the current basket
 // and mode. Test mode shows a gentle non-blocking note; Mock/Live save are
 // added in Pass 2.
@@ -18622,10 +18738,9 @@ function recallBuildReport() {
   const total = basket.lots.length + basket.batches.length + basket.customers.length + basket.orgs.length + basket.dateRanges.length;
   if (!total) return;
   const mode = _recallGetMode();
-  const resolved = _recallResolveBasket(basket);
+  const combined = _recallResolveCombined(basket);
   const stockToPull = _recallGatherStockToPull(basket);
-  const contacts = _recallGatherContacts(resolved.affected, resolved.directContacts);
-  _recallRenderReport(mode, resolved, stockToPull, contacts, basket);
+  _recallRenderReport(mode, combined, stockToPull, basket);
 
   const noteEl = document.getElementById('rc-build-note');
   if (noteEl) {
@@ -18636,14 +18751,17 @@ function recallBuildReport() {
 }
 
 // Renders the on-screen report into #rc-report.
-function _recallRenderReport(mode, resolved, stockToPull, contacts, basket) {
+function _recallRenderReport(mode, combined, stockToPull, basket) {
   const el = document.getElementById('rc-report');
   if (!el) return;
-  const affectedArr = [...resolved.affected.values()];
+  const affectedArr = [...combined.affected.values()];
+  const contacts = combined.contacts;
   const hasLots = basket.lots.length > 0;
   const nowStr = new Date().toLocaleString('en-NZ', {dateStyle: 'medium', timeStyle: 'short'});
 
-  const totalCookies = affectedArr.reduce((s, info) => {
+  // When people-filters intersected the scope, totals reflect only the
+  // affected people's affected cookies (combined.totalCookiesOverride).
+  const totalCookies = combined.totalCookiesOverride != null ? combined.totalCookiesOverride : affectedArr.reduce((s, info) => {
     if (info.wholeBatch || !info.icingEntryIds) return s + (info.batch.yield || 0);
     let sum = 0;
     info.icingEntryIds.forEach(eid => {
