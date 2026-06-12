@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v43.0</title>
+<title>Cookie & Me — Kitchen Manager v43.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18539,19 +18539,28 @@ function _recallGatherStockToPull(basket) {
   return result;
 }
 
+// Returns a human-readable "platform: handle" summary of a customer's
+// social_media object, in the same format/order as recallExportPrint's
+// master contact table — kept consistent across both report paths.
+function _recallSocStr(social) {
+  const s = social || {};
+  return ['instagram','facebook','messenger','whatsapp','linkedin'].map(k=>s[k]?k+': '+s[k]:'').filter(Boolean).join(', ');
+}
+
 // Builds the "who to contact" list: grouped by customer ID (never by name),
 // fed from both the allocations table and orders.cookie_allocations, plus
 // any individuals/orgs added directly to the basket.
 function _recallGatherContacts(affected, directContacts) {
-  const contacts = new Map(); // key -> {custId, name, phone, email, lines:Set}
+  const contacts = new Map(); // key -> {custId, name, phone, email, social, lines:Set}
 
-  function addLine(custId, name, phone, email, line) {
+  function addLine(custId, name, phone, email, social, line) {
     const key = custId != null ? 'id:' + custId : 'name:' + (name || '').toLowerCase().trim();
-    if (!contacts.has(key)) contacts.set(key, {custId, name, phone, email, lines: new Set()});
+    if (!contacts.has(key)) contacts.set(key, {custId, name, phone, email, social: social || {}, lines: new Set()});
     const c = contacts.get(key);
     if (!c.phone && phone) c.phone = phone;
     if (!c.email && email) c.email = email;
     if (!c.name && name) c.name = name;
+    if ((!c.social || !Object.keys(c.social).length) && social && Object.keys(social).length) c.social = social;
     c.lines.add(line);
   }
 
@@ -18584,9 +18593,10 @@ function _recallGatherContacts(affected, directContacts) {
       const dispName = custRec ? custDisplayName(custRec) : (recipDisplayName(r) || rName);
       const phone = custRec ? (custRec.phone || '') : (typeof r === 'object' ? (r.phone || '') : '');
       const email = custRec ? (custRec.email || '') : (typeof r === 'object' ? (r.email || '') : '');
+      const social = custRec ? (custRec.social_media || {}) : {};
       const particular = cookieDesc || b.recipe || '';
       const line = `${qty} ${particular} cookies stamped ${b.num}`;
-      addLine(custRec ? custRec.id : custId, dispName, phone, email, line);
+      addLine(custRec ? custRec.id : custId, dispName, phone, email, social, line);
     });
 
     // Source 2: orders.cookie_allocations
@@ -18602,9 +18612,10 @@ function _recallGatherContacts(affected, directContacts) {
         const dispName = custRec ? custDisplayName(custRec) : (o.customer_name || '');
         const phone = custRec ? (custRec.phone || '') : '';
         const email = custRec ? (custRec.email || '') : '';
+        const social = custRec ? (custRec.social_media || {}) : {};
         const particular = entry.cookieDescription || b.recipe || '';
         const line = `${ca.qty} ${particular} cookies stamped ${b.num}`;
-        addLine(custRec ? custRec.id : (o.customer_id || null), dispName, phone, email, line);
+        addLine(custRec ? custRec.id : (o.customer_id || null), dispName, phone, email, social, line);
       });
     });
   });
@@ -18616,7 +18627,7 @@ function _recallGatherContacts(affected, directContacts) {
     if (!custRec) return;
     const key = 'id:' + custRec.id;
     if (!contacts.has(key)) {
-      contacts.set(key, {custId: custRec.id, name: custDisplayName(custRec), phone: custRec.phone || '', email: custRec.email || '', lines: new Set()});
+      contacts.set(key, {custId: custRec.id, name: custDisplayName(custRec), phone: custRec.phone || '', email: custRec.email || '', social: custRec.social_media || {}, lines: new Set()});
     }
   });
 
@@ -18733,6 +18744,7 @@ function _recallResolveCombined(basket) {
       name: custDisplayName(custRec),
       phone: custRec.phone || '',
       email: custRec.email || '',
+      social: custRec.social_media || {},
       lines: [...lines]
     });
   });
@@ -18876,9 +18888,11 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
       <div class="card-title">📞 Who to contact (${contacts.length})</div>`;
     contacts.forEach(c => {
       const hasContact = c.phone || c.email;
+      const socStr = _recallSocStr(c.social);
       h += `<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);font-size:13px;font-family:sans-serif;">
         <div style="font-weight:700;">${esc(c.name || '(no name)')}</div>
         <div style="font-size:12px;color:var(--text-muted);">${c.phone ? '📞 ' + esc(c.phone) + ' ' : ''}${c.email ? '✉️ ' + esc(c.email) : ''}${!hasContact ? '⚠ No contact details on record' : ''}</div>
+        ${socStr ? `<div style="font-size:12px;color:var(--text-muted);">📱 ${esc(socStr)}</div>` : ''}
         ${c.lines.length ? `<div style="font-size:12px;margin-top:4px;">${c.lines.map(l => esc(l)).join('<br>')}</div>` : ''}
       </div>`;
     });
@@ -19035,9 +19049,9 @@ function _recallReportPrint() {
 
   if (contacts.length) {
     body += `<h2>📞 Who to contact (${contacts.length})</h2>
-      <table><tr><th>Name</th><th>Phone</th><th>Email</th><th>Details</th></tr>`;
+      <table><tr><th>Name</th><th>Phone</th><th>Email</th><th>Social</th><th>Details</th></tr>`;
     contacts.forEach(c => {
-      body += `<tr><td>${esc(c.name || '(no name)')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.email || '—')}</td><td style="font-size:10px">${c.lines.map(l => esc(l)).join('<br>')}</td></tr>`;
+      body += `<tr><td>${esc(c.name || '(no name)')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.email || '—')}</td><td>${esc(_recallSocStr(c.social) || '—')}</td><td style="font-size:10px">${c.lines.map(l => esc(l)).join('<br>')}</td></tr>`;
     });
     body += `</table>`;
   }
@@ -29127,7 +29141,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v43.0',
+    app_version: 'v43.1',
     tables: {}
   };
 
