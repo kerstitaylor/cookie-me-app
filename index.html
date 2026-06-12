@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v42.0</title>
+<title>Cookie & Me — Kitchen Manager v42.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18627,12 +18627,12 @@ function _recallReverseTraceCustomer(custId) {
     if (typeof r !== 'object' || r.customerId == null || r.customerId != custId) return;
     const b = findBatchByNum(a.batch_num);
     if (!b) return;
-    let icingEntryId = null, qty = a.qty || 0, cookieDesc = '';
+    let icingEntryId = null, cookieDesc = '';
+    const qty = a.qty || 0; // always the customer's own allocation quantity, never the entry total
     if (a.icing_entry_id) {
       const entry = (b.icingEntries || []).find(e => String(e.id) === String(a.icing_entry_id));
       if (entry) {
         icingEntryId = String(entry.id);
-        qty = entry.qty || a.qty || 0;
         cookieDesc = entry.cookieDescription || '';
       }
     }
@@ -18698,7 +18698,7 @@ function _recallResolveCombined(basket) {
         }
       }
 
-      if (!affected.has(b.num)) affected.set(b.num, {batch: b, wholeBatch: false, icingEntryIds: new Set(), reasons: new Set()});
+      if (!affected.has(b.num)) affected.set(b.num, {batch: b, wholeBatch: false, icingEntryIds: new Set(), reasons: new Set(), inScopeQty: 0});
       const a = affected.get(b.num);
       if (item.icingEntryId && !a.wholeBatch) {
         if (!a.icingEntryIds) a.icingEntryIds = new Set();
@@ -18712,6 +18712,7 @@ function _recallResolveCombined(basket) {
         if (cookieInfo) cookieInfo.reasons.forEach(r => a.reasons.add(r));
       }
       a.reasons.add(`Reached ${custDisplayName(custRec)}`);
+      a.inScopeQty += (item.qty || 0);
 
       const particular = item.cookieDesc || b.recipe || '';
       lines.add(`${item.qty} ${particular} cookies stamped ${b.num}`);
@@ -18842,9 +18843,12 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
     affectedArr.forEach(info => {
       const b = info.batch;
       const ingLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`).join('<br>');
+      // When people-filters intersected the scope, show the in-scope quantity
+      // for those people rather than the whole batch yield.
+      const cookieCount = combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (b.yield || '?');
       h += `<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);font-size:13px;font-family:sans-serif;">
         <div style="font-weight:700;">${esc(b.num)} — ${esc(b.date || '')}</div>
-        <div>${esc(b.recipe || '')}${b.variation ? ' (' + esc(b.variation) + ')' : ''} · ${b.yield || '?'} cookies</div>
+        <div>${esc(b.recipe || '')}${b.variation ? ' (' + esc(b.variation) + ')' : ''} · ${cookieCount} cookies</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Why affected: ${esc([...info.reasons].join('; '))}</div>
         ${ingLines ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${ingLines}</div>` : ''}
       </div>`;
