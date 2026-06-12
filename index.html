@@ -18372,6 +18372,18 @@ function _renderRecallBasket() {
 
   const confirmEl = document.getElementById('rc-basket-confirm');
   if (confirmEl) confirmEl.innerHTML = '';
+
+  _recallClearReport();
+}
+
+// Clears any previously-built report — called whenever the basket changes
+// (via _renderRecallBasket) so a stale report can never be left on screen
+// after the scope it was built from has changed.
+function _recallClearReport() {
+  const reportEl = document.getElementById('rc-report');
+  if (reportEl) reportEl.innerHTML = '';
+  const noteEl = document.getElementById('rc-build-note');
+  if (noteEl) noteEl.innerHTML = '';
 }
 
 function recallBasketClear() {
