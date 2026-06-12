@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v42.1</title>
+<title>Cookie & Me — Kitchen Manager v43.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2361,6 +2361,8 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       </div>
 
       <div id="rc-report" style="margin-top:18px;"></div>
+
+      <div id="rc-saved-list" style="margin-top:18px;"></div>
 
       <div class="card" style="margin-top:18px;">
         <div class="card-title">1. By ingredient or lot</div>
@@ -15104,6 +15106,7 @@ function goRecall(t) {
 function initRecallTab() {
   // Recall basket — always visible, persists across searches
   _renderRecallBasket();
+  renderRecallSavedList();
   _recallInitCustPickers();
   // Search dropdowns
   const custSel = document.getElementById('rc-cust');
@@ -18330,6 +18333,11 @@ let _recallIngGroups = [];
 // is added except via an explicit "Add" action.
 let _recallBasket = { lots: [], batches: [], customers: [], orgs: [], dateRanges: [] };
 
+// Last built report (mode/combined/stockToPull/basket), used by the
+// Print and Save actions on the on-screen report. Cleared by
+// _recallClearReport() whenever the basket changes.
+let _rcLastReport = null;
+
 function _recallBasketRow(label, group, idx) {
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--gray-light);font-size:13px;font-family:sans-serif;">
     <span>${label}</span>
@@ -18384,6 +18392,7 @@ function _recallClearReport() {
   if (reportEl) reportEl.innerHTML = '';
   const noteEl = document.getElementById('rc-build-note');
   if (noteEl) noteEl.innerHTML = '';
+  _rcLastReport = null;
 }
 
 function recallBasketClear() {
@@ -18741,6 +18750,7 @@ function recallBuildReport() {
   const mode = _recallGetMode();
   const combined = _recallResolveCombined(basket);
   const stockToPull = _recallGatherStockToPull(basket);
+  _rcLastReport = { mode, combined, stockToPull, basket };
   _recallRenderReport(mode, combined, stockToPull, basket);
 
   const noteEl = document.getElementById('rc-build-note');
@@ -18794,6 +18804,10 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
       <div><strong>${totalCookies}</strong> cookies affected</div>
       <div><strong>${contacts.length}</strong> customer${contacts.length !== 1 ? 's' : ''} to contact</div>
     </div>
+  </div>`;
+
+  h += `<div style="display:flex;gap:8px;margin-top:8px;">
+    <button class="btn btn-sm" style="flex:1;background:#e8f0fb;color:#1a4fa0;border-color:#1a4fa0;font-weight:600;padding:10px" onclick="_recallReportPrint()">🖨 Print / PDF</button>
   </div>`;
 
   // Stock to pull
@@ -18871,7 +18885,241 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
     h += `</div>`;
   }
 
+  // Save (Mock/Live only — Test runs are never saved)
+  if (mode !== 'test') {
+    h += `<div class="card" style="border-color:var(--navy);margin-top:12px;" id="rc-save-card">
+      <div class="card-title">💾 Save this recall record</div>
+      <p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;">Keep a record of this ${modeLabel.toLowerCase()} for your audit file.</p>
+      <button id="rc-save-btn" class="btn btn-primary" onclick="_recallSaveConfirm()">Save recall record</button>
+      <div id="rc-save-confirm" style="display:none;margin-top:8px;">
+        <p style="font-size:12px;font-family:sans-serif;margin-bottom:8px;">Save this ${modeLabel} record? It will be stored and shown in your saved recalls list below.</p>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" style="flex:1" onclick="_recallSaveConfirmed()">Yes, save</button>
+          <button class="btn" style="flex:1" onclick="document.getElementById('rc-save-confirm').style.display='none';document.getElementById('rc-save-btn').style.display='inline-block'">Cancel</button>
+        </div>
+      </div>
+      <div id="rc-save-msg" style="display:none;margin-top:8px;"></div>
+    </div>`;
+  }
+
   el.innerHTML = h;
+}
+
+function _recallSaveConfirm() {
+  const btn = document.getElementById('rc-save-btn');
+  const confirmEl = document.getElementById('rc-save-confirm');
+  if (btn) btn.style.display = 'none';
+  if (confirmEl) confirmEl.style.display = 'block';
+}
+
+// Builds the saved-record payload from the last built report.
+function _recallBuildSavePayload() {
+  const rep = _rcLastReport;
+  if (!rep) return null;
+  const { mode, combined, stockToPull, basket } = rep;
+  const affectedArr = [...combined.affected.values()];
+  const totalCookies = combined.totalCookiesOverride != null ? combined.totalCookiesOverride : affectedArr.reduce((s, info) => {
+    if (info.wholeBatch || !info.icingEntryIds) return s + (info.batch.yield || 0);
+    let sum = 0;
+    info.icingEntryIds.forEach(eid => {
+      const entry = (info.batch.icingEntries || []).find(e => String(e.id) === eid);
+      if (entry) sum += (entry.qty || 0);
+    });
+    return s + sum;
+  }, 0);
+
+  const triggerParts = [];
+  basket.lots.forEach(item => triggerParts.push(`Lot ${item.lot}`));
+  basket.dateRanges.forEach(item => triggerParts.push(`Baked ${_recallFmtShortDate(item.start)} – ${_recallFmtShortDate(item.end)}`));
+  basket.batches.forEach(item => triggerParts.push(`Batch ${item.num}`));
+  basket.customers.forEach(item => triggerParts.push(item.name));
+  basket.orgs.forEach(item => triggerParts.push(item.org));
+
+  return {
+    mode,
+    generatedAt: new Date().toISOString(),
+    trigger: triggerParts.join(', ') || '—',
+    totals: { batches: affectedArr.length, cookies: totalCookies, contacts: combined.contacts.length },
+    affectedBatches: affectedArr.map(info => ({
+      num: info.batch.num,
+      date: info.batch.date || '',
+      cookies: combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (info.batch.yield || 0),
+      reasons: [...info.reasons]
+    })),
+    contacts: combined.contacts.map(c => ({ name: c.name, phone: c.phone, email: c.email, lines: c.lines })),
+    stockToPull: stockToPull
+  };
+}
+
+async function _recallSaveConfirmed() {
+  const msgEl = document.getElementById('rc-save-msg');
+  const data = _recallBuildSavePayload();
+  if (!data) return;
+  const { error } = await db.from('logs').insert([{ log_type: 'recall', data, saved_at: new Date().toISOString() }]);
+  const confirmEl = document.getElementById('rc-save-confirm');
+  if (error) {
+    if (msgEl) { msgEl.textContent = 'Error saving: ' + error.message; msgEl.style.display = 'block'; msgEl.className = 'alert alert-danger'; }
+    return;
+  }
+  if (confirmEl) confirmEl.style.display = 'none';
+  if (msgEl) { msgEl.textContent = '✓ Recall record saved.'; msgEl.style.display = 'block'; msgEl.className = 'alert alert-success'; }
+  renderRecallSavedList();
+}
+
+// Opens a print-friendly version of the on-screen recall report in a new
+// window, reusing the visual style of recallExportPrint.
+function _recallReportPrint() {
+  const rep = _rcLastReport;
+  if (!rep) return;
+  const { mode, combined, stockToPull, basket } = rep;
+  const affectedArr = [...combined.affected.values()];
+  const contacts = combined.contacts;
+  const hasLots = basket.lots.length > 0;
+  const now = new Date().toLocaleString('en-NZ', {day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit'});
+
+  const totalCookies = combined.totalCookiesOverride != null ? combined.totalCookiesOverride : affectedArr.reduce((s, info) => {
+    if (info.wholeBatch || !info.icingEntryIds) return s + (info.batch.yield || 0);
+    let sum = 0;
+    info.icingEntryIds.forEach(eid => {
+      const entry = (info.batch.icingEntries || []).find(e => String(e.id) === eid);
+      if (entry) sum += (entry.qty || 0);
+    });
+    return s + sum;
+  }, 0);
+
+  const modeLabel = mode === 'test' ? 'TEST' : mode === 'mock' ? 'MOCK RECALL' : 'LIVE RECALL';
+
+  const triggerParts = [];
+  basket.lots.forEach(item => triggerParts.push(`Lot ${esc(item.lot)}`));
+  basket.dateRanges.forEach(item => triggerParts.push(`Baked ${esc(_recallFmtShortDate(item.start))} – ${esc(_recallFmtShortDate(item.end))}`));
+  basket.batches.forEach(item => triggerParts.push(`Batch ${esc(item.num)}`));
+  basket.customers.forEach(item => triggerParts.push(esc(item.name)));
+  basket.orgs.forEach(item => triggerParts.push(esc(item.org)));
+
+  let body = '';
+
+  if (hasLots) {
+    body += `<h2>📦 Stock to pull</h2>`;
+    if (stockToPull.length) {
+      body += `<table><tr><th>Product</th><th>Brand</th><th>Lot</th><th>Supplier</th><th>Best before</th></tr>`;
+      stockToPull.forEach(s => {
+        body += `<tr><td>${esc(s.product)}</td><td>${esc(s.brand)}</td><td>${esc(s.batch)}</td><td>${esc(s.supplier)}</td><td>${esc(s.bb)}</td></tr>`;
+      });
+      body += `</table>`;
+    } else {
+      body += `<p><em>No unused stock found for these lots — everything has already been used.</em></p>`;
+    }
+  }
+
+  if (hasLots && affectedArr.length) {
+    body += `<h2>🔍 Ingredient trace</h2><p style="font-size:11px;color:#666">The recalled ingredient was used in:</p>`;
+    affectedArr.forEach(info => {
+      body += `<div style="padding:3px 0;border-bottom:1px solid #eee;font-size:11px;">Batch ${esc(info.batch.num)} (${esc(info.batch.date || '')}) — ${esc([...info.reasons].join('; '))}</div>`;
+    });
+  }
+
+  if (affectedArr.length) {
+    body += `<h2>🍪 Affected batches</h2>`;
+    affectedArr.forEach(info => {
+      const b = info.batch;
+      const ingLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`).join('<br>');
+      const cookieCount = combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (b.yield || '?');
+      body += `<div class="batch-block">
+        <div style="font-weight:700;">${esc(b.num)} — ${esc(b.date || '')}</div>
+        <div>${esc(b.recipe || '')}${b.variation ? ' (' + esc(b.variation) + ')' : ''} · ${cookieCount} cookies</div>
+        <div style="font-size:11px;color:#666;margin-top:2px;">Why affected: ${esc([...info.reasons].join('; '))}</div>
+        ${ingLines ? `<div style="font-size:11px;color:#666;margin-top:2px;">${ingLines}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  if (contacts.length) {
+    body += `<h2>📞 Who to contact (${contacts.length})</h2>
+      <table><tr><th>Name</th><th>Phone</th><th>Email</th><th>Details</th></tr>`;
+    contacts.forEach(c => {
+      body += `<tr><td>${esc(c.name || '(no name)')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.email || '—')}</td><td style="font-size:10px">${c.lines.map(l => esc(l)).join('<br>')}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Recall Report — Cookie & Me</title>
+  <style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#1a1714;padding:20px;max-width:900px;margin:0 auto}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #122640;padding-bottom:12px;margin-bottom:20px}
+    .header h1{margin:0;font-size:20px;color:#122640} .header p{margin:4px 0;font-size:11px;color:#666}
+    .urgent{background:#fdf0ef;border:2px solid #c0392b;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-weight:700;color:#c0392b}
+    .batch-block{border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;page-break-inside:avoid;font-size:12px}
+    h2{margin:16px 0 6px;font-size:14px;color:#122640;border-bottom:1px solid #eee;padding-bottom:3px}
+    table{width:100%;border-collapse:collapse;margin-bottom:8px}
+    th,td{padding:4px 8px;border:1px solid #ddd;text-align:left;font-size:11px}
+    th{background:#f0ede8;font-weight:600}
+    @media print{.no-print{display:none}.batch-block{page-break-inside:avoid}}
+  </style></head><body>
+  <div class="header">
+    <div><h1>🚨 Recall / Trace Report — Cookie &amp; Me</h1>
+    <p>Mode: <strong>${modeLabel}</strong></p>
+    <p>Trigger: ${triggerParts.join(', ') || '—'}</p>
+    <p>Generated: ${now}</p>
+    <p>${affectedArr.length} batch${affectedArr.length !== 1 ? 'es' : ''} affected · ${totalCookies} cookies affected · ${contacts.length} customer${contacts.length !== 1 ? 's' : ''} to contact</p></div>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;background:#122640;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨 Print / Save PDF</button></div>
+  </div>
+  <div class="urgent">${mode === 'mock' ? '🔁 MOCK RECALL — DRILL ONLY. This is not a real food safety incident. Keep a printed copy in your FCP audit file as evidence of recall procedure testing.' : mode === 'live' ? '⚠ RECALL IN PROGRESS — This document is a confidential food safety record. Keep a printed copy for your FCP audit file.' : '🧪 TEST — This is a traceability test only, not a real recall.'}</div>
+  ${body}
+  <div style="margin-top:20px;padding-top:12px;border-top:1px solid #ddd;font-size:10px;color:#888">Cookie &amp; Me Kitchen Manager · Recall report generated ${now} · ${document.title.match(/v[\d.]+/)?.[0] || 'version unknown'}</div>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); }
+}
+
+// ── Saved recall records ─────────────────────────────────────────────
+let _rcSavedExpanded = {};
+
+async function renderRecallSavedList() {
+  const el = document.getElementById('rc-saved-list');
+  if (!el) return;
+  const { data, error } = await db.from('logs').select('*').eq('log_type', 'recall').order('id', {ascending: false});
+  if (error) { el.innerHTML = `<div class="alert alert-danger">Error loading saved recalls: ${esc(error.message)}</div>`; return; }
+  if (!data || !data.length) { el.innerHTML = ''; return; }
+
+  let h = `<div class="card-title" style="font-family:sans-serif;font-size:13px;font-weight:700;margin-bottom:8px;">📁 Saved recall records (${data.length})</div>`;
+  data.forEach(r => {
+    const d = r.data || {};
+    const isExp = _rcSavedExpanded[r.id];
+    const modeLabel = d.mode === 'mock' ? 'MOCK RECALL' : d.mode === 'live' ? 'LIVE RECALL' : (d.mode || '').toUpperCase();
+    const modeColor = d.mode === 'mock' ? 'var(--warning)' : 'var(--danger)';
+    const dateStr = d.generatedAt ? new Date(d.generatedAt).toLocaleString('en-NZ', {dateStyle:'medium', timeStyle:'short'}) : '';
+    const totals = d.totals || {};
+    h += `<div class="card" style="border-color:${modeColor};margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;cursor:pointer;" onclick="_rcSavedExpanded[${r.id}]=!_rcSavedExpanded[${r.id}];renderRecallSavedList()">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:${modeColor};font-family:sans-serif;">${esc(modeLabel)}</div>
+          <div style="font-size:13px;font-family:sans-serif;font-weight:600;margin-top:2px;">${esc(d.trigger || '—')}</div>
+          <div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">${esc(dateStr)} · ${totals.batches||0} batch${totals.batches===1?'':'es'} · ${totals.cookies||0} cookies · ${totals.contacts||0} contact${totals.contacts===1?'':'s'}</div>
+        </div>
+        <span style="color:var(--text-muted);font-size:13px;flex-shrink:0;">${isExp?'▲':'▼'}</span>
+      </div>`;
+    if (isExp) {
+      h += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-light);font-size:12px;font-family:sans-serif;">`;
+      (d.affectedBatches||[]).forEach(b => {
+        h += `<div style="padding:3px 0;border-bottom:1px solid var(--gray-light);">${esc(b.num)} — ${esc(b.date||'')} · ${b.cookies} cookies — ${esc((b.reasons||[]).join('; '))}</div>`;
+      });
+      (d.contacts||[]).forEach(c => {
+        h += `<div style="padding:3px 0;border-bottom:1px solid var(--gray-light);">${esc(c.name||'(no name)')}${c.phone?' · 📞 '+esc(c.phone):''}${c.email?' · ✉️ '+esc(c.email):''}</div>`;
+      });
+      h += `<button class="btn btn-sm" style="margin-top:8px;background:var(--danger-bg);color:var(--danger);border-color:var(--danger);" onclick="event.stopPropagation();_recallDeleteSaved(${r.id})">Delete</button>`;
+      h += `</div>`;
+    }
+    h += `</div>`;
+  });
+  el.innerHTML = h;
+}
+
+async function _recallDeleteSaved(id) {
+  if (!confirm('Delete this saved recall record? This cannot be undone.')) return;
+  const { error } = await db.from('logs').delete().eq('id', id);
+  if (error) { alert('Error deleting: ' + error.message); return; }
+  delete _rcSavedExpanded[id];
+  renderRecallSavedList();
 }
 
 // A query is treated as a lot-number search if it's mostly digits, with at
@@ -28879,7 +29127,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v40.1',
+    app_version: 'v43.0',
     tables: {}
   };
 
