@@ -18536,7 +18536,6 @@ function _recallGatherContacts(affected, directContacts) {
 
   affected.forEach((info, batchNum) => {
     const b = info.batch;
-    const reasonStr = [...info.reasons].join('; ');
 
     // Source 1: allocations table
     allocs.filter(a => normBatchNum(a.batch_num) === normBatchNum(batchNum)).forEach(a => {
@@ -18565,7 +18564,7 @@ function _recallGatherContacts(affected, directContacts) {
       const phone = custRec ? (custRec.phone || '') : (typeof r === 'object' ? (r.phone || '') : '');
       const email = custRec ? (custRec.email || '') : (typeof r === 'object' ? (r.email || '') : '');
       const particular = cookieDesc || b.recipe || '';
-      const line = `You received ${qty} ${particular} cookies stamped ${b.num} — please return those.` + (reasonStr ? ` (${reasonStr})` : '');
+      const line = `${qty} ${particular} cookies stamped ${b.num}`;
       addLine(custRec ? custRec.id : custId, dispName, phone, email, line);
     });
 
@@ -18583,7 +18582,7 @@ function _recallGatherContacts(affected, directContacts) {
         const phone = custRec ? (custRec.phone || '') : '';
         const email = custRec ? (custRec.email || '') : '';
         const particular = entry.cookieDescription || b.recipe || '';
-        const line = `You received ${ca.qty} ${particular} cookies stamped ${b.num} — please return those.` + (reasonStr ? ` (${reasonStr})` : '');
+        const line = `${ca.qty} ${particular} cookies stamped ${b.num}`;
         addLine(custRec ? custRec.id : (o.customer_id || null), dispName, phone, email, line);
       });
     });
