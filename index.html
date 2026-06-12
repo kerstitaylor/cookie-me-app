@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v40.1</title>
+<title>Cookie & Me — Kitchen Manager v41.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2328,13 +2328,28 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 
     <!-- SEARCH SUB-TAB -->
     <div id="rc-panel-search">
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-family:sans-serif;padding:6px 0;margin-bottom:10px;cursor:pointer;">
-        <input type="checkbox" id="rc-mock" style="width:16px;height:16px;accent-color:var(--orange)"/>
-        <span>This is a mock recall / drill only</span>
-      </label>
+      <!-- Hidden legacy shim: _rcIsMock (line ~18182) checks this element's .checked.
+           Always false now that the mock/live mode selector below replaces it. -->
+      <input type="checkbox" id="rc-mock" style="display:none"/>
+
+      <!-- RECALL MODE -->
+      <div class="card" id="rc-mode-panel" style="border-color:var(--navy);">
+        <div class="card-title">Recall mode</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label style="flex:1;min-width:90px;text-align:center;padding:8px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:sans-serif;font-size:13px;">
+            <input type="radio" name="rc-mode" value="test" id="rc-mode-test" checked style="margin-right:6px;"/>Test
+          </label>
+          <label style="flex:1;min-width:90px;text-align:center;padding:8px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:sans-serif;font-size:13px;">
+            <input type="radio" name="rc-mode" value="mock" id="rc-mode-mock" style="margin-right:6px;"/>Mock recall
+          </label>
+          <label style="flex:1;min-width:90px;text-align:center;padding:8px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:sans-serif;font-size:13px;">
+            <input type="radio" name="rc-mode" value="live" id="rc-mode-live" style="margin-right:6px;"/>Live recall
+          </label>
+        </div>
+      </div>
 
       <!-- RECALL BASKET -->
-      <div class="card" id="rc-basket-panel" style="border-color:var(--navy);background:#eef3f8;">
+      <div class="card" id="rc-basket-panel" style="border-color:var(--navy);background:#eef3f8;margin-top:18px;">
         <div class="card-title">🧺 Recall basket</div>
         <div id="rc-basket-summary" style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;"></div>
         <div id="rc-basket-items"></div>
@@ -2344,6 +2359,8 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         </div>
         <div id="rc-basket-confirm"></div>
       </div>
+
+      <div id="rc-report" style="margin-top:18px;"></div>
 
       <div class="card" style="margin-top:18px;">
         <div class="card-title">1. By ingredient or lot</div>
@@ -18379,8 +18396,349 @@ function recallBasketConfirm() {
   b.customers.forEach(item => h += `<li>${esc(item.name)}</li>`);
   b.orgs.forEach(item => h += `<li>${esc(item.org)} — ${item.customerIds.length} contact${item.customerIds.length>1?'s':''}</li>`);
   b.dateRanges.forEach(item => h += `<li>Baked ${esc(_recallFmtShortDate(item.start))} – ${esc(_recallFmtShortDate(item.end))}</li>`);
-  h += `</ul><p style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:8px;">This is the recall scope. The full report is generated in a later step.</p></div>`;
+  h += `</ul>
+    <button class="btn btn-primary" style="margin-top:8px;" onclick="recallBuildReport()">Build report</button>
+    <div id="rc-build-note"></div>
+  </div>`;
   confirmEl.innerHTML = h;
+}
+
+// Returns the selected recall mode: 'test' | 'mock' | 'live'. Defaults to 'test'.
+function _recallGetMode() {
+  const el = document.querySelector('input[name="rc-mode"]:checked');
+  return el ? el.value : 'test';
+}
+
+// ── Build 3: Recall report — basket resolution ─────────────────────────
+
+// Resolves the confirmed basket into one deduplicated set of affected batches
+// (each with whole-batch vs icing-entry-level scope and the reasons it's in
+// scope) and one set of customer IDs reached directly via the basket
+// (individuals/orgs), independent of any alloc/order trace.
+function _recallResolveBasket(basket) {
+  const affected = new Map(); // batchNum -> {batch, wholeBatch, icingEntryIds:Set|null, reasons:Set}
+
+  function ensure(b) {
+    if (!affected.has(b.num)) affected.set(b.num, {batch: b, wholeBatch: false, icingEntryIds: new Set(), reasons: new Set()});
+    return affected.get(b.num);
+  }
+  function markWhole(b, reason) {
+    const e = ensure(b);
+    e.wholeBatch = true;
+    e.icingEntryIds = null;
+    e.reasons.add(reason);
+  }
+  function markIcing(b, entryId, reason) {
+    const e = ensure(b);
+    if (!e.wholeBatch) {
+      if (!e.icingEntryIds) e.icingEntryIds = new Set();
+      e.icingEntryIds.add(String(entryId));
+    }
+    e.reasons.add(reason);
+  }
+
+  // Lots — base ingredients match by ingBatch (historical lot string);
+  // icing decoration items match by ingId -> current ings record's .batch.
+  basket.lots.forEach(item => {
+    const lotNorm = (item.lot || '').trim().toLowerCase();
+    if (!lotNorm) return;
+    batches.forEach(b => {
+      if (b.isSplitParent) return;
+      (b.ingredients || []).forEach(ing => {
+        if ((ing.ingBatch || '').trim().toLowerCase() === lotNorm) {
+          markWhole(b, `Lot ${item.lot} used as a base ingredient`);
+        }
+      });
+      (b.icingEntries || []).forEach(e => {
+        (e.decoration || []).forEach(d => {
+          if (d.ingId == null) return;
+          const ingRec = ings.find(x => x.id === d.ingId);
+          if (ingRec && (ingRec.batch || '').trim().toLowerCase() === lotNorm) {
+            markIcing(b, e.id, `Lot ${item.lot} used in icing`);
+          }
+        });
+      });
+    });
+  });
+
+  // Date ranges (baked mode only)
+  basket.dateRanges.forEach(dr => {
+    batches.forEach(b => {
+      if (b.isSplitParent) return;
+      if (b.date && b.date >= dr.start && b.date <= dr.end) {
+        markWhole(b, `Baked between ${_recallFmtShortDate(dr.start)} and ${_recallFmtShortDate(dr.end)}`);
+      }
+    });
+  });
+
+  // Batches selected directly
+  basket.batches.forEach(item => {
+    const b = findBatchByNum(item.num);
+    if (b) markWhole(b, 'Selected directly');
+  });
+
+  // Individuals and orgs feed the contact list directly, regardless of
+  // whether a trace through allocs/orders can be found.
+  const directContacts = new Set();
+  basket.customers.forEach(item => { if (item.id != null) directContacts.add(item.id); });
+  basket.orgs.forEach(item => (item.customerIds || []).forEach(id => directContacts.add(id)));
+
+  return { affected, directContacts };
+}
+
+// Lots that have NEVER been used — neither as a base ingredient (ingBatch
+// match) nor inside any icing entry's decoration[] (ingId match against the
+// live ings record). These are still in the cupboard and need to be pulled.
+function _recallGatherStockToPull(basket) {
+  const result = [];
+  basket.lots.forEach(item => {
+    const lotNorm = (item.lot || '').trim().toLowerCase();
+    item.ids.forEach(id => {
+      const ing = ings.find(x => x.id === id);
+      if (!ing) return;
+      let linked = false;
+      batches.forEach(b => {
+        if (linked) return;
+        if ((b.ingredients || []).some(bi => (bi.ingBatch || '').trim().toLowerCase() === lotNorm)) { linked = true; return; }
+        (b.icingEntries || []).forEach(e => {
+          (e.decoration || []).forEach(d => { if (d.ingId === ing.id) linked = true; });
+        });
+      });
+      if (!linked) {
+        result.push({
+          product: ing.product || '',
+          brand: ing.brand || '',
+          batch: ing.batch || '',
+          supplier: ing.supplier || '',
+          bb: ing.bb_override || ing.best_before || ing.bb || ''
+        });
+      }
+    });
+  });
+  return result;
+}
+
+// Builds the "who to contact" list: grouped by customer ID (never by name),
+// fed from both the allocations table and orders.cookie_allocations, plus
+// any individuals/orgs added directly to the basket.
+function _recallGatherContacts(affected, directContacts) {
+  const contacts = new Map(); // key -> {custId, name, phone, email, lines:Set}
+
+  function addLine(custId, name, phone, email, line) {
+    const key = custId != null ? 'id:' + custId : 'name:' + (name || '').toLowerCase().trim();
+    if (!contacts.has(key)) contacts.set(key, {custId, name, phone, email, lines: new Set()});
+    const c = contacts.get(key);
+    if (!c.phone && phone) c.phone = phone;
+    if (!c.email && email) c.email = email;
+    if (!c.name && name) c.name = name;
+    c.lines.add(line);
+  }
+
+  affected.forEach((info, batchNum) => {
+    const b = info.batch;
+    const reasonStr = [...info.reasons].join('; ');
+
+    // Source 1: allocations table
+    allocs.filter(a => normBatchNum(a.batch_num) === normBatchNum(batchNum)).forEach(a => {
+      let qty = a.qty || 0;
+      let cookieDesc = '';
+      let inScope = info.wholeBatch || !info.icingEntryIds;
+      if (!inScope) {
+        if (a.icing_entry_id && info.icingEntryIds.has(String(a.icing_entry_id))) {
+          inScope = true;
+          const entry = (b.icingEntries || []).find(e => String(e.id) === String(a.icing_entry_id));
+          if (entry) { qty = entry.qty || qty; cookieDesc = entry.cookieDescription || ''; }
+        }
+      } else if (a.icing_entry_id) {
+        const entry = (b.icingEntries || []).find(e => String(e.id) === String(a.icing_entry_id));
+        if (entry) cookieDesc = entry.cookieDescription || '';
+      }
+      if (!inScope) return;
+
+      const r = a.recipient || {};
+      const rName = typeof r === 'string' ? r : (r.name || '');
+      const custId = (typeof r === 'object' && r.customerId != null) ? r.customerId : null;
+      const custRec = custId != null
+        ? (cfg.customers || []).find(c => c && c.id == custId)
+        : (cfg.customers || []).find(c => c && (c.name || '').toLowerCase() === rName.toLowerCase());
+      const dispName = custRec ? custDisplayName(custRec) : (recipDisplayName(r) || rName);
+      const phone = custRec ? (custRec.phone || '') : (typeof r === 'object' ? (r.phone || '') : '');
+      const email = custRec ? (custRec.email || '') : (typeof r === 'object' ? (r.email || '') : '');
+      const particular = cookieDesc || b.recipe || '';
+      const line = `You received ${qty} ${particular} cookies stamped ${b.num} — please return those.` + (reasonStr ? ` (${reasonStr})` : '');
+      addLine(custRec ? custRec.id : custId, dispName, phone, email, line);
+    });
+
+    // Source 2: orders.cookie_allocations
+    orders.forEach(o => {
+      (o.cookie_allocations || []).forEach(ca => {
+        if (!ca.icing_entry_id || !ca.qty) return;
+        const entry = (b.icingEntries || []).find(e => String(e.id) === String(ca.icing_entry_id));
+        if (!entry) return;
+        const inScope = info.wholeBatch || !info.icingEntryIds || info.icingEntryIds.has(String(ca.icing_entry_id));
+        if (!inScope) return;
+
+        const custRec = (cfg.customers || []).find(c => c && c.id == o.customer_id);
+        const dispName = custRec ? custDisplayName(custRec) : (o.customer_name || '');
+        const phone = custRec ? (custRec.phone || '') : '';
+        const email = custRec ? (custRec.email || '') : '';
+        const particular = entry.cookieDescription || b.recipe || '';
+        const line = `You received ${ca.qty} ${particular} cookies stamped ${b.num} — please return those.` + (reasonStr ? ` (${reasonStr})` : '');
+        addLine(custRec ? custRec.id : (o.customer_id || null), dispName, phone, email, line);
+      });
+    });
+  });
+
+  // Individuals/orgs added directly to the basket — ensure they appear even
+  // if no alloc/order trace was found for them.
+  directContacts.forEach(custId => {
+    const custRec = (cfg.customers || []).find(c => c && c.id == custId);
+    if (!custRec) return;
+    const key = 'id:' + custRec.id;
+    if (!contacts.has(key)) {
+      contacts.set(key, {custId: custRec.id, name: custDisplayName(custRec), phone: custRec.phone || '', email: custRec.email || '', lines: new Set()});
+    }
+  });
+
+  return [...contacts.values()].map(c => ({...c, lines: [...c.lines]}));
+}
+
+// Builds the report (resolution + on-screen render) for the current basket
+// and mode. Test mode shows a gentle non-blocking note; Mock/Live save are
+// added in Pass 2.
+function recallBuildReport() {
+  const basket = _recallBasket;
+  const total = basket.lots.length + basket.batches.length + basket.customers.length + basket.orgs.length + basket.dateRanges.length;
+  if (!total) return;
+  const mode = _recallGetMode();
+  const resolved = _recallResolveBasket(basket);
+  const stockToPull = _recallGatherStockToPull(basket);
+  const contacts = _recallGatherContacts(resolved.affected, resolved.directContacts);
+  _recallRenderReport(mode, resolved, stockToPull, contacts, basket);
+
+  const noteEl = document.getElementById('rc-build-note');
+  if (noteEl) {
+    noteEl.innerHTML = mode === 'test'
+      ? '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-top:8px;">This is a test and won\'t be saved. Switch to Mock or Live to keep a record.</div>'
+      : '';
+  }
+}
+
+// Renders the on-screen report into #rc-report.
+function _recallRenderReport(mode, resolved, stockToPull, contacts, basket) {
+  const el = document.getElementById('rc-report');
+  if (!el) return;
+  const affectedArr = [...resolved.affected.values()];
+  const hasLots = basket.lots.length > 0;
+  const nowStr = new Date().toLocaleString('en-NZ', {dateStyle: 'medium', timeStyle: 'short'});
+
+  const totalCookies = affectedArr.reduce((s, info) => {
+    if (info.wholeBatch || !info.icingEntryIds) return s + (info.batch.yield || 0);
+    let sum = 0;
+    info.icingEntryIds.forEach(eid => {
+      const entry = (info.batch.icingEntries || []).find(e => String(e.id) === eid);
+      if (entry) sum += (entry.qty || 0);
+    });
+    return s + sum;
+  }, 0);
+
+  const modeLabel = mode === 'test' ? 'TEST' : mode === 'mock' ? 'MOCK RECALL' : 'LIVE RECALL';
+  const modeColor = mode === 'test' ? 'var(--text-muted)' : mode === 'mock' ? 'var(--warning)' : 'var(--danger)';
+
+  const triggerParts = [];
+  basket.lots.forEach(item => triggerParts.push(`Lot ${esc(item.lot)}`));
+  basket.dateRanges.forEach(item => triggerParts.push(`Baked ${esc(_recallFmtShortDate(item.start))} – ${esc(_recallFmtShortDate(item.end))}`));
+  basket.batches.forEach(item => triggerParts.push(`Batch ${esc(item.num)}`));
+  basket.customers.forEach(item => triggerParts.push(esc(item.name)));
+  basket.orgs.forEach(item => triggerParts.push(esc(item.org)));
+
+  let h = '';
+
+  // Summary header
+  h += `<div class="card" style="border-color:${modeColor}">
+    <div style="font-size:16px;font-weight:700;color:${modeColor};font-family:sans-serif;margin-bottom:4px;">${modeLabel}</div>
+    <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;">Generated ${esc(nowStr)}</div>
+    <div style="font-size:13px;font-family:sans-serif;margin-bottom:8px;">Trigger: ${triggerParts.join(', ') || '—'}</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;font-family:sans-serif;font-size:13px;">
+      <div><strong>${affectedArr.length}</strong> batch${affectedArr.length !== 1 ? 'es' : ''} affected</div>
+      <div><strong>${totalCookies}</strong> cookies affected</div>
+      <div><strong>${contacts.length}</strong> customer${contacts.length !== 1 ? 's' : ''} to contact</div>
+    </div>
+  </div>`;
+
+  // Stock to pull
+  if (hasLots) {
+    h += `<div class="card" style="margin-top:12px;">
+      <div class="card-title">📦 Stock to pull</div>`;
+    if (stockToPull.length) {
+      h += `<table style="width:100%;font-size:12px;font-family:sans-serif;border-collapse:collapse;">
+        <tr>
+          <th style="text-align:left;border-bottom:1px solid var(--border);padding:4px;">Product</th>
+          <th style="text-align:left;border-bottom:1px solid var(--border);padding:4px;">Brand</th>
+          <th style="text-align:left;border-bottom:1px solid var(--border);padding:4px;">Lot</th>
+          <th style="text-align:left;border-bottom:1px solid var(--border);padding:4px;">Supplier</th>
+          <th style="text-align:left;border-bottom:1px solid var(--border);padding:4px;">Best before</th>
+        </tr>`;
+      stockToPull.forEach(s => {
+        h += `<tr>
+          <td style="padding:4px;border-bottom:1px solid var(--gray-light);">${esc(s.product)}</td>
+          <td style="padding:4px;border-bottom:1px solid var(--gray-light);">${esc(s.brand)}</td>
+          <td style="padding:4px;border-bottom:1px solid var(--gray-light);">${esc(s.batch)}</td>
+          <td style="padding:4px;border-bottom:1px solid var(--gray-light);">${esc(s.supplier)}</td>
+          <td style="padding:4px;border-bottom:1px solid var(--gray-light);">${esc(s.bb)}</td>
+        </tr>`;
+      });
+      h += `</table>`;
+    } else {
+      h += `<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;">No unused stock found for these lots — everything has already been used.</div>`;
+    }
+    h += `</div>`;
+  }
+
+  // Ingredient trace
+  if (hasLots && affectedArr.length) {
+    h += `<div class="card" style="margin-top:12px;">
+      <div class="card-title">🔍 Ingredient trace</div>
+      <div style="font-size:12px;font-family:sans-serif;color:var(--text-muted);margin-bottom:6px;">The recalled ingredient was used in:</div>`;
+    affectedArr.forEach(info => {
+      h += `<div style="padding:4px 0;font-size:12px;font-family:sans-serif;border-bottom:1px solid var(--gray-light);">Batch ${esc(info.batch.num)} (${esc(info.batch.date || '')}) — ${esc([...info.reasons].join('; '))}</div>`;
+    });
+    h += `</div>`;
+  }
+
+  // Affected batches
+  if (affectedArr.length) {
+    h += `<div class="card" style="margin-top:12px;">
+      <div class="card-title">🍪 Affected batches</div>`;
+    affectedArr.forEach(info => {
+      const b = info.batch;
+      const ingLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`).join('<br>');
+      h += `<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);font-size:13px;font-family:sans-serif;">
+        <div style="font-weight:700;">${esc(b.num)} — ${esc(b.date || '')}</div>
+        <div>${esc(b.recipe || '')}${b.variation ? ' (' + esc(b.variation) + ')' : ''} · ${b.yield || '?'} cookies</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Why affected: ${esc([...info.reasons].join('; '))}</div>
+        ${ingLines ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${ingLines}</div>` : ''}
+      </div>`;
+    });
+    h += `</div>`;
+  }
+
+  // Who to contact
+  if (contacts.length) {
+    h += `<div class="card" style="margin-top:12px;">
+      <div class="card-title">📞 Who to contact (${contacts.length})</div>`;
+    contacts.forEach(c => {
+      const hasContact = c.phone || c.email;
+      h += `<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);font-size:13px;font-family:sans-serif;">
+        <div style="font-weight:700;">${esc(c.name || '(no name)')}</div>
+        <div style="font-size:12px;color:var(--text-muted);">${c.phone ? '📞 ' + esc(c.phone) + ' ' : ''}${c.email ? '✉️ ' + esc(c.email) : ''}${!hasContact ? '⚠ No contact details on record' : ''}</div>
+        ${c.lines.length ? `<div style="font-size:12px;margin-top:4px;">${c.lines.map(l => esc(l)).join('<br>')}</div>` : ''}
+      </div>`;
+    });
+    h += `</div>`;
+  }
+
+  el.innerHTML = h;
 }
 
 // A query is treated as a lot-number search if it's mostly digits, with at
