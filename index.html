@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v43.5</title>
+<title>Cookie & Me — Kitchen Manager v43.6</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -29144,29 +29144,44 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v43.5',
+    app_version: 'v43.6',
     tables: {}
   };
 
   const PAGE_SIZE = 1000;
+  const fetchAllPages = async (queryFactory) => {
+    const rows = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await queryFactory(from, from + PAGE_SIZE - 1);
+      if (error) throw error;
+      if (data == null) throw new Error('returned null/undefined');
+      rows.push(...data);
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+    return rows;
+  };
+
+  const IMAGE_LOG_TYPES = ['campaign_images', 'order_images'];
+
   for (const t of tables) {
     try {
-      const rows = [];
-      let from = 0;
-      while (true) {
-        const { data, error } = await db.from(t).select('*').range(from, from + PAGE_SIZE - 1);
-        if (error) throw error;
-        if (data == null) throw new Error('returned null/undefined');
-        rows.push(...data);
-        if (data.length < PAGE_SIZE) break;
-        from += PAGE_SIZE;
-      }
+      let rows;
       if (t === 'logs') {
-        rows.forEach(row => {
-          if (row.log_type === 'campaign_images' || row.log_type === 'order_images') {
-            row.data = '[image data excluded from backup]';
-          }
-        });
+        // Image-type log rows store full base64 blobs in `data` (up to 13MB
+        // each), which blows the statement timeout. Fetch those rows
+        // without the `data` column, then fetch every other log row in full.
+        const lightRows = await fetchAllPages((from, to) =>
+          db.from('logs').select('id, log_type, saved_at').in('log_type', IMAGE_LOG_TYPES).range(from, to));
+        lightRows.forEach(row => { row.data = '[image data excluded from backup]'; });
+
+        const fullRows = await fetchAllPages((from, to) =>
+          db.from('logs').select('*').not('log_type', 'in', `(${IMAGE_LOG_TYPES.join(',')})`).range(from, to));
+
+        rows = [...fullRows, ...lightRows];
+      } else {
+        rows = await fetchAllPages((from, to) => db.from(t).select('*').range(from, to));
       }
       snapshot.tables[t] = rows;
     } catch(e) {
