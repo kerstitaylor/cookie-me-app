@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v43.2</title>
+<title>Cookie & Me — Kitchen Manager v43.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -29122,38 +29122,42 @@ async function exportAllData() {
   if (statusEl) statusEl.textContent = 'Fetching…';
 
   const tables = [
-    'ingredients',
-    'logs',
-    'config',
-    'batches',
     'allocations',
-    'orders',
-    'order_lines',
-    'campaigns',
+    'batches',
     'campaign_engagements',
     'campaign_orders',
-    'interactions',
-    'supplier_records',
-    'collection_templates',
+    'campaigns',
     'collection_instances',
+    'collection_templates',
+    'config',
     'deleted_records',
+    'ingredients',
+    'interactions',
+    'logs',
+    'notifications',
+    'order_lines',
+    'orders',
+    'projects',
+    'supplier_records',
+    'tasks',
   ];
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v43.2',
+    app_version: 'v43.3',
     tables: {}
   };
 
-  let failed = [];
   for (const t of tables) {
     try {
       const { data, error } = await db.from(t).select('*');
-      if (error) { failed.push(t); snapshot.tables[t] = null; }
-      else { snapshot.tables[t] = data; }
+      if (error) throw error;
+      if (data == null) throw new Error('returned null/undefined');
+      snapshot.tables[t] = data;
     } catch(e) {
-      failed.push(t);
-      snapshot.tables[t] = null;
+      if (btn) btn.style.opacity = '1';
+      if (statusEl) statusEl.textContent = `⚠️ Backup aborted — "${t}" failed: ${e.message || e}`;
+      return;
     }
   }
 
@@ -29163,18 +29167,17 @@ async function exportAllData() {
   const a = document.createElement('a');
   const dateStr = new Date().toISOString().slice(0,10);
   a.href = url;
-  a.download = `cookieandme_backup_${dateStr}.json`;
+  a.download = `cookie-me-backup-${dateStr}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
   if (btn) btn.style.opacity = '1';
-  if (failed.length) {
-    if (statusEl) statusEl.textContent = `⚠️ ${failed.length} table(s) failed`;
-  } else {
-    if (statusEl) statusEl.textContent = `✓ Saved ${dateStr}`;
-    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+  const totalRows = tables.reduce((sum, t) => sum + snapshot.tables[t].length, 0);
+  if (statusEl) {
+    statusEl.textContent = `✓ Saved ${dateStr} — ${tables.length} tables, ${totalRows} rows`;
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 8000);
   }
 }
 
