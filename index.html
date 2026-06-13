@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v43.4</title>
+<title>Cookie & Me — Kitchen Manager v43.5</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -29144,7 +29144,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v43.4',
+    app_version: 'v43.5',
     tables: {}
   };
 
@@ -29160,6 +29160,13 @@ async function exportAllData() {
         rows.push(...data);
         if (data.length < PAGE_SIZE) break;
         from += PAGE_SIZE;
+      }
+      if (t === 'logs') {
+        rows.forEach(row => {
+          if (row.log_type === 'campaign_images' || row.log_type === 'order_images') {
+            row.data = '[image data excluded from backup]';
+          }
+        });
       }
       snapshot.tables[t] = rows;
     } catch(e) {
