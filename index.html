@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.3</title>
+<title>Cookie & Me — Kitchen Manager v44.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -17619,6 +17619,7 @@ async function printReconciliationReport() {
     });
     rAllocs.forEach(function(a) {
       if (a.icing_entry_id || a.type!=='sold') return;
+      if (a.collection_instance_id && a.campaign_ids && a.campaign_ids.length) return;
       var r = a.recipient;
       var rName = (r && typeof r==='object') ? (r.name||r.org||JSON.stringify(r)) : (r||'—');
       noEntryId.push('Batch '+(a.batch_num||'—')+', recipient: '+rName+', qty: '+(a.qty||0)+', type: '+(a.type||'—'));
@@ -29166,7 +29167,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.3',
+    app_version: 'v44.4',
     tables: {}
   };
 
