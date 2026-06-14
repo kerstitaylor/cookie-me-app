@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.5</title>
+<title>Cookie & Me — Kitchen Manager v44.6</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -19332,8 +19332,30 @@ function recallClearSearch1() {
 
 // Renderer for the "by batch number" results — each match gets its own Add
 // button, plus a "+ add another batch" affordance to clear and search again.
-function _recallRenderBatchListWithAdd(el, matches, emptyMsg) {
-  if (!matches.length) { el.innerHTML = `<div class="card"><div class="empty">${esc(emptyMsg)}</div></div>`; return; }
+function _recallRenderBatchListWithAdd(el, matches, emptyMsg, q) {
+  if (!matches.length) {
+    const suggestions = _recallFuzzySuggest(q);
+    const suggestHtml = suggestions.length
+      ? `<div style="margin-top:12px">
+          <div style="font-size:12px;font-weight:700;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">Did you mean…?</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">` +
+          suggestions.map(s =>
+            `<button onclick="document.getElementById('rc2-q').value=${JSON.stringify(s.display)};doRecallByBatch();"
+              style="padding:5px 12px;border:1px solid var(--border);border-radius:99px;background:var(--white);font-size:13px;font-family:sans-serif;cursor:pointer;color:var(--navy);transition:all 0.15s;"
+              onmouseover="this.style.background='var(--gray-light)'" onmouseout="this.style.background='var(--white)'"
+            >${esc(s.display)} <span style="font-size:10px;color:var(--text-muted);font-weight:400">${s.category}</span></button>`
+          ).join('') +
+          `</div></div>`
+      : `<div style="margin-top:10px;padding:10px 12px;background:var(--warning-bg);border-radius:var(--radius);font-size:12px;color:var(--warning);font-family:sans-serif;line-height:1.6">
+          <strong>Suggestions:</strong><br>
+          • Check that the lot number was recorded when the ingredient was opened.<br>
+          • Try searching by ingredient name (e.g. "flour" or "butter").<br>
+          • Try searching by supplier name (e.g. "Woolworths" or "PakNSave").<br>
+          • Try a partial batch number (e.g. "B001").
+        </div>`;
+    el.innerHTML = `<div class="card"><div class="empty">${esc(emptyMsg)}</div>${suggestHtml}</div>`;
+    return;
+  }
   let h = `<div class="alert alert-warning" style="font-weight:600">${matches.length} batch${matches.length>1?'es':''} matched</div>`;
   matches.forEach(b => {
     h += `<div class="card" style="margin-bottom:8px">
@@ -19372,7 +19394,7 @@ function doRecallByBatch() {
   const el = document.getElementById('rc2-res');
   if (!q) { el.innerHTML=''; return; }
   const matches = batches.filter(b => b.num && b.num.toLowerCase().includes(q));
-  _recallRenderBatchListWithAdd(el, matches, `No batches found for "${q}".`);
+  _recallRenderBatchListWithAdd(el, matches, `No batches found for "${q}".`, q);
 }
 
 function recallClearSearch2() {
@@ -29167,7 +29189,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.5',
+    app_version: 'v44.6',
     tables: {}
   };
 
