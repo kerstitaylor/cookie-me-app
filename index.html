@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.2</title>
+<title>Cookie & Me — Kitchen Manager v44.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -17575,10 +17575,10 @@ async function printReconciliationReport() {
       });
     });
     var note = hasPreCutoff
-      ? '<p>Records entered on or before 9 June 2026 pre-date per-entry icing allocation (introduced 10 June 2026). These are verified at batch level (see Section 1) rather than by icing colour, and intentionally show no per-colour issues here.</p>'
+      ? '<p style="color:#666;font-style:italic;font-size:11px;">Records entered on or before 9 June 2026 pre-date per-entry icing allocation (introduced 10 June 2026). These are verified at batch level (see Section 1) rather than by icing colour, and intentionally show no per-colour issues here.</p>'
       : '';
-    if (!issues.length) return { html: note+'<p>✓ No issues found</p>', count: 0 };
-    return { html: note+'<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+    if (!issues.length) return { html: '<p>✓ No issues found</p>'+note, count: 0 };
+    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>'+note, count: issues.length };
   }
 
   // ── Section 4: Batches Needing Disposal Records ──────────
@@ -17601,7 +17601,7 @@ async function printReconciliationReport() {
 
   // ── Section 5: Missing or Incomplete Icing Data ──────────
   function sec5() {
-    var noFondant = [], noEntryId = [];
+    var noFondant = [], noEntryId = [], noDecExplained = [];
     var seen = new Set();
     rBatches.forEach(function(b) {
       getIcingEntries(b).forEach(function(e) {
@@ -17609,7 +17609,12 @@ async function printReconciliationReport() {
         if (seen.has(key)) return;
         seen.add(key);
         var dec = e.decoration||[];
-        if (dec.length===0 || !dec.some(function(d){ return d.type==='Fondant'; })) noFondant.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": '+(dec.length===0?'no decoration':'no Fondant item'));
+        if (dec.length===0) {
+          if (e.purposeNotes) noDecExplained.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": no decoration recorded — '+e.purposeNotes);
+          else noFondant.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": no decoration');
+        } else if (!dec.some(function(d){ return d.type==='Fondant'; })) {
+          noFondant.push('Batch '+b.num+' entry "'+( e.cookieDescription||'—')+'": no Fondant item');
+        }
       });
     });
     rAllocs.forEach(function(a) {
@@ -17618,11 +17623,14 @@ async function printReconciliationReport() {
       var rName = (r && typeof r==='object') ? (r.name||r.org||JSON.stringify(r)) : (r||'—');
       noEntryId.push('Batch '+(a.batch_num||'—')+', recipient: '+rName+', qty: '+(a.qty||0)+', type: '+(a.type||'—'));
     });
-    if (!noFondant.length && !noEntryId.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var note = noDecExplained.length
+      ? '<div style="color:#666;font-style:italic;font-size:11px;"><p>Icing entries with no decoration, explained by note:</p><ul>'+noDecExplained.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul></div>'
+      : '';
+    if (!noFondant.length && !noEntryId.length) return { html: '<p>✓ No issues found</p>'+note, count: 0 };
     var html = '';
     if (noFondant.length) html += '<p><strong>Icing entries with no Fondant decoration:</strong></p><ul>'+noFondant.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
     if (noEntryId.length) html += '<p><strong>Allocations with no icing entry ID (not disposal/testing):</strong></p><ul>'+noEntryId.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
-    return { html: html, count: noFondant.length + noEntryId.length };
+    return { html: html+note, count: noFondant.length + noEntryId.length };
   }
 
   // ── Section 6: Ingredient Traceability Gaps ──────────────
@@ -29158,7 +29166,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.2',
+    app_version: 'v44.3',
     tables: {}
   };
 
