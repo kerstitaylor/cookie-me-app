@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.4</title>
+<title>Cookie & Me — Kitchen Manager v44.5</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10438,7 +10438,7 @@ function orfRenderDeliveryRows() {
   var el = document.getElementById('orf-delivery-rows'); if (!el) return;
   var custAddr = '';
   if (_orfLinkedCustomerId) {
-    var cust = (cfg.customers||[]).find(function(c){ return c.id === _orfLinkedCustomerId; });
+    var cust = (cfg.customers||[]).find(function(c){ return String(c.id) === String(_orfLinkedCustomerId); });
     if (cust) custAddr = cust.address || '';
   }
   el.innerHTML = _orfDeliveryRows.map(function(row, i) {
@@ -10528,7 +10528,7 @@ function orfSaveDeliveryAddrToCustomer(rowIdx) {
   var addr = (_orfDeliveryRows[rowIdx]||{}).address||'';
   if (!addr) { alert('No address entered to save.'); return; }
   if (!_orfLinkedCustomerId) { alert('No customer linked to this order.'); return; }
-  var idx = (cfg.customers||[]).findIndex(function(c){ return c.id === _orfLinkedCustomerId; });
+  var idx = (cfg.customers||[]).findIndex(function(c){ return String(c.id) === String(_orfLinkedCustomerId); });
   if (idx === -1) { alert('Customer not found.'); return; }
   if (!cfg.customers[idx].addresses) cfg.customers[idx].addresses = [];
   if (!cfg.customers[idx].addresses.includes(addr)) {
@@ -20655,7 +20655,7 @@ function renderCustDetailOrders() {
 
   // ── NOTES TAB ──────────────────────────────────────────
   if (custDetailTab === 'notes') {
-    const custInteractions = interactions.filter(ix => ix.entity_type === 'customer' && ix.entity_id === c.id);
+    const custInteractions = interactions.filter(ix => ix.entity_type === 'customer' && String(ix.entity_id) === String(c.id));
     let h = `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 8px;">
       <div class="card-title" style="margin:0;">Notes &amp; interactions</div>
       <button class="btn btn-sm btn-primary" onclick="openCustInteractionForm()">+ Log</button>
@@ -28125,7 +28125,7 @@ function renderEngDeliveryRows() {
   if (!el) return;
   var custAddr = '';
   if (_engLinkedCustomerId) {
-    var cust = (cfg.customers||[]).find(function(c){ return c.id === _engLinkedCustomerId; });
+    var cust = (cfg.customers||[]).find(function(c){ return String(c.id) === String(_engLinkedCustomerId); });
     if (cust) custAddr = cust.address || '';
   }
   el.innerHTML = _engDeliveryRows.map(function(row, i) {
@@ -28216,7 +28216,7 @@ function engSaveDeliveryAddrToCustomer(rowIdx) {
   var addr = (_engDeliveryRows[rowIdx]||{}).address||'';
   if (!addr) { alert('No address entered to save.'); return; }
   if (!_engLinkedCustomerId) { alert('No customer linked to this engagement.'); return; }
-  var idx = (cfg.customers||[]).findIndex(function(c){ return c.id === _engLinkedCustomerId; });
+  var idx = (cfg.customers||[]).findIndex(function(c){ return String(c.id) === String(_engLinkedCustomerId); });
   if (idx === -1) { alert('Customer not found.'); return; }
   // Add as additional address if not already in their addresses array
   if (!cfg.customers[idx].addresses) cfg.customers[idx].addresses = [];
@@ -29167,7 +29167,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.4',
+    app_version: 'v44.5',
     tables: {}
   };
 
