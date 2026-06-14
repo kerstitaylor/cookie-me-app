@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.0</title>
+<title>Cookie & Me — Kitchen Manager v44.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -17545,19 +17545,40 @@ async function printReconciliationReport() {
 
   // ── Section 3: Allocation vs Icing (per icing entry) ─────
   function sec3() {
+    var CUTOFF = new Date('2026-06-10T00:00:00Z').getTime();
     var issues = [];
+    var hasPreCutoff = false;
     rBatches.forEach(function(b) {
       getIcingEntries(b).forEach(function(e) {
-        var fromOrders = rOrders.reduce(function(s,o){ return s+(o.cookie_allocations||[]).reduce(function(s2,ca){ return s2+(String(ca.icing_entry_id)===String(e.id)?(Number(ca.qty)||0):0); },0); },0);
-        var fromAllocs = rAllocs.reduce(function(s,a){ return s+(String(a.icing_entry_id)===String(e.id)?(Number(a.qty)||0):0); },0);
+        var tagsPre = false, tagsPost = false;
+        var fromOrders = rOrders.reduce(function(s,o){ return s+(o.cookie_allocations||[]).reduce(function(s2,ca){
+          if (String(ca.icing_entry_id)!==String(e.id)) return s2;
+          var t = new Date(ca.confirmed_at).getTime();
+          if (t < CUTOFF) tagsPre = true; else tagsPost = true;
+          return s2+(Number(ca.qty)||0);
+        },0); },0);
+        var fromAllocs = rAllocs.reduce(function(s,a){
+          if (String(a.icing_entry_id)!==String(e.id)) return s;
+          var t = new Date(a.created_at).getTime();
+          if (t < CUTOFF) tagsPre = true; else tagsPost = true;
+          return s+(Number(a.qty)||0);
+        },0);
         var allocated = fromOrders + fromAllocs;
         var made = Number(e.qty)||0;
+        var postCutoff;
+        if (tagsPost) postCutoff = true;
+        else if (tagsPre) postCutoff = false;
+        else postCutoff = !!(e.date && e.date >= '2026-06-10');
+        if (!postCutoff) { hasPreCutoff = true; return; }
         if (allocated < made) issues.push('Batch '+b.num+' entry "'+(e.cookieDescription||'—')+'": '+(made-allocated)+' unallocated (made '+made+', allocated '+allocated+')');
         else if (allocated > made) issues.push('Batch '+b.num+' entry "'+(e.cookieDescription||'—')+'": over-allocated (made '+made+', allocated '+allocated+')');
       });
     });
-    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
-    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+    var note = hasPreCutoff
+      ? '<p>Records entered on or before 9 June 2026 pre-date per-entry icing allocation (introduced 10 June 2026). These are verified at batch level (see Section 1) rather than by icing colour, and intentionally show no per-colour issues here.</p>'
+      : '';
+    if (!issues.length) return { html: note+'<p>✓ No issues found</p>', count: 0 };
+    return { html: note+'<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
 
   // ── Section 4: Batches Needing Disposal Records ──────────
@@ -29151,7 +29172,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.0',
+    app_version: 'v44.1',
     tables: {}
   };
 
