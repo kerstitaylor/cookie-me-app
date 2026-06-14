@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.1</title>
+<title>Cookie & Me — Kitchen Manager v44.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -17679,20 +17679,7 @@ async function printReconciliationReport() {
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
 
-  // ── Section 8: Order: ordered vs allocated (per order) ───
-  function sec8() {
-    var issues = [];
-    rOrders.forEach(function(o) {
-      if ((o.status||'').toLowerCase() === 'cancelled') return;
-      var ordered = rOrderLines.reduce(function(s,l){ return s+(String(l.order_id)===String(o.id)?(Number(l.quantity)||0):0); },0);
-      var allocated = (o.cookie_allocations||[]).reduce(function(s,ca){ return s+(Number(ca.qty)||0); },0);
-      if (ordered !== allocated) issues.push('Order '+orderLabel(o)+': ordered '+ordered+', allocated '+allocated+', gap '+(ordered-allocated));
-    });
-    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
-    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
-  }
-
-  // ── Section 9: Orphaned Records ───────────────────────────
+  // ── Section 8: Orphaned Records ───────────────────────────
   function sec9() {
     var orphanOrders = [], orphanCamps = [], emptyOrders = [];
     rBatches.forEach(function(b) {
@@ -17715,7 +17702,7 @@ async function printReconciliationReport() {
     return { html: html, count: orphanOrders.length + orphanCamps.length + emptyOrders.length };
   }
 
-  // ── Section 10: Split Batch Completeness ─────────────────
+  // ── Section 9: Split Batch Completeness ──────────────────
   function sec10() {
     var issues = [];
     rBatches.forEach(function(b) {
@@ -17735,7 +17722,7 @@ async function printReconciliationReport() {
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
 
-  // ── Section 11: Name and String Consistency ───────────────
+  // ── Section 10: Name and String Consistency ──────────────
   function sec11() {
     var issues = [];
     // Customer names: same customerId, different name strings
@@ -17751,7 +17738,7 @@ async function printReconciliationReport() {
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
 
-  // ── Section 12: Cancelled Orders With Production ─────────
+  // ── Section 11: Cancelled Orders With Production ─────────
   function sec12() {
     var issues = [];
     rOrders.forEach(function(o) {
@@ -17774,11 +17761,10 @@ async function printReconciliationReport() {
     { n:5,  title:'Missing or Incomplete Icing Data',fn: sec5  },
     { n:6,  title:'Ingredient Traceability Gaps',    fn: sec6  },
     { n:7,  title:'Date Logic',                      fn: sec7  },
-    { n:8,  title:'Order Quantity Consistency',      fn: sec8  },
-    { n:9,  title:'Orphaned Records',                fn: sec9  },
-    { n:10, title:'Split Batch Completeness',        fn: sec10 },
-    { n:11, title:'Name and String Consistency',     fn: sec11 },
-    { n:12, title:'Cancelled Orders With Production', fn: sec12 }
+    { n:8,  title:'Orphaned Records',                fn: sec9  },
+    { n:9,  title:'Split Batch Completeness',        fn: sec10 },
+    { n:10, title:'Name and String Consistency',     fn: sec11 },
+    { n:11, title:'Cancelled Orders With Production', fn: sec12 }
   ];
   var totalIssues = 0, sectionsWithIssues = 0, bodyParts = [];
   secDefs.forEach(function(s) {
@@ -29172,7 +29158,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.1',
+    app_version: 'v44.2',
     tables: {}
   };
 
