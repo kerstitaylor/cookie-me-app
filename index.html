@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v43.6</title>
+<title>Cookie & Me — Kitchen Manager v44.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -17425,11 +17425,13 @@ async function printReconciliationReport() {
     db.from('orders').select('*').order('id'),
     db.from('ingredients').select('*').order('id'),
     db.from('campaigns').select('*').order('id'),
-    db.from('campaign_engagements').select('*').order('id')
+    db.from('campaign_engagements').select('*').order('id'),
+    db.from('order_lines').select('*').order('id')
   ]);
-  var rBatches   = results[0].data || [];
-  var rAllocs    = results[1].data || [];
-  var rOrders    = results[2].data || [];
+  var rBatches    = results[0].data || [];
+  var rAllocs     = results[1].data || [];
+  var rOrders     = results[2].data || [];
+  var rOrderLines = results[6].data || [];
   var rIngs      = results[3].data || [];
   var rCamps     = results[4].data || [];
 
@@ -17541,20 +17543,18 @@ async function printReconciliationReport() {
     return { html: html, count: noFondant.length };
   }
 
-  // ── Section 3: Allocation vs Icing Cross-check ───────────
+  // ── Section 3: Allocation vs Icing (per icing entry) ─────
   function sec3() {
-    return { html: '<p>⚠ Temporarily suppressed — shared icing entry split logic not yet implemented.</p>', count: 0 };
-    var icingQtyByOrder = {};
+    var issues = [];
     rBatches.forEach(function(b) {
       getIcingEntries(b).forEach(function(e) {
-        (e.orderIds||[]).forEach(function(oid) { icingQtyByOrder[String(oid)] = (icingQtyByOrder[String(oid)]||0)+(Number(e.qty)||0); });
+        var fromOrders = rOrders.reduce(function(s,o){ return s+(o.cookie_allocations||[]).reduce(function(s2,ca){ return s2+(String(ca.icing_entry_id)===String(e.id)?(Number(ca.qty)||0):0); },0); },0);
+        var fromAllocs = rAllocs.reduce(function(s,a){ return s+(String(a.icing_entry_id)===String(e.id)?(Number(a.qty)||0):0); },0);
+        var allocated = fromOrders + fromAllocs;
+        var made = Number(e.qty)||0;
+        if (allocated < made) issues.push('Batch '+b.num+' entry "'+(e.cookieDescription||'—')+'": '+(made-allocated)+' unallocated (made '+made+', allocated '+allocated+')');
+        else if (allocated > made) issues.push('Batch '+b.num+' entry "'+(e.cookieDescription||'—')+'": over-allocated (made '+made+', allocated '+allocated+')');
       });
-    });
-    var issues = [];
-    rOrders.forEach(function(o) {
-      var caQty = (o.cookie_allocations||[]).reduce(function(s,c){ return s+(Number(c.qty)||0); },0);
-      var iQty = icingQtyByOrder[String(o.id)]||0;
-      if (caQty !== iQty) issues.push('Order '+orderLabel(o)+': order confirms '+caQty+', icing entries sum '+iQty+', diff '+(iQty-caQty));
     });
     if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
@@ -17658,22 +17658,14 @@ async function printReconciliationReport() {
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
 
-  // ── Section 8: Order Quantity Consistency ─────────────────
+  // ── Section 8: Order: ordered vs allocated (per order) ───
   function sec8() {
-    return { html: '<p>⚠ Temporarily suppressed — shared icing entry split logic not yet implemented.</p>', count: 0 };
-    // Order cookies live in orders.cookie_allocations, not the allocations table.
-    // Cross-check: for each order, cookie_allocations qty total vs icing entry qty total for that order.
-    var icingQtyByOrder = {};
-    rBatches.forEach(function(b) {
-      getIcingEntries(b).forEach(function(e) {
-        (e.orderIds||[]).forEach(function(oid) { icingQtyByOrder[String(oid)] = (icingQtyByOrder[String(oid)]||0)+(Number(e.qty)||0); });
-      });
-    });
     var issues = [];
     rOrders.forEach(function(o) {
-      var caQty  = (o.cookie_allocations||[]).reduce(function(s,c){ return s+(Number(c.qty)||0); },0);
-      var iQty   = icingQtyByOrder[String(o.id)]||0;
-      if (caQty !== iQty) issues.push('Order '+orderLabel(o)+': cookie_allocations total '+caQty+', icing entries total '+iQty+', diff '+(iQty-caQty));
+      if ((o.status||'').toLowerCase() === 'cancelled') return;
+      var ordered = rOrderLines.reduce(function(s,l){ return s+(String(l.order_id)===String(o.id)?(Number(l.quantity)||0):0); },0);
+      var allocated = (o.cookie_allocations||[]).reduce(function(s,ca){ return s+(Number(ca.qty)||0); },0);
+      if (ordered !== allocated) issues.push('Order '+orderLabel(o)+': ordered '+ordered+', allocated '+allocated+', gap '+(ordered-allocated));
     });
     if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
@@ -17738,6 +17730,20 @@ async function printReconciliationReport() {
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
 
+  // ── Section 12: Cancelled Orders With Production ─────────
+  function sec12() {
+    var issues = [];
+    rOrders.forEach(function(o) {
+      if ((o.status||'').toLowerCase() !== 'cancelled') return;
+      var lbi = o.linked_batch_ids;
+      if (!lbi || !Array.isArray(lbi) || !lbi.length) return;
+      var nums = lbi.map(function(id){ var b=batchById[String(id)]; return b ? b.num : id; });
+      issues.push('Order '+orderLabel(o)+': cancelled but has linked batches ['+nums.join(', ')+'] — production was started; check manually where these cookies landed');
+    });
+    if (!issues.length) return { html: '<p>✓ No issues found</p>', count: 0 };
+    return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
+  }
+
   // ── Build report ─────────────────────────────────────────
   var secDefs = [
     { n:1,  title:'Batch Arithmetic',                fn: sec1  },
@@ -17750,7 +17756,8 @@ async function printReconciliationReport() {
     { n:8,  title:'Order Quantity Consistency',      fn: sec8  },
     { n:9,  title:'Orphaned Records',                fn: sec9  },
     { n:10, title:'Split Batch Completeness',        fn: sec10 },
-    { n:11, title:'Name and String Consistency',     fn: sec11 }
+    { n:11, title:'Name and String Consistency',     fn: sec11 },
+    { n:12, title:'Cancelled Orders With Production', fn: sec12 }
   ];
   var totalIssues = 0, sectionsWithIssues = 0, bodyParts = [];
   secDefs.forEach(function(s) {
@@ -29144,7 +29151,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v43.6',
+    app_version: 'v44.0',
     tables: {}
   };
 
