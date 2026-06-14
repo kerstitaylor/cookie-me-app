@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.7</title>
+<title>Cookie & Me — Kitchen Manager v44.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18570,21 +18570,75 @@ function _recallSocStr(social) {
   return ['instagram','facebook','messenger','whatsapp','linkedin'].map(k=>s[k]?k+': '+s[k]:'').filter(Boolean).join(', ');
 }
 
+// Resolves the campaign/order IDs a cookie line belongs to, for grouping in
+// the "who to contact" report. Campaign resolution prefers the collection
+// instance -> engagement -> campaign_id path; only falls back to
+// campaign_ids[] when there's no collection instance at all.
+function _recallResolveGroupKeys(collectionInstanceId, campaignIds, orderIds) {
+  const camps = new Set();
+  if (collectionInstanceId) {
+    const eng = (campEngagements || []).find(e => String(e.collection_instance_id) === String(collectionInstanceId));
+    if (eng) camps.add(eng.campaign_id);
+  } else if (campaignIds && campaignIds.length) {
+    campaignIds.forEach(id => camps.add(id));
+  }
+  const ords = new Set();
+  if (orderIds && orderIds.length) orderIds.forEach(id => ords.add(id));
+  return {campaignIds: [...camps], orderIds: [...ords]};
+}
+
+// Groups a contact's cookie lines under campaign/order headings for the
+// "who to contact" report. Campaign and order groups are kept separate even
+// when a line shares a batch; lines with neither go under "Other".
+function _recallGroupContactLines(lines) {
+  const campMap = new Map(); // campaign id -> {name, lines:[]}
+  const orderMap = new Map(); // order id -> {name, lines:[]}
+  const other = [];
+  (lines || []).forEach(entry => {
+    const {line, campaignIds, orderIds} = entry;
+    let placed = false;
+    (campaignIds || []).forEach(cid => {
+      if (!campMap.has(cid)) {
+        const camp = campaigns.find(c => c && c.id == cid);
+        campMap.set(cid, {name: camp ? camp.name : ('Campaign ' + cid), lines: []});
+      }
+      campMap.get(cid).lines.push(line);
+      placed = true;
+    });
+    (orderIds || []).forEach(oid => {
+      if (!orderMap.has(oid)) {
+        const ord = orders.find(o => o && o.id == oid);
+        orderMap.set(oid, {name: ord ? (ord.order_number || ('ORD-' + String(ord.id).slice(-4))) : ('Order ' + oid), lines: []});
+      }
+      orderMap.get(oid).lines.push(line);
+      placed = true;
+    });
+    if (!placed) other.push(line);
+  });
+  const groups = [];
+  campMap.forEach(g => groups.push({heading: g.name, lines: g.lines}));
+  orderMap.forEach(g => groups.push({heading: g.name, lines: g.lines}));
+  if (other.length) groups.push({heading: 'Other', lines: other});
+  return groups;
+}
+
 // Builds the "who to contact" list: grouped by customer ID (never by name),
 // fed from both the allocations table and orders.cookie_allocations, plus
 // any individuals/orgs added directly to the basket.
 function _recallGatherContacts(affected, directContacts) {
-  const contacts = new Map(); // key -> {custId, name, phone, email, social, lines:Set}
+  const contacts = new Map(); // key -> {custId, name, phone, email, social, lines:Map}
 
-  function addLine(custId, name, phone, email, social, line) {
+  function addLine(custId, name, phone, email, social, line, campaignIds, orderIds) {
     const key = custId != null ? 'id:' + custId : 'name:' + (name || '').toLowerCase().trim();
-    if (!contacts.has(key)) contacts.set(key, {custId, name, phone, email, social: social || {}, lines: new Set()});
+    if (!contacts.has(key)) contacts.set(key, {custId, name, phone, email, social: social || {}, lines: new Map()});
     const c = contacts.get(key);
     if (!c.phone && phone) c.phone = phone;
     if (!c.email && email) c.email = email;
     if (!c.name && name) c.name = name;
     if ((!c.social || !Object.keys(c.social).length) && social && Object.keys(social).length) c.social = social;
-    c.lines.add(line);
+    const cIds = campaignIds || [], oIds = orderIds || [];
+    const lineKey = line + '|' + cIds.join(',') + '|' + oIds.join(',');
+    if (!c.lines.has(lineKey)) c.lines.set(lineKey, {line, campaignIds: cIds, orderIds: oIds});
   }
 
   affected.forEach((info, batchNum) => {
@@ -18619,7 +18673,8 @@ function _recallGatherContacts(affected, directContacts) {
       const social = custRec ? (custRec.social_media || {}) : {};
       const particular = cookieDesc || b.recipe || '';
       const line = `${qty} ${particular} cookies stamped ${b.num}`;
-      addLine(custRec ? custRec.id : custId, dispName, phone, email, social, line);
+      const gk = _recallResolveGroupKeys(a.collection_instance_id, a.campaign_ids, a.order_ids);
+      addLine(custRec ? custRec.id : custId, dispName, phone, email, social, line, gk.campaignIds, gk.orderIds);
     });
 
     // Source 2: orders.cookie_allocations
@@ -18638,7 +18693,8 @@ function _recallGatherContacts(affected, directContacts) {
         const social = custRec ? (custRec.social_media || {}) : {};
         const particular = entry.cookieDescription || b.recipe || '';
         const line = `${ca.qty} ${particular} cookies stamped ${b.num}`;
-        addLine(custRec ? custRec.id : (o.customer_id || null), dispName, phone, email, social, line);
+        const gk = _recallResolveGroupKeys(null, null, [o.id]);
+        addLine(custRec ? custRec.id : (o.customer_id || null), dispName, phone, email, social, line, gk.campaignIds, gk.orderIds);
       });
     });
   });
@@ -18650,11 +18706,11 @@ function _recallGatherContacts(affected, directContacts) {
     if (!custRec) return;
     const key = 'id:' + custRec.id;
     if (!contacts.has(key)) {
-      contacts.set(key, {custId: custRec.id, name: custDisplayName(custRec), phone: custRec.phone || '', email: custRec.email || '', social: custRec.social_media || {}, lines: new Set()});
+      contacts.set(key, {custId: custRec.id, name: custDisplayName(custRec), phone: custRec.phone || '', email: custRec.email || '', social: custRec.social_media || {}, lines: new Map()});
     }
   });
 
-  return [...contacts.values()].map(c => ({...c, lines: [...c.lines]}));
+  return [...contacts.values()].map(c => ({...c, lines: [...c.lines.values()]}));
 }
 
 // Reverse trace: given a customer ID, find every cookie they ever received —
@@ -18663,7 +18719,7 @@ function _recallGatherContacts(affected, directContacts) {
 // originating batch and icing entry (for cookieDescription/qty), exactly as
 // the forward contact trace does.
 function _recallReverseTraceCustomer(custId) {
-  const items = []; // {batch, icingEntryId:string|null, qty, cookieDesc}
+  const items = []; // {batch, icingEntryId:string|null, qty, cookieDesc, collection_instance_id, campaign_ids, orderIds}
 
   allocs.forEach(a => {
     const r = a.recipient || {};
@@ -18679,7 +18735,7 @@ function _recallReverseTraceCustomer(custId) {
         cookieDesc = entry.cookieDescription || '';
       }
     }
-    items.push({batch: b, icingEntryId, qty, cookieDesc});
+    items.push({batch: b, icingEntryId, qty, cookieDesc, collection_instance_id: a.collection_instance_id || null, campaign_ids: a.campaign_ids || null, orderIds: a.order_ids || null});
   });
 
   orders.forEach(o => {
@@ -18691,7 +18747,7 @@ function _recallReverseTraceCustomer(custId) {
         (b.icingEntries || []).forEach(e => { if (String(e.id) === String(ca.icing_entry_id)) { foundBatch = b; foundEntry = e; } });
       });
       if (!foundBatch) return;
-      items.push({batch: foundBatch, icingEntryId: String(ca.icing_entry_id), qty: ca.qty, cookieDesc: foundEntry.cookieDescription || ''});
+      items.push({batch: foundBatch, icingEntryId: String(ca.icing_entry_id), qty: ca.qty, cookieDesc: foundEntry.cookieDescription || '', collection_instance_id: null, campaign_ids: null, orderIds: [o.id]});
     });
   });
 
@@ -18727,7 +18783,7 @@ function _recallResolveCombined(basket) {
     if (!custRec) return;
 
     const items = _recallReverseTraceCustomer(custId);
-    const lines = new Set();
+    const lines = new Map();
 
     items.forEach(item => {
       const b = item.batch;
@@ -18758,7 +18814,10 @@ function _recallResolveCombined(basket) {
       a.inScopeQty += (item.qty || 0);
 
       const particular = item.cookieDesc || b.recipe || '';
-      lines.add(`${item.qty} ${particular} cookies stamped ${b.num}`);
+      const line = `${item.qty} ${particular} cookies stamped ${b.num}`;
+      const gk = _recallResolveGroupKeys(item.collection_instance_id, item.campaign_ids, item.orderIds);
+      const lineKey = line + '|' + gk.campaignIds.join(',') + '|' + gk.orderIds.join(',');
+      if (!lines.has(lineKey)) lines.set(lineKey, {line, campaignIds: gk.campaignIds, orderIds: gk.orderIds});
       totalCookies += item.qty || 0;
     });
 
@@ -18768,7 +18827,7 @@ function _recallResolveCombined(basket) {
       phone: custRec.phone || '',
       email: custRec.email || '',
       social: custRec.social_media || {},
-      lines: [...lines]
+      lines: [...lines.values()]
     });
   });
 
@@ -18916,7 +18975,7 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
         <div style="font-weight:700;">${esc(c.name || '(no name)')}</div>
         <div style="font-size:12px;color:var(--text-muted);">${c.phone ? '📞 ' + esc(c.phone) + ' ' : ''}${c.email ? '✉️ ' + esc(c.email) : ''}${!hasContact ? '⚠ No contact details on record' : ''}</div>
         ${socStr ? `<div style="font-size:12px;color:var(--text-muted);">📱 ${esc(socStr)}</div>` : ''}
-        ${c.lines.length ? `<div style="font-size:12px;margin-top:4px;">${c.lines.map(l => esc(l)).join('<br>')}</div>` : ''}
+        ${c.lines.length ? `<div style="font-size:12px;margin-top:4px;">${_recallGroupContactLines(c.lines).map(g => `<div style="margin-top:4px;"><div style="font-weight:600;">${esc(g.heading)}</div>${g.lines.map(l => esc(l)).join('<br>')}</div>`).join('')}</div>` : ''}
       </div>`;
     });
     h += `</div>`;
@@ -18983,7 +19042,7 @@ function _recallBuildSavePayload() {
       cookies: combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (info.batch.yield || 0),
       reasons: [...info.reasons]
     })),
-    contacts: combined.contacts.map(c => ({ name: c.name, phone: c.phone, email: c.email, lines: c.lines })),
+    contacts: combined.contacts.map(c => ({ name: c.name, phone: c.phone, email: c.email, lines: c.lines.map(l => l.line) })),
     stockToPull: stockToPull
   };
 }
@@ -19074,7 +19133,7 @@ function _recallReportPrint() {
     body += `<h2>📞 Who to contact (${contacts.length})</h2>
       <table><tr><th>Name</th><th>Phone</th><th>Email</th><th>Social</th><th>Details</th></tr>`;
     contacts.forEach(c => {
-      body += `<tr><td>${esc(c.name || '(no name)')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.email || '—')}</td><td>${esc(_recallSocStr(c.social) || '—')}</td><td style="font-size:10px">${c.lines.map(l => esc(l)).join('<br>')}</td></tr>`;
+      body += `<tr><td>${esc(c.name || '(no name)')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.email || '—')}</td><td>${esc(_recallSocStr(c.social) || '—')}</td><td style="font-size:10px">${_recallGroupContactLines(c.lines).map(g => `<div style="margin-top:4px;"><strong>${esc(g.heading)}</strong><br>${g.lines.map(l => esc(l)).join('<br>')}</div>`).join('')}</td></tr>`;
     });
     body += `</table>`;
   }
@@ -29189,7 +29248,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.7',
+    app_version: 'v44.8',
     tables: {}
   };
 
