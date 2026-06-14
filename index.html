@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.6</title>
+<title>Cookie & Me — Kitchen Manager v44.7</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -19817,7 +19817,6 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
     _baFiltered.forEach(a => {
       const r = a.recipient||{};
       const rName = typeof r === 'string' ? r : (r.name||'');
-      const key = (rName||a.type||'').toLowerCase().trim();
       let custRec = null;
       if (a.collection_instance_id) {
         const eng = campEngagements.find(e => e.collection_instance_id===a.collection_instance_id && (e.name===rName || (e.customer_id && _custArr.find(c=>c&&c.id==e.customer_id&&(c.name||'').toLowerCase()===(rName||'').toLowerCase()))));
@@ -19826,6 +19825,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
       } else if (typeof r === 'object' && r.name) {
         custRec = _custArr.find(c=>c&&c.id==r.custId) || _custArr.find(c=>c&&(c.name||'').toLowerCase()===(rName||'').toLowerCase());
       }
+      const key = (custRec && custRec.id) ? ('id:' + custRec.id) : ('name:' + (rName||a.type||'').toLowerCase().trim());
       // When icing filter active, use the matched icing entries' own qty (not whole alloc qty)
       let _allocQty = a.qty||0;
       if (_icingEntryFilter) {
@@ -29189,7 +29189,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.6',
+    app_version: 'v44.7',
     tables: {}
   };
 
