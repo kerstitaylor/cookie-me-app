@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.8</title>
+<title>Cookie & Me — Kitchen Manager v44.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -6484,6 +6484,37 @@ function clearIcingHistoryFilters() {
   renderIcingHistory();
 }
 
+// Resolves an icing entry's "purpose" (who it's for) live from current
+// orders/campaigns/customers, instead of the stale snapshot text stored on
+// the entry. Falls back to the raw e.purpose text if there's nothing to
+// resolve against. Shared by the card view, View Batch, and print report.
+function _resolveIcingPurposeDisplay(e) {
+  var rq = e.recipientQtys || {};
+  var parts = [];
+  (e.orderIds||[]).forEach(function(oid){
+    var o = (orders||[]).find(function(x){ return String(x.id)===String(oid); });
+    var orderNum = o ? (o.order_number||('ORD-'+oid)) : ('ORD-'+oid);
+    var cust = o ? (cfg.customers||[]).find(function(x){ return String(x.id)===String(o.customer_id); }) : null;
+    var custName = cust ? custDisplayName(cust) : '';
+    var label = orderNum + (custName ? ' · ' + custName : '');
+    var q = rq['order:'+oid];
+    parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
+  });
+  (e.campaignIds||[]).forEach(function(cid){
+    var c = (campaigns||[]).find(function(x){ return String(x.id)===String(cid); });
+    var label = c ? c.name : ('Campaign '+cid);
+    var q = rq['campaign:'+cid];
+    parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
+  });
+  (e.customerIds||[]).forEach(function(custId){
+    var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(custId); });
+    var label = c ? custDisplayName(c) : ('Customer '+custId);
+    var q = rq['customer:'+custId];
+    parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
+  });
+  return parts.length ? parts.join(', ') : (e.purpose || '');
+}
+
 // Read-only entry card for history and batch edit modal
 function icingEntryReadCard(e, showEditBtn) {
   var decHtml = (e.decoration && e.decoration.length)
@@ -6511,33 +6542,7 @@ function icingEntryReadCard(e, showEditBtn) {
     + (e.isLegacy ? '<span class="tag tag-amber" style="font-size:10px;">legacy</span>' : '')
     + '</div>'
     + (e.cookieDescription ? '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px;">' + esc(e.cookieDescription) + '</div>' : '')
-    + (e.purpose ? (function(){
-        var rq = e.recipientQtys || {};
-        var parts = [];
-        (e.orderIds||[]).forEach(function(oid){
-          var o = (orders||[]).find(function(x){ return String(x.id)===String(oid); });
-          var orderNum = o ? (o.order_number||('ORD-'+oid)) : ('ORD-'+oid);
-          var cust = o ? (cfg.customers||[]).find(function(x){ return String(x.id)===String(o.customer_id); }) : null;
-          var custName = cust ? custDisplayName(cust) : '';
-          var label = orderNum + (custName ? ' · ' + custName : '');
-          var q = rq['order:'+oid];
-          parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
-        });
-        (e.campaignIds||[]).forEach(function(cid){
-          var c = (campaigns||[]).find(function(x){ return String(x.id)===String(cid); });
-          var label = c ? c.name : ('Campaign '+cid);
-          var q = rq['campaign:'+cid];
-          parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
-        });
-        (e.customerIds||[]).forEach(function(custId){
-          var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(custId); });
-          var label = c ? custDisplayName(c) : ('Customer '+custId);
-          var q = rq['customer:'+custId];
-          parts.push(label + (q ? ' · ' + q + ' cookies' : ''));
-        });
-        var display = parts.length ? parts.join(', ') : e.purpose;
-        return '<div style="font-size:13px;color:var(--navy);margin-bottom:2px;">&#x1F464; ' + esc(display) + '</div>';
-      })() : '')
+    + (e.purpose ? '<div style="font-size:13px;color:var(--navy);margin-bottom:2px;">&#x1F464; ' + esc(_resolveIcingPurposeDisplay(e)) + '</div>' : '')
     + (e.occasion ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">' + esc(e.occasion) + '</div>' : '')
     + decHtml + '</div>'
     + (editBtns ? '<div style="display:flex;gap:4px;flex-shrink:0;align-items:flex-start;margin-top:2px;">' + editBtns + '</div>' : '')
@@ -10329,7 +10334,7 @@ function _renderBakeReadonlyInfo(b) {
         + (entry.qty ? '<span class="tag tag-blue" style="font-size:10px;">'+entry.qty+' cookies</span>' : '')
         + (entry.isLegacy ? '<span class="tag tag-amber" style="font-size:10px;">legacy</span>' : '')
         + '</div>'
-        + (entry.purpose ? '<div style="margin-top:2px;color:var(--navy);">&#x1F464; '+esc(entry.purpose)+'</div>' : '')
+        + (entry.purpose ? '<div style="margin-top:2px;color:var(--navy);">&#x1F464; '+esc(_resolveIcingPurposeDisplay(entry))+'</div>' : '')
         + (entry.occasion ? '<div style="color:var(--text-muted);margin-top:1px;">'+esc(entry.occasion)+'</div>' : '')
         + (allDec.length ? '<div style="color:var(--text-muted);margin-top:2px;">'+allDec.join(' · ')+'</div>' : '')
         + '</div>';
@@ -16191,7 +16196,7 @@ function _prBuildAllocs(rows) {
           + (e.cookieDescription ? '<strong style="font-size:12px;color:#122640;font-family:sans-serif;">' + e.cookieDescription + '</strong>' : '')
           + (e.qty ? '<span style="font-size:10px;background:#e8eef5;color:#122640;border-radius:99px;padding:1px 7px;font-family:sans-serif;font-weight:600;">' + e.qty + ' cookies</span>' : '')
           + '</div>'
-          + (e.purpose ? '<div style="font-size:11px;color:#444;font-family:sans-serif;margin-bottom:2px;">&#x1F464; ' + e.purpose + '</div>' : '')
+          + (e.purpose ? '<div style="font-size:11px;color:#444;font-family:sans-serif;margin-bottom:2px;">&#x1F464; ' + esc(_resolveIcingPurposeDisplay(e)) + '</div>' : '')
           + (e.occasion ? '<div style="font-size:11px;color:#888;font-family:sans-serif;margin-bottom:3px;">' + e.occasion + '</div>' : '')
           + (decParts.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;">' + decParts.join('') + '</div>' : '')
           + '</div>';
@@ -17206,10 +17211,13 @@ function _prBuildCampaigns(campArr, engArr, collTemplates, collInstances) {
       var sortedEngs = engs.slice().sort(function(a,b){ return (a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()); });
       html += '<table><tr><th>Name</th><th>Phone</th><th>Email</th><th>Boxes</th><th>Box type</th><th>Amount owed</th><th>Payment status</th><th>Fulfilment</th><th>Fulfilment date</th><th>Notes</th></tr>';
       sortedEngs.forEach(function(e) {
+        var _liveCust = (e.customer_id != null) ? (cfg.customers||[]).find(function(c){ return c && c.id == e.customer_id; }) : null;
+        var _ePhone = _liveCust ? (_liveCust.phone||'') : (e.phone||'');
+        var _eEmail = _liveCust ? (_liveCust.email||'') : (e.email||'');
         html += '<tr>'
           + '<td>' + esc(e.name||'—') + '</td>'
-          + '<td style="white-space:nowrap;">' + (e.phone||'—') + '</td>'
-          + '<td>' + (e.email||'—') + '</td>'
+          + '<td style="white-space:nowrap;">' + esc(_ePhone||'—') + '</td>'
+          + '<td>' + esc(_eEmail||'—') + '</td>'
           + '<td>' + (e.boxes||'—') + '</td>'
           + '<td>' + (e.box_type||'—') + '</td>'
           + '<td>' + (e.amount_owed != null ? '$' + parseFloat(e.amount_owed).toFixed(2) : '—') + '</td>'
@@ -29248,7 +29256,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.8',
+    app_version: 'v44.9',
     tables: {}
   };
 
@@ -30820,11 +30828,12 @@ async function saveAllSplitMixins() {
 function viewAlloc(id) {
   const a = allocs.find(x=>x.id===id); if (!a) return;
   const r = a.recipient||{};
+  const liveCust = (typeof r === 'object' && r.customerId != null) ? (cfg.customers||[]).find(c => c && c.id == r.customerId) : null;
   const b = batches.find(x=>x.num===a.batch_num)||{};
   const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing'};
   const body = uField('Type', tl[a.type]||a.type)
-    + uField('Recipient', recipDisplayName(a.recipient))
-    + uField('Phone', r.phone)
+    + uField('Recipient', liveCust ? custDisplayName(liveCust) : recipDisplayName(a.recipient))
+    + uField('Phone', liveCust ? (liveCust.phone||'') : (r.phone||''))
     + uField('Batch', a.batch_num + (b.recipe?' · '+b.recipe:''))
     + uField('Quantity', a.qty + ' cookies')
     + uField('Date', a.date)
