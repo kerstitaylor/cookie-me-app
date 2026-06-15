@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.9</title>
+<title>Cookie & Me — Kitchen Manager v44.10</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -15533,11 +15533,18 @@ function recallExportCSV(mb, q, deliveryLogs, icingFilter) {
           const _rn = typeof r==='string'?r:(r.name||'');
           const key = (_rn||a.type||'').toLowerCase().trim();
           let _cr = null;
-          if (a.collection_instance_id) {
+          // Prefer ID-based resolution: eng:<id> notes tag or recipient.customerId
+          let _engById = (a.notes && String(a.notes).startsWith('eng:')) ? campEngagements.find(e=>String(e.id)===a.notes.slice(4)) : null;
+          if (typeof r==='object' && r.customerId != null) {
+            _cr = _ca2.find(c=>c&&c.id==r.customerId);
+          } else if (_engById && _engById.customer_id != null) {
+            _cr = _ca2.find(c=>c&&c.id==_engById.customer_id);
+          }
+          if (!_cr && a.collection_instance_id) {
             const _eng = campEngagements.find(e=>e.collection_instance_id===a.collection_instance_id&&e.name===_rn);
             if (_eng&&_eng.customer_id) _cr = _ca2.find(c=>c&&c.id==_eng.customer_id);
             if (!_cr) _cr = _ca2.find(c=>c&&(c.name||'').toLowerCase()===_rn.toLowerCase());
-          } else if (typeof r==='object'&&r.name) {
+          } else if (!_cr && typeof r==='object'&&r.name) {
             _cr = _ca2.find(c=>c&&(c.name||'').toLowerCase()===_rn.toLowerCase());
           }
           if (!_rm.has(key)) {
@@ -18142,11 +18149,18 @@ function recallExportPrint(mb, q, deliveryLogs, icingFilter) {
       const _rn = typeof r==='string'?r:(r.name||'');
       const key = (_rn||a.type||'').toLowerCase().trim();
       let _cr = null;
-      if (a.collection_instance_id) {
+      // Prefer ID-based resolution: eng:<id> notes tag or recipient.customerId
+      let _engById = (a.notes && String(a.notes).startsWith('eng:')) ? campEngagements.find(e=>String(e.id)===a.notes.slice(4)) : null;
+      if (typeof r==='object' && r.customerId != null) {
+        _cr = _prca.find(c=>c&&c.id==r.customerId);
+      } else if (_engById && _engById.customer_id != null) {
+        _cr = _prca.find(c=>c&&c.id==_engById.customer_id);
+      }
+      if (!_cr && a.collection_instance_id) {
         const _eng = campEngagements.find(e=>e.collection_instance_id===a.collection_instance_id&&e.name===_rn);
         if (_eng&&_eng.customer_id) _cr = _prca.find(c=>c&&c.id==_eng.customer_id);
         if (!_cr) _cr = _prca.find(c=>c&&(c.name||'').toLowerCase()===_rn.toLowerCase());
-      } else if (typeof r==='object'&&r.name) {
+      } else if (!_cr && typeof r==='object'&&r.name) {
         _cr = _prca.find(c=>c&&(c.name||'').toLowerCase()===_rn.toLowerCase());
       }
       if (!_prrmap.has(key)) {
@@ -19885,11 +19899,18 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
       const r = a.recipient||{};
       const rName = typeof r === 'string' ? r : (r.name||'');
       let custRec = null;
-      if (a.collection_instance_id) {
+      // Prefer ID-based resolution: eng:<id> notes tag or recipient.customerId
+      let _engById3 = (a.notes && String(a.notes).startsWith('eng:')) ? campEngagements.find(e=>String(e.id)===a.notes.slice(4)) : null;
+      if (typeof r === 'object' && r.customerId != null) {
+        custRec = _custArr.find(c=>c&&c.id==r.customerId);
+      } else if (_engById3 && _engById3.customer_id != null) {
+        custRec = _custArr.find(c=>c&&c.id==_engById3.customer_id);
+      }
+      if (!custRec && a.collection_instance_id) {
         const eng = campEngagements.find(e => e.collection_instance_id===a.collection_instance_id && (e.name===rName || (e.customer_id && _custArr.find(c=>c&&c.id==e.customer_id&&(c.name||'').toLowerCase()===(rName||'').toLowerCase()))));
         if (eng && eng.customer_id) custRec = _custArr.find(c=>c&&c.id==eng.customer_id);
         if (!custRec && eng) custRec = _custArr.find(c=>c&&(c.name||'').toLowerCase()===(rName||'').toLowerCase());
-      } else if (typeof r === 'object' && r.name) {
+      } else if (!custRec && typeof r === 'object' && r.name) {
         custRec = _custArr.find(c=>c&&c.id==r.custId) || _custArr.find(c=>c&&(c.name||'').toLowerCase()===(rName||'').toLowerCase());
       }
       const key = (custRec && custRec.id) ? ('id:' + custRec.id) : ('name:' + (rName||a.type||'').toLowerCase().trim());
@@ -26422,10 +26443,13 @@ async function saveColInstance() {
       if (_tpl && (_tpl.slots || []).length) {
         var _instAllocs = allocs.filter(function(a){ return a.collection_instance_id === _instId; });
         if (_instAllocs.length) {
-          // Group existing allocs by recipient — use eng:XX notes tag when present for precision
+          // Group existing allocs by recipient — prefer eng:XX notes tag, then recipient.customerId,
+          // falling back to recipient text only for untagged legacy rows with no customer ID.
           var _recipGroups = {};
           _instAllocs.forEach(function(a) {
-            var _rk = (a.notes && a.notes.indexOf('eng:') === 0) ? a.notes : ('n:' + (a.recipient || '').toLowerCase().trim());
+            var _rk = (a.notes && a.notes.indexOf('eng:') === 0) ? a.notes
+              : (a.recipient && typeof a.recipient === 'object' && a.recipient.customerId != null) ? ('c:' + a.recipient.customerId)
+              : ('n:' + (a.recipient || '').toLowerCase().trim());
             if (!_recipGroups[_rk]) _recipGroups[_rk] = [];
             _recipGroups[_rk].push(a);
           });
@@ -27045,6 +27069,10 @@ async function saveBoxAllocations(engId) {
     // If record has engagement tag in notes, use that for precise matching
     if (a.notes && a.notes.indexOf('eng:') === 0) {
       return a.notes === engNoteTag;
+    }
+    // Prefer recipient.customerId match over name, when both resolve to a customer
+    if (a.recipient && typeof a.recipient === 'object' && a.recipient.customerId != null && eng.customer_id != null) {
+      return String(a.recipient.customerId) === String(eng.customer_id);
     }
     // Legacy records: fall back to recipient name matching
     var rName = typeof a.recipient === 'string' ? a.recipient : ((a.recipient && a.recipient.name) || '');
@@ -29256,7 +29284,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.9',
+    app_version: 'v44.10',
     tables: {}
   };
 
