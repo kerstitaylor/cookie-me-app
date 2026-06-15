@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.10</title>
+<title>Cookie & Me — Kitchen Manager v44.11</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -22724,6 +22724,10 @@ function addCustContactRow(prefix) {
 // Runs once on load — creates a customer record for anyone in engagements
 // who isn't already in cfg.customers. Marks them as quickAdd so they
 // show the ⚡ badge prompting details to be fleshed out.
+// Prefers customer_id. Falls back to a name match only when the name
+// resolves to exactly one active customer. If the name matches more than
+// one active customer, it's left unlinked and collected in
+// window._ambiguousEngagementLinks for manual resolution.
 async function syncEngagementsToCustomers() {
   if (!campEngagements.length) return;
   if (!cfg.customers) cfg.customers = [];
@@ -22732,22 +22736,41 @@ async function syncEngagementsToCustomers() {
     console.warn('syncEngagementsToCustomers: skipped because cfg failed to load');
     return;
   }
+  const findActiveNameMatches = (name) => cfg.customers.filter(c => c.name && c.name.toLowerCase() === name.toLowerCase() && c.status !== 'closed');
+
+  // Flag ambiguous name matches for manual resolution — never auto-link these
+  window._ambiguousEngagementLinks = [];
+  for (const e of campEngagements) {
+    if (!e.name) continue;
+    const byId = e.customer_id && cfg.customers.find(c => c.id == e.customer_id);
+    if (byId) continue;
+    const nameMatches = findActiveNameMatches(e.name);
+    if (nameMatches.length > 1) {
+      window._ambiguousEngagementLinks.push({ engagementId: e.id, name: e.name, candidateCustomerIds: nameMatches.map(c => c.id) });
+    }
+  }
+  if (window._ambiguousEngagementLinks.length) {
+    console.warn('syncEngagementsToCustomers: ambiguous name matches need manual resolution', window._ambiguousEngagementLinks);
+  }
+
   // Check if any engagements need syncing before touching the database
   const needsSync = campEngagements.some(e => {
     if (!e.name) return false;
     const byId = e.customer_id && cfg.customers.find(c => c.id == e.customer_id);
-    const byName = cfg.customers.find(c => c.name && c.name.toLowerCase() === e.name.toLowerCase() && c.status !== 'closed');
-    return !byId && !byName;
+    if (byId) return false;
+    return findActiveNameMatches(e.name).length === 0;
   });
   if (!needsSync) return; // nothing to do — skip DB write entirely
   for (const e of campEngagements) {
     if (!e.name) continue;
     const alreadyById = e.customer_id && cfg.customers.find(c => c.id == e.customer_id);
-    const alreadyByName = cfg.customers.find(c => c.name && c.name.toLowerCase() === e.name.toLowerCase() && c.status !== 'closed');
-    if (alreadyById || alreadyByName) {
-      if (alreadyByName && !alreadyById) e.customer_id = alreadyByName.id;
+    if (alreadyById) continue;
+    const nameMatches = findActiveNameMatches(e.name);
+    if (nameMatches.length === 1) {
+      e.customer_id = nameMatches[0].id;
       continue;
     }
+    if (nameMatches.length > 1) continue; // ambiguous — flagged above, do not auto-link
     const rec = {
       name: e.name, phone: e.phone||'', email: e.email||'',
       address: e.address||'', type: 'campaign', additionalTypes: [],
@@ -29284,7 +29307,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.10',
+    app_version: 'v44.11',
     tables: {}
   };
 
