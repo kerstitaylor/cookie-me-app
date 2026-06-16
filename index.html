@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.12</title>
+<title>Cookie & Me — Kitchen Manager v44.13</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -27159,6 +27159,12 @@ async function saveBoxAllocations(engId) {
 
   // Create new alloc records: one per slot per instance allocation
   var fulfilDate = eng.fulfilment_date || today();
+  var _engCust = eng.customer_id
+    ? (cfg.customers || []).find(function(cx) { return String(cx.id) === String(eng.customer_id); })
+    : null;
+  var _engRecipient = _engCust
+    ? { name: custDisplayName(_engCust), org: _engCust.org || '', customerId: _engCust.id }
+    : (eng.name || '');
   for (var pi = 0; pi < pending.length; pi++) {
     var pa = pending[pi];
     var inst = collectionInstances.find(function(i){ return i.id === pa.instance_id; });
@@ -27193,7 +27199,7 @@ async function saveBoxAllocations(engId) {
         batchIdx:             null,
         type:                 (eng.box_type || 'Sold').toLowerCase(),
         qty:                  pa.qty * (slot.qty || 1),
-        recipient:            eng.name || '',
+        recipient:            _engRecipient,
         dist:                 null,
         method:               eng.fulfilment_type || null,
         addr:                 eng.address || null,
@@ -29310,7 +29316,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.12',
+    app_version: 'v44.13',
     tables: {}
   };
 
