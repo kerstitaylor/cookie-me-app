@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.14</title>
+<title>Cookie & Me — Kitchen Manager v44.15</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10953,7 +10953,61 @@ function renderAllocList() {
   const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold'};
   const tagCls = {disposal:'tag-red',donated:'tag-green',family:'tag-green',gifted:'tag-purple',testing:'tag-gray',friends:'tag-amber',sold:'tag-blue',customer:'tag-blue'};
 
+  // A3 FIX: group box allocs (same collection_instance_id) into one card per instance.
+  // Direct allocs render one card each. List order is preserved: the first alloc for
+  // an instance triggers rendering of the whole group; subsequent same-instance allocs
+  // return '' and are dropped by join('').
+  const _renderedInstIds = new Set();
   const rows = list.map(a => {
+    if (a.collection_instance_id) {
+      if (_renderedInstIds.has(a.collection_instance_id)) return '';
+      _renderedInstIds.add(a.collection_instance_id);
+      const _instAllocs = list.filter(x => x.collection_instance_id === a.collection_instance_id);
+      const _first = _instAllocs[0];
+      const _r = _first.recipient || {};
+      const _rname = recipDisplayName(_first.recipient) || '--';
+      const _rphone = typeof _r === 'object' ? (_r.phone || '') : '';
+      const _totalQty = _instAllocs.reduce((s, x) => s + (x.qty || 0), 0);
+      const _inst = collectionInstances.find(i => i.id === a.collection_instance_id);
+      const _tmpl = _inst ? collectionTemplates.find(t => t.id === _inst.template_id) : null;
+      const _boxLabel = (_inst && _inst.label) || (_tmpl && _tmpl.name) || 'Collection box';
+      const _typeBadge = '<span class="tag '+(tagCls[_first.type]||'tag-gray')+'" style="font-size:10px">'+(tl[_first.type]||_first.type)+'</span>';
+      const _namePart  = '<span style="font-weight:700;font-family:sans-serif;font-size:13px">'+esc(_rname)+'</span>';
+      const _phonePart = _rphone ? ' <a href="tel:'+_rphone+'" style="font-size:11px;font-family:sans-serif;color:var(--navy);text-decoration:none;">'+_rphone+'</a>' : '';
+      const _qtyPart   = '<span style="margin-left:auto;font-weight:700;font-family:sans-serif;font-size:13px">'+_totalQty+'</span>';
+      const _datePart  = '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif">'+(_first.date||'—')+'</span>';
+      const _methPart  = _first.method ? '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif">'+esc(_first.method)+'</span>' : '';
+      const _boxTag    = '<span style="font-size:11px;color:#1a5fa8;font-family:sans-serif;">📦 '+esc(_boxLabel)+'</span>';
+      // One sub-row per slot. Each slot resolves its OWN batch by batch_num —
+      // slots in one box can come from different batches.
+      const _slotRows = _instAllocs.map(x => {
+        const _slotBatch = batches.find(bx => normBatchNum(bx.num) === normBatchNum(x.batch_num));
+        const _xie = x.icing_entry_id && _slotBatch
+          ? (_slotBatch.icingEntries||[]).find(e => String(e.id) === String(x.icing_entry_id))
+          : null;
+        const _desc = (_xie && _xie.cookieDescription)
+          ? esc(_xie.cookieDescription)
+          : '<em style="color:var(--text-muted)">unspecified</em>';
+        const _batchTag = (x.batch_num && x.batch_num !== _first.batch_num)
+          ? ' <span style="font-size:10px;color:var(--text-muted);font-family:sans-serif;">'+esc(x.batch_num)+'</span>' : '';
+        const _viewBtn = '<button class="btn-view" onclick="viewAlloc('+x.id+')">&#128065; View</button>';
+        return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0;border-top:1px solid var(--gray-light);font-size:12px;font-family:sans-serif;">'
+          +'<span style="flex:1;color:var(--text);">'+_desc+_batchTag+'</span>'
+          +'<span style="font-weight:600;color:var(--navy);min-width:24px;text-align:right;">'+x.qty+'</span>'
+          +'<span class="rec-actions" style="margin:0;padding:0;">'+_viewBtn+'</span>'
+          +'</div>';
+      }).join('');
+      // Single whole-box delete button — deletes all slots in one confirmed action
+      const _allIds = '['+_instAllocs.map(x=>x.id).join(',')+']';
+      const _boxDel = '<button class="btn-del" onclick="confirmDeleteBoxAlloc('+_allIds+','+JSON.stringify(_rname)+')">&#128465; Delete box allocation</button>';
+      return '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">'
+        + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'+_typeBadge+_namePart+_phonePart+_qtyPart+'</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">'+_datePart+_methPart+_boxTag+'</div>'
+        + '<div style="margin-top:4px;">'+_slotRows+'</div>'
+        + '<div class="rec-actions" style="margin-top:6px;padding-top:6px;">'+_boxDel+'</div>'
+        + '</div>';
+    }
+    // ── Direct (non-box) alloc — unchanged from original ──────────────────
     const r = a.recipient || {};
     const rname = recipDisplayName(a.recipient) || '--';
     const rphone = typeof r === 'object' ? (r.phone || '') : '';
@@ -16303,7 +16357,10 @@ function _prBuildAllocs(rows) {
       recipKeys.forEach(function(key) {
         var rec = recipMap[key];
         var totalQty = rec.cookies.reduce(function(s,c){ return s + c.qty; }, 0);
-        html += _prRecipCard(rec.name, totalQty, rec.type, rec.method, rec.date, campLabel || collName, rec.cookies);
+        // E2 FIX: merge same-description entries so _prCookieGrid shows one row per description
+        var _cg = {}; var _co = [];
+        rec.cookies.forEach(function(ck){ if(!_cg[ck.name]){_cg[ck.name]=0;_co.push(ck.name);}_cg[ck.name]+=ck.qty; });
+        html += _prRecipCard(rec.name, totalQty, rec.type, rec.method, rec.date, campLabel || collName, _co.map(function(n){return{name:n,qty:_cg[n]};}));
       });
     });
 
@@ -16330,7 +16387,10 @@ function _prBuildAllocs(rows) {
       otherKeys.forEach(function(key) {
         var rec = otherMap[key];
         var totalQty = rec.cookies.reduce(function(s,c){ return s + c.qty; }, 0);
-        html += _prRecipCard(rec.name, totalQty, rec.type, rec.method, rec.date, '', rec.cookies);
+        // E2 FIX: merge same-description entries
+        var _cg = {}; var _co = [];
+        rec.cookies.forEach(function(ck){ if(!_cg[ck.name]){_cg[ck.name]=0;_co.push(ck.name);}_cg[ck.name]+=ck.qty; });
+        html += _prRecipCard(rec.name, totalQty, rec.type, rec.method, rec.date, '', _co.map(function(n){return{name:n,qty:_cg[n]};}));
       });
     }
 
@@ -19602,6 +19662,8 @@ async function doRecall() {
   batches.forEach((b,bi)=>{ if(b.num&&b.num.toLowerCase().includes(q)){mb.add(bi);mbBaseMatch.add(bi);} });
   batches.forEach((b,bi)=>{ if(b.recipe&&b.recipe.toLowerCase().includes(q)){mb.add(bi);mbBaseMatch.add(bi);} });
   batches.forEach((b,bi)=>{ if((b.occasion||'').toLowerCase().includes(q)||(b.variation||'').toLowerCase().includes(q)){mb.add(bi);mbBaseMatch.add(bi);} });
+  // C2 FIX: search icing entry cookieDescription and occasion (distinct from batch-level b.occasion)
+  batches.forEach((b,bi)=>{ if((b.icingEntries||[]).some(e=>(e.cookieDescription||'').toLowerCase().includes(q)||(e.occasion||'').toLowerCase().includes(q))){mb.add(bi);mbBaseMatch.add(bi);} });
   batches.forEach((b,bi)=>{
     const allIngs = [...(b.ingredients||[]), ...(b.chocolate||[]), ...(b.flavouring||[])];
     if (allIngs.some(i=>(i.ingBatch||i.lot||'').toLowerCase().includes(q)||(i.ingId&&(String(i.ingId)===q.replace(/^#/,''))))) { mb.add(bi); mbBaseMatch.add(bi); }
@@ -19711,8 +19773,8 @@ async function doRecall() {
     });
   }
 
-  // Alloc recipient name search (unchanged)
-  allocs.forEach(a=>{ if((a.recipient?.name||'').toLowerCase().includes(q)){const bi=batches.findIndex(b=>b.num===a.batch_num);if(bi>-1){mb.add(bi);mbBaseMatch.add(bi);}} });
+  // Alloc recipient name search — D5 FIX: use normBatchNum so B013/B-013 match
+  allocs.forEach(a=>{ if((a.recipient?.name||'').toLowerCase().includes(q)){const bi=batches.findIndex(b=>normBatchNum(b.num)===normBatchNum(a.batch_num));if(bi>-1){mb.add(bi);mbBaseMatch.add(bi);}} });
 
   // GAP 6 FIX: search order customer names — orders use customer_id, resolve via cfg.customers
   orders.forEach(o=>{
@@ -19969,7 +20031,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
       h += _recipHeader;
       recipMap.forEach(rec => {
         const {rName, custRec, type, qty, method, date, collection_instance_id, market, addr, _a} = rec;
-        const dispName = recipDisplayName(_a.recipient);
+        const dispName = custRec ? custDisplayName(custRec) : recipDisplayName(_a.recipient);
         const _r = _a.recipient||{};
         const phone = (custRec ? custRec.phone||'' : (typeof _r==='string'?'':(_r.phone||_r.contact||''))).trim();
         const email = (custRec ? custRec.email||'' : (typeof _r==='string'?'':(_r.email||''))).trim();
@@ -29336,7 +29398,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.14',
+    app_version: 'v44.15',
     tables: {}
   };
 
@@ -30930,6 +30992,35 @@ function viewAlloc(id) {
 function confirmDeleteAlloc(id) {
   const a = allocs.find(x=>x.id===id); if (!a) return;
   showConfirm('Delete allocation', `Delete allocation of ${a.qty} cookies to ${recipDisplayName(a.recipient)||'—'}? It will move to Trash.`, 'Delete', () => doDeleteAlloc(id));
+}
+
+function confirmDeleteBoxAlloc(ids, recipName) {
+  showConfirm(
+    'Delete box allocation',
+    'Delete all ' + ids.length + ' slot allocation' + (ids.length !== 1 ? 's' : '') + ' for ' + (recipName || '—') + '? They will move to Trash.',
+    'Delete',
+    () => doDeleteBoxAlloc(ids)
+  );
+}
+
+async function doDeleteBoxAlloc(ids) {
+  var failed = [];
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    var a = allocs.find(x => x.id === id);
+    if (!a) continue;
+    await softDelete('Allocation', 'allocations', id, Object.assign({}, a));
+    var ok = await deleteAlloc(id);
+    if (!ok) { failed.push(id); }
+  }
+  if (failed.length) {
+    alert('Some slot deletions failed (IDs: ' + failed.join(', ') + '). Check sync status and try again.');
+    return;
+  }
+  renderAllocHistory();
+  renderHist();
+  renderUnallocBanner();
+  if (selBI >= 0) { renderAllocList(); renderAllocIcingInstances(); updateAllocTally(); prefillRemainingQty(); }
 }
 
 async function doDeleteAlloc(id) {
