@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.13</title>
+<title>Cookie & Me — Kitchen Manager v44.14</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -6869,32 +6869,52 @@ async function loadCfg() {
   }
 }
 
+// Per-key serialization queue: ensures saves to the same config key run strictly
+// one at a time. Different keys still run in parallel. A failed save never blocks
+// the queue for that key (the .catch() absorbs the rejection before chaining).
+const _cfgSaveQueue = {};
+function _enqueueCfgSave(key, workFn) {
+  const prev = (_cfgSaveQueue[key] || Promise.resolve()).catch(function() {});
+  const next = prev.then(function() { return workFn(); });
+  _cfgSaveQueue[key] = next;
+  return next;
+}
+
 async function saveCfgKey(key, value) {
-  setSyncStatus('syncing', 'Saving...');
-  const { error } = await db.from('config').upsert({ key, value }, { onConflict: 'key' });
-  if (error) {
-    setSyncStatus('err', 'Sync error');
-    console.error('saveCfgKey error key='+key, error);
-    return false;
-  }
-  cfg[key] = value;
-  if (key === 'shopList') shopList = value || [];
-  if (key === 'homeConfig') { /* handled in renderHome */ }
-  setSyncStatus('ok', 'Saved ✓');
-  return true;
+  return _enqueueCfgSave(key, async function() {
+    setSyncStatus('syncing', 'Saving...');
+    const { error } = await db.from('config').upsert({ key, value }, { onConflict: 'key' });
+    if (error) {
+      setSyncStatus('err', 'Sync error');
+      console.error('saveCfgKey error key='+key, error);
+      return false;
+    }
+    cfg[key] = value;
+    if (key === 'shopList') shopList = value || [];
+    if (key === 'homeConfig') { /* handled in renderHome */ }
+    setSyncStatus('ok', 'Saved ✓');
+    return true;
+  });
 }
 
 // Fetch-first upsert for a single item inside an array-typed config key.
-// Fetches the current array from Supabase before merging to avoid clobbering
-// concurrent edits from other sessions (last-write-wins race condition).
+// The SELECT, merge, and upsert all run inside the serialization queue so the
+// SELECT always sees the result of the previous write for this key — eliminating
+// the stale-snapshot race that caused "edits not sticking".
 async function saveCfgArrayItem(key, item, idField = 'id') {
-  setSyncStatus('syncing', 'Saving...');
-  const { data: row, error: fetchErr } = await db.from('config').select('value').eq('key', key).maybeSingle();
-  if (fetchErr) { setSyncStatus('err', 'Sync error'); console.error('saveCfgArrayItem fetch error key='+key, fetchErr); return false; }
-  const current = (row && Array.isArray(row.value)) ? row.value : (Array.isArray(cfg[key]) ? cfg[key] : []);
-  const idx = current.findIndex(x => String(x[idField]) === String(item[idField]));
-  const merged = idx > -1 ? current.map((x, i) => i === idx ? item : x) : [...current, item];
-  return saveCfgKey(key, merged);
+  return _enqueueCfgSave(key, async function() {
+    setSyncStatus('syncing', 'Saving...');
+    const { data: row, error: fetchErr } = await db.from('config').select('value').eq('key', key).maybeSingle();
+    if (fetchErr) { setSyncStatus('err', 'Sync error'); console.error('saveCfgArrayItem fetch error key='+key, fetchErr); return false; }
+    const current = (row && Array.isArray(row.value)) ? row.value : (Array.isArray(cfg[key]) ? cfg[key] : []);
+    const idx = current.findIndex(function(x) { return String(x[idField]) === String(item[idField]); });
+    const merged = idx > -1 ? current.map(function(x, i) { return i === idx ? item : x; }) : [...current, item];
+    const { error } = await db.from('config').upsert({ key, value: merged }, { onConflict: 'key' });
+    if (error) { setSyncStatus('err', 'Sync error'); console.error('saveCfgArrayItem upsert error key='+key, error); return false; }
+    cfg[key] = merged;
+    setSyncStatus('ok', 'Saved ✓');
+    return true;
+  });
 }
 
 async function loadIngs() {
@@ -29316,7 +29336,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.13',
+    app_version: 'v44.14',
     tables: {}
   };
 
