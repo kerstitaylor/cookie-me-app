@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.11</title>
+<title>Cookie & Me — Kitchen Manager v44.12</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10839,6 +10839,8 @@ async function addAlloc() {
       customerId: c.id
     });
   } else if (pickerName) {
+    if (!['disposal', 'testing', 'consumed'].includes(type) &&
+        !confirm('No customer selected — save "' + pickerName + '" as a name-only recipient? This won\'t link to a customer record.')) return;
     Object.assign(recipient, {
       name: pickerName,
       contactName: overrideContact || pickerName,
@@ -13478,7 +13480,7 @@ async function confirmQuickAdd(wrapperId) {
     name, type: typeEl ? typeEl.value : 'personal',
     phone: phoneEl ? phoneEl.value.trim() : '',
     email: emailEl ? emailEl.value.trim() : '',
-    address: '', additionalTypes: [], quickAdd: true,
+    address: '', additionalTypes: [], quickAdd: true, status: 'active',
     id: crypto.randomUUID()
   };
   if (!cfg.customers) cfg.customers = [];
@@ -21559,7 +21561,7 @@ function toggleNewCustInline() {
 async function saveNewCustInline() {
   const name = document.getElementById('orf-nc-name').value.trim();
   if (!name) { alert('Customer name is required.'); return; }
-  const rec = { name, type: document.getElementById('orf-nc-type').value, phone: document.getElementById('orf-nc-phone').value.trim(), email: document.getElementById('orf-nc-email').value.trim(), address: '', id: crypto.randomUUID() };
+  const rec = { name, type: document.getElementById('orf-nc-type').value, phone: document.getElementById('orf-nc-phone').value.trim(), email: document.getElementById('orf-nc-email').value.trim(), address: '', additionalTypes: [], quickAdd: true, status: 'active', id: crypto.randomUUID() };
   cfg.customers.push(rec);
   await saveCfgArrayItem('customers', rec);
   document.getElementById('orf-org').value = custDisplayName(rec);
@@ -22668,6 +22670,7 @@ async function saveCustomerForm() {
     email: document.getElementById('nc-e').value.trim(),
     address: ['nc-street','nc-suburb','nc-city','nc-postcode'].map(id=>document.getElementById(id)?.value.trim()).filter(Boolean).join(', '),
     type: primaryType, additionalTypes, social_media, quickAdd: false,
+    status: editIdx !== '' ? (cfg.customers[parseInt(editIdx)].status || 'active') : 'active',
     id: editIdx !== '' ? cfg.customers[parseInt(editIdx)].id : crypto.randomUUID()
   };
   if (editIdx !== '') { cfg.customers[parseInt(editIdx)] = rec; } else { cfg.customers.push(rec); }
@@ -22774,7 +22777,7 @@ async function syncEngagementsToCustomers() {
     const rec = {
       name: e.name, phone: e.phone||'', email: e.email||'',
       address: e.address||'', type: 'campaign', additionalTypes: [],
-      quickAdd: true, id: e.customer_id || crypto.randomUUID()
+      quickAdd: true, status: 'active', id: e.customer_id || crypto.randomUUID()
     };
     cfg.customers.push(rec);
     e.customer_id = rec.id;
@@ -28706,7 +28709,7 @@ async function saveEngagement() {
       _engLinkedCustomerId = existing.id;
     } else {
       // Quick-create as Campaign type
-      const newCust = { name, phone:phone||'', email:email||'', address:address||'', type:'campaign', additionalTypes:[], quickAdd:true, id:crypto.randomUUID() };
+      const newCust = { name, phone:phone||'', email:email||'', address:address||'', type:'campaign', additionalTypes:[], quickAdd:true, status:'active', id:crypto.randomUUID() };
       if (!cfg.customers) cfg.customers = [];
       cfg.customers.push(newCust);
       await saveCfgArrayItem('customers', newCust);
@@ -29307,7 +29310,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.11',
+    app_version: 'v44.12',
     tables: {}
   };
 
