@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.15</title>
+<title>Cookie & Me — Kitchen Manager v44.16</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -5045,6 +5045,7 @@ const DEFAULT_CFG = {
     'Spices':{brands:['Woolworths','MasterFoods'],qtys:['25g','30g','50g']},
   },
   team: ['Kersti','Geordie'],
+  shelfLifeDays: {}, // per-category overrides; falls back to hardcoded SHELF_LIFE_DAYS when a category isn't present here
   household: [],
   teamProfiles: [],
   customers: [], friends: [], family: [], gifted: [], donated: [], testing: [],
@@ -5355,7 +5356,7 @@ function updateBatchInfoLine(ctrl) {
   if (!num) { info.textContent = ''; return; }
   const b = findBatchByNum(num);
   if (b) {
-    info.innerHTML = '<span style="color:var(--success);">&#x2713; ' + b.num + (b.recipe ? ' — ' + b.recipe : '') + (b.date ? ' \u00b7 ' + b.date : '') + (b.yield ? ' \u00b7 ' + b.yield + ' cookies' : '') + (b.occasion ? ' \u00b7 ' + b.occasion : '') + '</span>';
+    info.innerHTML = '<span style="color:var(--success);">&#x2713; ' + esc(b.num) + (b.recipe ? ' — ' + esc(b.recipe) : '') + (b.date ? ' · ' + esc(b.date) : '') + (b.yield ? ' · ' + esc(b.yield) + ' cookies' : '') + (b.occasion ? ' · ' + esc(b.occasion) : '') + '</span>';
   } else {
     info.innerHTML = '<span style="color:var(--text-muted);">No matching batch found — will be saved as text</span>';
   }
@@ -8769,7 +8770,7 @@ async function confirmFinish(id) {
 function calcUseByOpened(ing) {
   if (!ing.opened_date) return null;
   const cat = ing.category || ing.cat;
-  const days = SHELF_LIFE_DAYS[cat];
+  const days = (cfg.shelfLifeDays && Object.prototype.hasOwnProperty.call(cfg.shelfLifeDays, cat)) ? cfg.shelfLifeDays[cat] : SHELF_LIFE_DAYS[cat];
   if (days === null || days === undefined) return null;
   // Parse date parts directly to avoid UTC timezone shift
   const [y, m, day] = ing.opened_date.split('-').map(Number);
@@ -9397,7 +9398,7 @@ async function clearOpened(id) {
   renderInv(); renderOpened(); renderAlerts();
 }
 
-async function delIngConfirm(id) { if(!confirm('Remove this ingredient?'))return; await deleteIng(id); renderInv(); renderOpened(); }
+async function delIngConfirm(id) { if(!confirm('Remove this ingredient?'))return; if (!(await deleteIng(id))) { showSaveError('Could not delete ingredient.'); return; } renderInv(); renderOpened(); }
 
 // ═══════════════════════════════════════════════════════
 // BAKE
@@ -10949,6 +10950,16 @@ function renderAllocList() {
   const b = batches[selBI];
   const list = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
   const el = document.getElementById('al-list');
+  if (!el._alListenerAttached) {
+    el._alListenerAttached = true;
+    el.addEventListener('click', function(ev) {
+      var btn = ev.target.closest('[data-action]'); if (!btn) return;
+      if (btn.dataset.action === 'al-delete-box') {
+        var ids = btn.dataset.ids.split(',').map(Number);
+        confirmDeleteBoxAlloc(ids, btn.dataset.recip);
+      }
+    });
+  }
   if (!list.length) { el.innerHTML='<div class="empty">No allocations yet.</div>'; return; }
   const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold'};
   const tagCls = {disposal:'tag-red',donated:'tag-green',family:'tag-green',gifted:'tag-purple',testing:'tag-gray',friends:'tag-amber',sold:'tag-blue',customer:'tag-blue'};
@@ -10998,8 +11009,8 @@ function renderAllocList() {
           +'</div>';
       }).join('');
       // Single whole-box delete button — deletes all slots in one confirmed action
-      const _allIds = '['+_instAllocs.map(x=>x.id).join(',')+']';
-      const _boxDel = '<button class="btn-del" onclick="confirmDeleteBoxAlloc('+_allIds+','+JSON.stringify(_rname)+')">&#128465; Delete box allocation</button>';
+      const _allIds = _instAllocs.map(x=>x.id).join(',');
+      const _boxDel = '<button class="btn-del" data-action="al-delete-box" data-ids="'+esc(_allIds)+'" data-recip="'+esc(_rname)+'">&#128465; Delete box allocation</button>';
       return '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">'
         + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'+_typeBadge+_namePart+_phonePart+_qtyPart+'</div>'
         + '<div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">'+_datePart+_methPart+_boxTag+'</div>'
@@ -11330,7 +11341,9 @@ async function allocDelSelected(custId, occId) {
   if (!checkboxes.length) { alert('Tick at least one record to delete.'); return; }
   const ids = Array.from(checkboxes).map(cb => parseInt(cb.dataset.id));
   if (!confirm(`Delete ${ids.length} allocation record${ids.length!==1?'s':''}?`)) return;
-  for (const id of ids) { await deleteAlloc(id); }
+  const failedIds = [];
+  for (const id of ids) { if (!(await deleteAlloc(id))) failedIds.push(id); }
+  if (failedIds.length) showSaveError('Some allocations could not be deleted (IDs: ' + failedIds.join(', ') + ').');
   renderAllocList(); renderAllocIcingInstances();
   updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner();
 }
@@ -11340,7 +11353,7 @@ async function delAllocConfirm(id) {
   const r = a ? (recipDisplayName(a.recipient)||'this record') : 'this record';
   const qty = a ? a.qty : '';
   if (!confirm('Delete allocation of ' + (qty?qty+' cookies to ':'') + r + '? This cannot be undone.')) return;
-  await deleteAlloc(id);
+  if (!(await deleteAlloc(id))) { showSaveError('Could not delete allocation.'); return; }
   renderAllocList(); renderAllocIcingInstances();
   updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner();
 }
@@ -11686,7 +11699,7 @@ function renderRecentAllocBatches() {
 
 async function delAllocFromRecent(id) {
   if (!confirm('Remove this allocation?')) return;
-  await deleteAlloc(id);
+  if (!(await deleteAlloc(id))) { showSaveError('Could not delete allocation.'); return; }
   renderRecentAllocBatches(); renderUnallocBanner();
   if (selBI >= 0) { renderAllocList(); renderAllocIcingInstances(); updateAllocTally(); prefillRemainingQty(); }
 }
@@ -16016,7 +16029,7 @@ function _prBuildBatches(rows) {
     // Notes row — strip internal split meta from printed notes
     var cleanNotes = (b.notes||'').replace(/\[split:\{.*?\}\]/gs, '').trim();
     var notesRow = cleanNotes
-      ? '<tr style="background:#ffe8a0;"><th style="background:#ffd666;color:#5a3a00;font-weight:700;">&#128221; Notes</th><td colspan="3" style="color:#3d2600;font-weight:700;">' + cleanNotes + '</td></tr>'
+      ? '<tr style="background:#ffe8a0;"><th style="background:#ffd666;color:#5a3a00;font-weight:700;">&#128221; Notes</th><td colspan="3" style="color:#3d2600;font-weight:700;">' + esc(cleanNotes) + '</td></tr>'
       : '';
     html += '<div class="batch-block">'
       + '<div style="background:#122640;color:white;border-radius:4px 4px 0 0;padding:8px 12px;margin:-12px -14px 12px;font-family:sans-serif;font-size:13px;font-weight:700;letter-spacing:0.01em;">'
@@ -16034,8 +16047,8 @@ function _prBuildBatches(rows) {
       + (b.parentBatchId ? '<tr style="background:#fff8ee;"><th style="color:#b45309;">Child of</th><td colspan="3" style="color:#b45309;font-weight:600;">'
           + (function(){ var parent = batches.find(function(x){ return x.id === b.parentBatchId; }); return parent ? parent.num + ' — ' + (parent.recipe||'') + ' (base dough record)' : 'Batch ID ' + b.parentBatchId; })()
           + '</td></tr>' : '')
-      + (b.occasion ? '<tr><th>Occasion</th><td colspan="3">' + b.occasion + '</td></tr>' : '')
-      + (b.variation ? '<tr><th>Variation</th><td colspan="3">' + b.variation + '</td></tr>' : '')
+      + (b.occasion ? '<tr><th>Occasion</th><td colspan="3">' + esc(b.occasion) + '</td></tr>' : '')
+      + (b.variation ? '<tr><th>Variation</th><td colspan="3">' + esc(b.variation) + '</td></tr>' : '')
       + (b.fridge_temp ? '<tr><th>Fridge temp</th><td colspan="3">' + b.fridge_temp + '</td></tr>' : '')
       + (b.failed ? '<tr><th>Failed batch</th><td colspan="3"><span class="tag-no">YES</span></td></tr>' : '')
       + notesRow
@@ -17064,7 +17077,7 @@ function _prBuildOrders(orderArr, orderLinesArr, customers) {
           + '<td>' + (l.fondant_flavour||'—') + '</td>'
           + '<td>' + (l.glitter||'—') + '</td>'
           + '<td>' + (l.embellishments||'—') + '</td>'
-          + '<td>' + (l.notes||'—') + '</td>'
+          + '<td>' + esc(l.notes||'—') + '</td>'
           + '</tr>';
       });
       html += '<tr style="font-weight:700;background:#f0ede8;"><td colspan="7">Total cookies</td><td>' + totalQty + '</td></tr>';
@@ -18277,8 +18290,8 @@ function recallExportPrint(mb, q, deliveryLogs, icingFilter) {
       + (_prORecips.length?'<h3>Direct orders</h3><table><tr><th>Customer</th><th>Type</th><th>Qty</th><th>Order No.</th><th>Occasion</th><th>Phone</th><th>Email</th><th>Social Media</th></tr>'+_prOrderRows+'</table>':'');
     const _prSupplierHtml = delMatches.length?'<h3>Supplier source records</h3><table><tr><th>Lot</th><th>Supplier</th><th>Received</th><th>Condition</th><th>Food type</th></tr>'+delMatches.map(dm=>'<tr><td>'+dm.lot+'</td><td>'+(dm.supplier||'—')+'</td><td>'+(dm.date||'—')+'</td><td>'+(dm.condition||'—')+'</td><td>'+(dm.foodType||'—')+'</td></tr>').join('')+'</table>':'';
     const _prIngRows = allIngs.map(i=>'<tr><td>'+(i.category||i.description||'')+(i.isChoc?' (chocolate)':'')+(i.isFlavour?' (flavouring)':'')+'</td><td>'+(i.ingBatch||i.lot||'—')+'</td><td>'+(i.ingId?'#'+i.ingId:'—')+'</td></tr>').join('');
-    const _prOccasionRow = b.occasion?'<tr><th>Occasion</th><td colspan="3">'+b.occasion+'</td></tr>':'';
-    const _prNotesRow = b.notes?'<tr><th>Notes</th><td colspan="3">'+b.notes+'</td></tr>':'';
+    const _prOccasionRow = b.occasion?'<tr><th>Occasion</th><td colspan="3">'+esc(b.occasion)+'</td></tr>':'';
+    const _prNotesRow = b.notes?'<tr><th>Notes</th><td colspan="3">'+esc(b.notes)+'</td></tr>':'';
     // Accountability box for print
     const _prBaAllocs = ba.filter(a=>a.type!=='disposal');
     const _prBaDisposal = ba.filter(a=>a.type==='disposal').reduce((s,a)=>s+(a.qty||0),0);
@@ -19995,7 +20008,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
         if (eng && eng.customer_id) custRec = _custArr.find(c=>c&&c.id==eng.customer_id);
         if (!custRec && eng) custRec = _custArr.find(c=>c&&(c.name||'').toLowerCase()===(rName||'').toLowerCase());
       } else if (!custRec && typeof r === 'object' && r.name) {
-        custRec = _custArr.find(c=>c&&c.id==r.custId) || _custArr.find(c=>c&&(c.name||'').toLowerCase()===(rName||'').toLowerCase());
+        custRec = _custArr.find(c=>c&&c.id==r.customerId) || _custArr.find(c=>c&&(c.name||'').toLowerCase()===(rName||'').toLowerCase());
       }
       const key = (custRec && custRec.id) ? ('id:' + custRec.id) : ('name:' + (rName||a.type||'').toLowerCase().trim());
       // When icing filter active, use the matched icing entries' own qty (not whole alloc qty)
@@ -20511,7 +20524,7 @@ function renderHist() {
           <div><span style="color:var(--text-muted)">Recipe</span><br><strong>${b.recipe||'—'}${b.mult>1?' ×'+b.mult:''}</strong></div>
           <div><span style="color:var(--text-muted)">Date</span><br><strong>${b.date||'—'}</strong></div>
           <div><span style="color:var(--text-muted)">Made by</span><br><strong>${b.made_by||'—'}</strong></div>
-          <div><span style="color:var(--text-muted)">Occasion</span><br><strong>${b.occasion||'—'}</strong></div>
+          <div><span style="color:var(--text-muted)">Occasion</span><br><strong>${esc(b.occasion)||'—'}</strong></div>
           <div><span style="color:var(--text-muted)">Yield</span><br><strong>${b.yield||'—'} cookies</strong></div>
           <div><span style="color:var(--text-muted)">Best before</span><br><strong>${b.bb?b.bb.split('-').reverse().join('/'):'—'}</strong></div>
           <div><span style="color:var(--text-muted)">Allocated</span><br><strong>${tot} cookies</strong></div>
@@ -20594,7 +20607,7 @@ function renderRecentBatches() {
     const childList = isSP && b.splitInto ? b.splitInto.join(', ') : '';
     const yieldLine = isSP
       ? `<span style="color:var(--orange);font-weight:600;">Split parent</span> → ${childList}`
-      : `${b.yield||'?'} cookies${b.occasion?' · '+b.occasion:''}`;
+      : `${b.yield||'?'} cookies${b.occasion?' · '+esc(b.occasion):''}`;
     return `<div class="row" style="flex-wrap:wrap;gap:4px;align-items:center${isSP?';opacity:0.65':''}">
     <div style="flex:1;font-family:sans-serif;min-width:0">
       <div style="font-weight:600">${b.num} <span style="font-weight:400;font-size:12px;color:var(--text-muted)">${b.recipe||'—'}${b.mult>1?' ×'+b.mult:''}</span></div>
@@ -20907,7 +20920,7 @@ function renderCustDetailOrders() {
               const allocs = (o.cookie_allocations||[]).filter(a => String(a.order_line_id) === String(l.id));
               const totalAlloc = allocs.reduce((s,a) => s+(a.qty||0), 0);
               return `<div style="font-size:13px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);">
-              <span style="font-weight:600;">${l.quantity}× ${varLabel}</span>${l.notes?' — '+l.notes:''}
+              <span style="font-weight:600;">${l.quantity}× ${varLabel}</span>${l.notes?' — '+esc(l.notes):''}
               ${totalAlloc ? `<span style="font-size:11px;color:var(--success);margin-left:6px;">✓ ${totalAlloc} allocated</span>` : ''}
             </div>`;
             }).join('') : '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;">No cookie lines recorded.</div>'}
@@ -21087,7 +21100,7 @@ function renderCustDetailOrders() {
         </div>
         <div id="${expandId}" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-light);font-size:12px;font-family:sans-serif;">
           ${lines.length ? lines.map(l => `<div style="padding:3px 0;border-bottom:1px solid var(--gray-light);">
-            <span style="font-weight:600;">${l.quantity}× ${l.cookie_type||'—'}</span>${l.flavour?' · '+l.flavour:''}${l.notes?' — '+l.notes:''}
+            <span style="font-weight:600;">${l.quantity}× ${l.cookie_type||'—'}</span>${l.flavour?' · '+esc(l.flavour):''}${l.notes?' — '+esc(l.notes):''}
           </div>`).join('') : '<div style="color:var(--text-muted);">No cookie lines recorded.</div>'}
           ${o.notes?`<div style="margin-top:4px;font-style:italic;">"${esc(o.notes)}"</div>`:''}
           <div style="margin-top:6px;">
@@ -21140,7 +21153,7 @@ async function quickUpdateOrderStatus(orderId, status) {
 
 async function confirmDeleteOrder(id) {
   if (!confirm('Delete this order and all its cookie lines?')) return;
-  await deleteOrder(id);
+  if (!(await deleteOrder(id))) { showSaveError('Could not delete order.'); return; }
   renderCustDetailOrders();
   renderHome();
 }
@@ -22092,8 +22105,10 @@ async function saveOrderFull() {
     badge.style.display = 'inline-block';
     const insertedLines = await insertOrderLines(lines.map(l => { const { _dbId, ...fields } = l; return { ...fields, order_id: newOrder.id }; }));
     if (!insertedLines) {
-      await deleteOrder(newOrder.id);
-      showMsg('orf-msg', 'Error saving cookie lines — order rolled back. Check connection and try again.');
+      const rolledBack = await deleteOrder(newOrder.id);
+      showMsg('orf-msg', rolledBack
+        ? 'Error saving cookie lines — order rolled back. Check connection and try again.'
+        : 'Error saving cookie lines, and the order could not be rolled back — please delete order ' + (newOrder.order_number||newOrder.id) + ' manually.');
       return;
     }
     _renderOrfBatches(newOrder);
@@ -22332,7 +22347,7 @@ function orfOrderTypeStyle(type) {
 
 async function deleteOrderFromList(id) {
   if (!confirm('Delete this order and all its cookie lines?')) return;
-  await deleteOrder(id);
+  if (!(await deleteOrder(id))) { showSaveError('Could not delete order.'); return; }
   renderOrdersList();
   renderHome();
 }
@@ -22893,6 +22908,17 @@ function showCloseCustConfirm(i) {
   const c = cfg.customers[i];
   if (!c) return;
   const displayName = c.org ? c.org + ' — ' + c.name : c.name;
+  const linkedOrders = orders.filter(function(o){
+    return String(o.customer_id) === String(c.id) && !['Delivered','Paid','Cancelled'].includes(o.status);
+  });
+  const ordersField = linkedOrders.length
+    ? '<div style="margin-bottom:6px;"><label style="font-weight:600;">' + linkedOrders.length + ' open order' + (linkedOrders.length !== 1 ? 's' : '') + ' linked to this customer</label>' +
+      '<select id="close-cust-orders-action" style="width:100%;margin-top:4px;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);">' +
+      '<option value="leave">Leave open (just add a note)</option>' +
+      '<option value="cancel">Cancel these orders</option>' +
+      '<option value="complete">Mark these orders delivered</option>' +
+      '</select></div>'
+    : '';
   // Re-use the confirm overlay but replace content with our close form
   document.getElementById('confirm-title').textContent = 'Close customer record';
   document.getElementById('confirm-msg').innerHTML =
@@ -22907,6 +22933,7 @@ function showCloseCustConfirm(i) {
     '<option value="deceased">Deceased</option>' +
     '<option value="other">Other (add note below)</option>' +
     '</select></div>' +
+    ordersField +
     '<div><label style="font-weight:600;">Notes <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>' +
     '<input id="close-cust-notes" type="text" placeholder="Optional notes..." style="width:100%;margin-top:4px;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);box-sizing:border-box;" /></div>' +
     '</div>';
@@ -22921,6 +22948,7 @@ async function doCloseCust(i) {
   if (!c) return;
   const reason = (document.getElementById('close-cust-reason') || {value:'no_longer_customer'}).value || 'no_longer_customer';
   const notes = (document.getElementById('close-cust-notes') || {value:''}).value.trim();
+  const ordersAction = (document.getElementById('close-cust-orders-action') || {value:'leave'}).value;
   const displayName = c.org ? c.org + ' — ' + c.name : c.name;
   const snapshot = cfg.customers.slice();
   // Soft-close: mark status, never splice
@@ -22937,13 +22965,17 @@ async function doCloseCust(i) {
     alert('Close failed — ' + displayName + ' was NOT closed. Check your connection and try again.');
   } else {
     const _linkedOrders = orders.filter(function(o){
-      return String(o.customer_id) === String(c.id) && !['Complete','Cancelled'].includes(o.status);
+      return String(o.customer_id) === String(c.id) && !['Delivered','Paid','Cancelled'].includes(o.status);
     });
     for (const _o of _linkedOrders) {
       const _flag = '[Customer closed: ' + reason + ' — ' + today() + ']';
       const _newNotes = _o.notes ? _o.notes + '\n' + _flag : _flag;
-      await updateOrder(_o.id, { notes: _newNotes });
+      const _fields = { notes: _newNotes };
+      if (ordersAction === 'cancel') _fields.status = 'Cancelled';
+      else if (ordersAction === 'complete') _fields.status = 'Delivered';
+      await updateOrder(_o.id, _fields);
     }
+    if (activeCustomerId === i) activeCustomerId = null;
   }
   renderCustomers();
 }
@@ -27162,6 +27194,10 @@ async function saveBoxAllocations(engId) {
   var engIdStr = String(engId);
   var eng = campEngagements.find(function(e){ return e.id === engId || e.id === engIdStr; });
   if (!eng) return;
+  if (!eng.customer_id && !(eng.name && eng.name.trim())) {
+    alert('Cannot save box allocations: this engagement has no linked customer and no name to use as recipient. Add a name or link a customer first.');
+    return;
+  }
   var pending = _pendingBoxAllocs[engIdStr] || [];
 
   // Match records to this engagement for deletion:
@@ -27186,8 +27222,13 @@ async function saveBoxAllocations(engId) {
     var rName = typeof a.recipient === 'string' ? a.recipient : ((a.recipient && a.recipient.name) || '');
     return rName.toLowerCase().trim() === engNameLc;
   });
+  var toDeleteFailed = [];
   for (var d = 0; d < toDelete.length; d++) {
-    await deleteAlloc(toDelete[d].id);
+    if (!(await deleteAlloc(toDelete[d].id))) toDeleteFailed.push(toDelete[d].id);
+  }
+  if (toDeleteFailed.length) {
+    alert('Could not remove old allocation records (IDs: ' + toDeleteFailed.join(', ') + '). Check sync status and try again before saving.');
+    return;
   }
 
   // Fix 1: per-batch cookie over-allocation check before writing any new alloc records
@@ -28974,7 +29015,7 @@ async function _doSaveEngagement(f) {
 
 async function confirmDeleteEng(id) {
   if (!confirm('Delete this engagement?')) return;
-  await deleteEngagement(id);
+  if (!(await deleteEngagement(id))) { showSaveError('Could not delete engagement.'); return; }
   renderCampDetail();
 }
 
@@ -31005,13 +31046,19 @@ function confirmDeleteBoxAlloc(ids, recipName) {
 
 async function doDeleteBoxAlloc(ids) {
   var failed = [];
+  var trashFailed = [];
   for (var i = 0; i < ids.length; i++) {
     var id = ids[i];
     var a = allocs.find(x => x.id === id);
     if (!a) continue;
-    await softDelete('Allocation', 'allocations', id, Object.assign({}, a));
+    var trashEntry = await softDelete('Allocation', 'allocations', id, Object.assign({}, a));
+    if (!trashEntry) { trashFailed.push(id); }
     var ok = await deleteAlloc(id);
     if (!ok) { failed.push(id); }
+  }
+  if (trashFailed.length) {
+    alert('Some slot trash backups failed (IDs: ' + trashFailed.join(', ') + '). Check sync status and try again.');
+    return;
   }
   if (failed.length) {
     alert('Some slot deletions failed (IDs: ' + failed.join(', ') + '). Check sync status and try again.');
@@ -31027,7 +31074,7 @@ async function doDeleteAlloc(id) {
   const a = allocs.find(x=>x.id===id); if (!a) return;
   const r = a.recipient||{};
   const trashEntry = await softDelete('Allocation', 'allocations', id, {...a});
-  await deleteAlloc(id);
+  if (!(await deleteAlloc(id))) { showSaveError('Could not delete allocation.'); return; }
   renderAllocHistory();
   renderHist();
   renderUnallocBanner();
