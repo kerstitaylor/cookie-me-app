@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.17</title>
+<title>Cookie & Me — Kitchen Manager v44.19</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -7073,7 +7073,8 @@ async function updateOrder(id, fields) {
     const i = orders.findIndex(x => x.id === id);
     if (i > -1) Object.assign(orders[i], fields);
     setSyncStatus('ok','Saved ✓');
-  } else setSyncStatus('err','Sync error');
+    return true;
+  } else { setSyncStatus('err','Sync error'); return false; }
 }
 
 async function deleteOrder(id) {
@@ -7101,10 +7102,13 @@ async function insertInteraction(ix) {
   setSyncStatus('err','Sync error'); return null;
 }
 
-async function updateSupplierGoods(supName, category) {
+async function updateSupplierGoods(supName, category, supplierId) {
   if (!supName || !category) return;
-  // Find the matching supplier record by name
-  const rec = supplierRecords.find(s => s.name === supName);
+  // Prefer a resolved supplier id (fresh save) over a name search; fall back to name match
+  // when no id is available (e.g. "Other" free text with no matching register entry).
+  const rec = supplierId != null
+    ? supplierRecords.find(s => String(s.id) === String(supplierId))
+    : supplierRecords.find(s => s.name === supName);
   if (!rec) return;
   // Parse existing goods_supplied as comma-separated list
   const existing = (rec.goods_supplied || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -7121,11 +7125,14 @@ async function updateSupplierGoods(supName, category) {
 
 async function insertIng(ing) {
   setSyncStatus('syncing','Saving...');
+  const _ingSupName = ing.supplier || ing.sup;
+  const _ingSupRec = _ingSupName ? supplierRecords.find(s => s.name === _ingSupName) : null;
   const { data, error } = await db.from('ingredients').insert([{
     category: ing.category || ing.cat,
     product: ing.product || ing.brand,
     brand: ing.brand,
     supplier: ing.supplier || ing.sup,
+    supplier_id: _ingSupRec ? String(_ingSupRec.id) : null,
     size: ing.size || ing.qty,
     unit: ing.unit || '',
     best_before: ing.best_before || ing.bb || null,
@@ -8376,16 +8383,18 @@ async function addIng() {
   };
 
   const qty = parseInt(document.getElementById('iq').value) || 1;
+  const _addIngSupRec = supplier ? supplierRecords.find(s => s.name === supplier) : null;
+  const _addIngSupId = _addIngSupRec ? _addIngSupRec.id : null;
 
   if (qty > 1) {
     if (!confirm(`This will create ${qty} separate inventory records — one per packet. Continue?`)) return;
     for (let i = 0; i < qty; i++) {
       await insertIng(ing);
     }
-    await updateSupplierGoods(supplier, category);
+    await updateSupplierGoods(supplier, category, _addIngSupId);
   } else {
     await insertIng(ing);
-    await updateSupplierGoods(supplier, category);
+    await updateSupplierGoods(supplier, category, _addIngSupId);
   }
 
   // Reset form
@@ -9052,9 +9061,12 @@ async function saveIngEdit() {
     if (sel.value === 'Other') return (other && other.value.trim()) ? other.value.trim() : origVal||null;
     return sel.value.trim() || origVal || null;
   };
+  const _iemSupplier = getSelOrOther('iem-supplier','iem-supplier-other',_orig.supplier||_orig.sup);
+  const _iemSupRec = _iemSupplier ? supplierRecords.find(s => s.name === _iemSupplier) : null;
   const fields = {
     category: getSelOrOther('iem-category','iem-category-other',_orig.category||_orig.cat),
-    supplier: getSelOrOther('iem-supplier','iem-supplier-other',_orig.supplier||_orig.sup),
+    supplier: _iemSupplier,
+    supplier_id: _iemSupRec ? String(_iemSupRec.id) : null,
     brand: getSelOrOther('iem-brand','iem-brand-other',_orig.brand),
     product: getSelOrOther('iem-product','iem-product-other',_orig.product),
     size: parseFloat(document.getElementById('iem-size').value)||null,
@@ -16524,7 +16536,24 @@ function _ingRegPopDropdowns() {
       + keys.map(function(k){ return '<option value="' + k.replace(/"/g,'&quot;') + '">' + k + '</option>'; }).join('');
     if (cur && map[cur]) el.value = cur;
   }
-  fillSel('ing-reg-sup',   sups,   'All suppliers');
+  // Supplier filter carries the stable supplier id as its option value when the name
+  // still matches a current register entry, so the filter can prefer id-matching over
+  // a stale stored name string. Orphan names with no current register match (e.g. a
+  // since-deleted supplier) keep the name itself as the value, same as before.
+  function fillSupSel(id, names, allLabel) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var cur = el.value;
+    var keys = Object.keys(names).sort(function(a,b){ return a.toLowerCase()<b.toLowerCase()?-1:1; });
+    el.innerHTML = '<option value="">' + allLabel + '</option>'
+      + keys.map(function(k){
+          var rec = supplierRecords.find(function(s){ return s.name === k; });
+          var val = rec ? String(rec.id) : k;
+          return '<option value="' + val.replace(/"/g,'&quot;') + '">' + k + '</option>';
+        }).join('');
+    if (cur) el.value = cur;
+  }
+  fillSupSel('ing-reg-sup', sups, 'All suppliers');
   fillSel('ing-reg-cat',   cats,   'All categories');
   fillSel('ing-reg-brand', brands, 'All brands');
 }
@@ -16564,7 +16593,23 @@ function _prBuildIngredients(rows, groupBy, sortBy, filterBy, searchStr, supFilt
   }
 
   // Apply dropdown filters
-  if (supFilter)   rows = rows.filter(function(i){ return (i.supplier||i.sup||'') === supFilter; });
+  // Supplier filter value is a supplier id when the dropdown could resolve one (see
+  // _ingRegPopDropdowns); prefer matching ingredients by supplier_id, falling back to
+  // the stored name string for rows saved before the rename-stranding fix.
+  if (supFilter) {
+    var _supFilterRec = supplierRecords.find(function(s){ return String(s.id) === supFilter; });
+    if (_supFilterRec) {
+      var _supFilterId = String(_supFilterRec.id);
+      var _supFilterNameLC = _supFilterRec.name.toLowerCase().trim();
+      rows = rows.filter(function(i){
+        return i.supplier_id != null
+          ? String(i.supplier_id) === _supFilterId
+          : (i.supplier||i.sup||'').toLowerCase().trim() === _supFilterNameLC;
+      });
+    } else {
+      rows = rows.filter(function(i){ return (i.supplier||i.sup||'') === supFilter; });
+    }
+  }
   if (catFilter)   rows = rows.filter(function(i){ return (i.category||i.cat||'') === catFilter; });
   if (brandFilter) rows = rows.filter(function(i){ return (i.brand||'') === brandFilter; });
 
@@ -16652,6 +16697,16 @@ function _prBuildIngredients(rows, groupBy, sortBy, filterBy, searchStr, supFilt
     html += '</table>';
 
   } else {
+    // Supplier groups prefer the live current name resolved from supplier_id, so rows
+    // already re-saved through the rename fix merge under today's name instead of
+    // splitting into a separate group under their stale stored string.
+    function _supGroupKey(i) {
+      if (i.supplier_id != null) {
+        var _r = supplierRecords.find(function(s){ return String(s.id) === String(i.supplier_id); });
+        if (_r) return _r.name;
+      }
+      return i.supplier||i.sup||'Unknown';
+    }
     // Get unique group keys in a sensible order
     var groupKeys;
     if (groupBy === 'status') {
@@ -16660,7 +16715,7 @@ function _prBuildIngredients(rows, groupBy, sortBy, filterBy, searchStr, supFilt
       var seen = {};
       groupKeys = [];
       rows.forEach(function(i){
-        var k = groupBy === 'supplier' ? (i.supplier||i.sup||'Unknown')
+        var k = groupBy === 'supplier' ? _supGroupKey(i)
               : groupBy === 'brand'    ? (i.brand||'Unknown')
               : (i.category||i.cat||'Unknown');
         if (!seen[k]) { seen[k] = true; groupKeys.push(k); }
@@ -16673,7 +16728,7 @@ function _prBuildIngredients(rows, groupBy, sortBy, filterBy, searchStr, supFilt
       if (groupBy === 'status') {
         group = rows.filter(function(i){ return (i.lifecycle_status||'inventory') === key; });
       } else if (groupBy === 'supplier') {
-        group = rows.filter(function(i){ return (i.supplier||i.sup||'Unknown') === key; });
+        group = rows.filter(function(i){ return _supGroupKey(i) === key; });
       } else if (groupBy === 'brand') {
         group = rows.filter(function(i){ return (i.brand||'Unknown') === key; });
       } else {
@@ -18018,7 +18073,10 @@ async function printRecordsDoc(type) {
     var ingFilterLabel = {all:'All items',inventory:'In Stock only',opened:'Opened only',history:'History only',expiring:'Expiring within 30 days',expired:'Expired'}[ingFilter]||ingFilter;
     var subtitleParts = ['Food Control Plan — Stock Records'];
     if (ingSearch)  subtitleParts.push('Search: "' + ingSearch + '"');
-    if (ingSupF)    subtitleParts.push('Supplier: ' + ingSupF);
+    if (ingSupF) {
+      var _ingSupFRec = supplierRecords.find(function(s){ return String(s.id) === ingSupF; });
+      subtitleParts.push('Supplier: ' + (_ingSupFRec ? _ingSupFRec.name : ingSupF));
+    }
     if (ingCatF)    subtitleParts.push('Category: ' + ingCatF);
     if (ingBrandF)  subtitleParts.push('Brand: ' + ingBrandF);
     if (ingFilter !== 'all') subtitleParts.push('Status: ' + ingFilterLabel);
@@ -22970,13 +23028,18 @@ async function doCloseCust(i) {
     const _linkedOrders = orders.filter(function(o){
       return String(o.customer_id) === String(c.id) && !['Delivered','Paid','Cancelled'].includes(o.status);
     });
+    const _failedOrders = [];
     for (const _o of _linkedOrders) {
       const _flag = '[Customer closed: ' + reason + ' — ' + today() + ']';
       const _newNotes = _o.notes ? _o.notes + '\n' + _flag : _flag;
       const _fields = { notes: _newNotes };
       if (ordersAction === 'cancel') _fields.status = 'Cancelled';
       else if (ordersAction === 'complete') _fields.status = 'Delivered';
-      await updateOrder(_o.id, _fields);
+      const _orderOk = await updateOrder(_o.id, _fields);
+      if (!_orderOk) _failedOrders.push(_o.order_number || _o.id);
+    }
+    if (_failedOrders.length) {
+      alert('Customer closed, but order' + (_failedOrders.length > 1 ? 's' : '') + ' ' + _failedOrders.join(', ') + ' could not be updated — please update ' + (_failedOrders.length > 1 ? 'them' : 'it') + ' manually.');
     }
     if (activeCustomerId === i) activeCustomerId = null;
   }
@@ -23883,11 +23946,17 @@ function cancelSupForm() {
 }
 
 function deriveCategoriesForSupplier(supName) {
-  // Return unique sorted categories from ingredients matching this supplier name (case-insensitive)
+  // Prefer matching by stable supplier_id (set on ingredients saved since the rename fix);
+  // fall back to the name string for older rows that haven't been re-saved yet.
   const nameLC = (supName||'').toLowerCase().trim();
+  const _supRec = supName ? supplierRecords.find(s => s.name === supName) : null;
+  const _supId = _supRec ? String(_supRec.id) : null;
   const cats = new Set();
   (typeof ings !== 'undefined' ? ings : []).forEach(function(i) {
-    if ((i.supplier||'').toLowerCase().trim() === nameLC && i.category) {
+    const _matches = i.supplier_id != null
+      ? (_supId != null && String(i.supplier_id) === _supId)
+      : (i.supplier||'').toLowerCase().trim() === nameLC;
+    if (_matches && i.category) {
       cats.add(i.category.trim());
     }
   });
@@ -29444,7 +29513,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.17',
+    app_version: 'v44.19',
     tables: {}
   };
 
