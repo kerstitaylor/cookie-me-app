@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.20</title>
+<title>Cookie & Me — Kitchen Manager v44.21</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -7980,21 +7980,6 @@ function popProd() {
   popAlloc();
   renderRecentBatches();
 }
-// Does this batch have any (non-legacy) icing instance with cookies not yet allocated?
-function batchHasUnallocatedIcing(b) {
-  return (b.icingEntries || []).some(function(e) {
-    if (e.isLegacy) return false;
-    var fromOrders = (orders || []).reduce(function(s, o) {
-      return s + (o.cookie_allocations || []).reduce(function(s2, ca) {
-        return s2 + (String(ca.icing_entry_id) === String(e.id) ? (ca.qty || 0) : 0);
-      }, 0);
-    }, 0);
-    var fromDirect = allocs.filter(function(a) {
-      return a.icing_entry_id && String(a.icing_entry_id) === String(e.id);
-    }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
-    return ((e.qty || 0) - (fromOrders + fromDirect)) > 0;
-  });
-}
 function popAlloc() {
   expandedAllocBatchNum = null; // reset expanded state on navigation
   // Exclude failed batches AND split parents from allocation
@@ -8016,15 +8001,6 @@ function popAlloc() {
   if (noCustomerNotice) noCustomerNotice.style.display = (cfg.customers||[]).filter(c=>c.status!=='closed').length ? 'none' : 'block';
   renderUnallocBanner();
   renderRecentAllocBatches(); renderUnallocBanner();
-  // Auto-load the first batch with unallocated icing instances, the same way
-  // batches with unallocated cookies already surface via the banner above.
-  if (selBI < 0) {
-    const autoBatch = allocBatches.find(({b}) => batchHasUnallocatedIcing(b));
-    if (autoBatch) {
-      document.getElementById('al-b').value = String(autoBatch.i);
-      loadAllocBatch();
-    }
-  }
 }
 function jumpToAllocBatch(batchNum) {
   // Find the batch index, select it in the dropdown, load it, then scroll to it
@@ -11306,7 +11282,7 @@ function openIcingAllocModal(entryId) {
   body += '<div class="cust-picker-dropdown"></div></div>';
   body += '<input type="hidden" id="iai-cust-id" value="' + esc(preFillCustId) + '"/></div>';
   body += '<div class="u-modal-field"><label>Qty (cookies)</label>';
-  body += '<input id="iai-qty" type="number" min="1" max="' + (remaining > 0 ? remaining : 0) + '" value="' + (remaining > 0 ? remaining : '') + '"/></div>';
+  body += '<input id="iai-qty" type="number" min="1" max="' + remaining + '" value="' + (remaining > 0 ? remaining : '') + '"/></div>';
   body += '<div class="u-modal-field"><label>Allocation type</label><select id="iai-type">';
   body += '<option value="sold">Sold</option><option value="gifted">Gifted</option><option value="consumed">Consumed</option><option value="donated">Donated</option><option value="giveaway">Giveaway</option><option value="samples">Samples</option><option value="testing">Testing</option><option value="disposal">Thrown away</option>';
   body += '</select></div>';
@@ -11336,19 +11312,19 @@ async function _iaiSave() {
   var b = batches[selBI];
   var qty = parseInt((document.getElementById('iai-qty') || {}).value) || 0;
   if (!qty) { alert('Enter a quantity.'); return; }
-  var entry = (b.icingEntries || []).find(function(x) { return String(x.id) === String(_iaiEntryId); });
-  if (entry) {
-    var fromOrders = (orders || []).reduce(function(s, o) {
+  var _iaiE = (b.icingEntries || []).find(function(x) { return String(x.id) === String(_iaiEntryId); });
+  if (_iaiE) {
+    var _iaiFromOrders = (orders || []).reduce(function(s, o) {
       return s + (o.cookie_allocations || []).reduce(function(s2, ca) {
         return s2 + (String(ca.icing_entry_id) === String(_iaiEntryId) ? (ca.qty || 0) : 0);
       }, 0);
     }, 0);
-    var fromDirect = allocs.filter(function(a) {
+    var _iaiFromDirect = allocs.filter(function(a) {
       return a.icing_entry_id && String(a.icing_entry_id) === String(_iaiEntryId);
     }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
-    var remaining = (entry.qty || 0) - (fromOrders + fromDirect);
-    if (qty > remaining) {
-      alert('Cannot allocate ' + qty + ' — only ' + remaining + ' remaining for this icing instance.');
+    var _iaiRemaining = (_iaiE.qty || 0) - (_iaiFromOrders + _iaiFromDirect);
+    if (qty > _iaiRemaining) {
+      alert('Cannot allocate ' + qty + ' — only ' + _iaiRemaining + ' remaining for this icing instance.');
       return;
     }
   }
@@ -29553,7 +29529,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.20',
+    app_version: 'v44.21',
     tables: {}
   };
 
