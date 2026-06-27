@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.21</title>
+<title>Cookie & Me — Kitchen Manager v44.22</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -11224,13 +11224,22 @@ function preAllocUniced(qty) {
 }
 
 var _iaiEntryId = null;
+var _iaiBatchIdx = -1;
 
-function openIcingAllocModal(entryId) {
-  if (selBI < 0) return;
-  var b = batches[selBI];
+function openIcingAllocModal(entryId, batchIdx) {
+  var resolvedIdx = (batchIdx !== undefined) ? batchIdx : selBI;
+  if (resolvedIdx < 0) {
+    outer: for (var i = 0; i < batches.length; i++) {
+      var _es = batches[i].icingEntries || [];
+      for (var j = 0; j < _es.length; j++) { if (String(_es[j].id) === String(entryId)) { resolvedIdx = i; break outer; } }
+    }
+  }
+  if (resolvedIdx < 0) return;
+  var b = batches[resolvedIdx];
   var e = (b.icingEntries || []).find(function(x) { return String(x.id) === String(entryId); });
   if (!e) return;
   _iaiEntryId = String(entryId);
+  _iaiBatchIdx = resolvedIdx;
 
   var fromOrders = (orders || []).reduce(function(s, o) {
     return s + (o.cookie_allocations || []).reduce(function(s2, ca) {
@@ -11308,8 +11317,9 @@ function openIcingAllocModal(entryId) {
 }
 
 async function _iaiSave() {
-  if (selBI < 0 || !_iaiEntryId) return;
-  var b = batches[selBI];
+  var effBI = (_iaiBatchIdx >= 0) ? _iaiBatchIdx : selBI;
+  if (effBI < 0 || !_iaiEntryId) return;
+  var b = batches[effBI];
   var qty = parseInt((document.getElementById('iai-qty') || {}).value) || 0;
   if (!qty) { alert('Enter a quantity.'); return; }
   var _iaiE = (b.icingEntries || []).find(function(x) { return String(x.id) === String(_iaiEntryId); });
@@ -11350,7 +11360,7 @@ async function _iaiSave() {
   }
   closeUModal();
   await insertAlloc({
-    batchNum: b.num, batchIdx: selBI, type: type, qty: qty,
+    batchNum: b.num, batchIdx: effBI, type: type, qty: qty,
     recipient: recipient, dist: [], method: method, addr: '', market: '',
     date: date, notes: null, icingEntryId: _iaiEntryId,
     campaignIds: [], orderIds: [], costToMake: null
@@ -11566,6 +11576,30 @@ function renderUnallocBanner() {
   var hasB = Object.keys(unconfirmedByOrder).length;
   var hasC = Object.keys(unconfirmedByCampaign).filter(function(k){ return !_dismissedSectionC.has(k); }).length;
 
+  // Section E: icing instances with remaining > 0, entry date on or after 2026-06-10
+  // (same cutoff as reconciliation report sec3(); string comparison works because dates are ISO YYYY-MM-DD)
+  var _ICING_CUTOFF = '2026-06-10';
+  var unallocIcingByBatch = {};
+  batches.forEach(function(b, bi) {
+    (b.icingEntries || []).forEach(function(e) {
+      if (e.isLegacy) return;
+      if (!e.date || e.date < _ICING_CUTOFF) return;
+      var fromOrders = (orders || []).reduce(function(s, o) {
+        return s + (o.cookie_allocations || []).reduce(function(s2, ca) {
+          return s2 + (String(ca.icing_entry_id) === String(e.id) ? (ca.qty || 0) : 0);
+        }, 0);
+      }, 0);
+      var fromDirect = allocs.filter(function(a) {
+        return a.icing_entry_id && String(a.icing_entry_id) === String(e.id);
+      }).reduce(function(s, a) { return s + (a.qty || 0); }, 0);
+      var remaining = (e.qty || 0) - (fromOrders + fromDirect);
+      if (remaining <= 0) return;
+      if (!unallocIcingByBatch[b.num]) unallocIcingByBatch[b.num] = { batchNum: b.num, batchDate: b.date || '', batchIdx: bi, instances: [] };
+      unallocIcingByBatch[b.num].instances.push({ entry: e, remaining: remaining });
+    });
+  });
+  var hasE = Object.keys(unallocIcingByBatch).length > 0;
+
   // Section D: batches where yield - allocated - disposed ≠ 0, not already in Section A
   var unaccountedBatches = {};
   batches.forEach(function(b) {
@@ -11587,7 +11621,7 @@ function renderUnallocBanner() {
   });
   var hasD = Object.keys(unaccountedBatches).length;
 
-  if (!hasA && !hasB && !hasC && !hasD) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  if (!hasA && !hasB && !hasC && !hasD && !hasE) { el.style.display = 'none'; el.innerHTML = ''; return; }
 
   function entryLines(entries) {
     return entries.map(function(e) {
@@ -11599,6 +11633,27 @@ function renderUnallocBanner() {
   }
 
   var rows = '';
+
+  if (hasE) {
+    rows += '<div style="padding:8px 2px;border-bottom:1px solid rgba(18,38,64,0.12);margin-bottom:4px;">'
+      + '<div style="font-size:12px;font-weight:700;font-family:sans-serif;color:var(--orange);margin-bottom:4px;">⚠ Icing instances with unallocated cookies</div>';
+    Object.keys(unallocIcingByBatch).sort().forEach(function(bnum) {
+      var g = unallocIcingByBatch[bnum];
+      rows += '<div style="margin-bottom:6px;">'
+        + '<div style="font-size:13px;font-family:sans-serif;font-weight:600;">Batch ' + esc(bnum) + (g.batchDate ? ' · ' + g.batchDate : '') + '</div>';
+      g.instances.forEach(function(item) {
+        var e = item.entry;
+        var design = e.cookieDescription || e.occasion || e.purpose || ('Icing run ' + (e.date || ''));
+        var eidAttr = String(e.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        rows += '<div style="font-size:12px;padding-left:12px;margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-family:sans-serif;">'
+          + '<span style="color:var(--text-muted);">– ' + esc(design) + ' · ' + (e.qty || 0) + ' iced · <span style="color:var(--orange);font-weight:600;">' + item.remaining + ' remaining</span></span>'
+          + '<button class="btn btn-sm btn-primary" style="font-size:11px;padding:3px 10px;width:auto;" onclick="openIcingAllocModal(\'' + eidAttr + '\',' + g.batchIdx + ')">Allocate →</button>'
+          + '</div>';
+      });
+      rows += '</div>';
+    });
+    rows += '</div>';
+  }
 
   if (hasA) {
     rows += '<div style="padding:8px 2px;border-bottom:1px solid rgba(18,38,64,0.12);margin-bottom:4px;">'
@@ -29529,7 +29584,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.21',
+    app_version: 'v44.22',
     tables: {}
   };
 
