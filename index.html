@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.22</title>
+<title>Cookie & Me — Kitchen Manager v44.23</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -660,6 +660,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
   </div><!-- /app-header -->
 </div><!-- /app-header-wrapper -->
 <div id="app" style="display:none">
+  <div id="mpi-recall-banner" style="display:none;"></div>
   <div id="s-home" class="section">
     <div style="background: linear-gradient(135deg, var(--navy) 0%, #1e3a5f 60%, #2a4a6e 100%); border-radius: var(--radius-lg); padding: 20px 16px 16px; margin: 12px 12px 0; position: relative; overflow: hidden;">
       <div style="position:absolute;top:-20px;right:-20px;width:120px;height:120px;background:var(--orange);opacity:0.08;border-radius:50%;"></div>
@@ -763,6 +764,18 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         </div>
         <span id="export-btn-status" style="margin-left:auto;font-size:11px;color:var(--text-muted);flex-shrink:0;"></span>
       </button>
+    </div>
+
+    <!-- MPI FOOD RECALL CHECK -->
+    <div style="padding: 12px 12px 0;">
+      <div class="card" style="margin-bottom:0;border-left:3px solid var(--warning);">
+        <div class="card-title" style="margin-bottom:8px;">🛡 Food Safety — MPI Recalls</div>
+        <button id="mpi-check-btn" onclick="checkMpiRecalls(true)" style="width:100%;background:var(--warning-bg);border:1px solid var(--warning);color:var(--warning);border-radius:var(--radius);padding:10px 14px;cursor:pointer;font-family:sans-serif;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;text-align:left;">
+          <span>🔍</span><span>Check MPI Recalls Now</span>
+          <span id="mpi-check-spinner" style="display:none;margin-left:auto;font-size:11px;font-weight:400;">Checking…</span>
+        </button>
+        <div id="mpi-home-status" style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:6px;"></div>
+      </div>
     </div>
 
     <!-- CUSTOMISE QUICK ACCESS -->
@@ -7530,6 +7543,9 @@ async function init() {
   } catch(e) {
     console.warn('Notification init error (non-fatal):', e);
   }
+
+  // MPI food recall check (non-fatal async)
+  checkMpiRecalls().catch(function(e) { console.warn('MPI recall check (non-fatal):', e); });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -19710,6 +19726,302 @@ function recallClearSearch2() {
   document.getElementById('rc2-res').innerHTML = '';
 }
 
+// ── MPI AUTOMATED RECALL CHECK ─────────────────────────────────────────────
+var _mpiLastResult = null;
+var _mpiActionPending = null;
+
+async function checkMpiRecalls(forceRefresh) {
+  var MPI_FEED = 'https://www.mpi.govt.nz/feed/food-recalls/';
+  var CACHE_KEY = 'mpi_recall_check';
+  var CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  var spinEl = document.getElementById('mpi-check-spinner');
+  var statusEl = document.getElementById('mpi-home-status');
+  var btnEl = document.getElementById('mpi-check-btn');
+  if (spinEl) spinEl.style.display = '';
+  if (btnEl) btnEl.disabled = true;
+
+  // Check 24h cache
+  if (!forceRefresh) {
+    var cached = cfg[CACHE_KEY];
+    if (cached && cached.lastChecked && (Date.now() - new Date(cached.lastChecked).getTime()) < CACHE_TTL_MS) {
+      _mpiLastResult = cached;
+      renderMpiRecallBanner(cached);
+      _mpiSetHomeStatus(statusEl, cached);
+      if (spinEl) spinEl.style.display = 'none';
+      if (btnEl) btnEl.disabled = false;
+      return;
+    }
+  }
+
+  // Fetch MPI RSS feed
+  var feedText;
+  try {
+    var res = await fetch(MPI_FEED);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    feedText = await res.text();
+  } catch(e) {
+    var errResult = { lastChecked: new Date().toISOString(), error: 'MPI feed unavailable (' + e.message + ') — CORS or network block.', recallCount: 0, redMatches: [], amberMatches: [] };
+    _mpiLastResult = errResult;
+    renderMpiRecallBanner(errResult);
+    _mpiSetHomeStatus(statusEl, errResult);
+    if (spinEl) spinEl.style.display = 'none';
+    if (btnEl) btnEl.disabled = false;
+    return;
+  }
+
+  // Parse RSS XML
+  var xmlParser = new DOMParser();
+  var xmlDoc = xmlParser.parseFromString(feedText, 'text/xml');
+  var rssItems = Array.from(xmlDoc.querySelectorAll('item'));
+
+  // Fetch notice pages in parallel, extract lot numbers
+  var notices = await Promise.all(rssItems.map(async function(rssItem) {
+    var titleEl = rssItem.querySelector('title');
+    var rawTitle = titleEl ? (titleEl.textContent || '') : '';
+    // <link> in RSS 2.0 is a text node sibling, not an element child
+    var linkEl = rssItem.querySelector('link');
+    var link = '';
+    if (linkEl) {
+      link = (linkEl.textContent || '').trim();
+      if (!link && linkEl.nextSibling) link = (linkEl.nextSibling.nodeValue || '').trim();
+    }
+    var pageText = '';
+    try {
+      if (link) {
+        var pr = await fetch(link);
+        if (pr.ok) pageText = await pr.text();
+      }
+    } catch(e2) { /* page blocked — lot matching will use RSS title only */ }
+    var haystack = (pageText || rawTitle).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    var lotNumbers = [];
+    var lotRe = /(?:lot|batch|code)[:\s#]*([A-Z0-9][A-Z0-9\/\-\.]{1,30})/gi;
+    var lm;
+    while ((lm = lotRe.exec(haystack)) !== null) {
+      var lv = lm[1].trim();
+      if (!lotNumbers.includes(lv)) lotNumbers.push(lv);
+    }
+    return { title: rawTitle.trim(), link: link, lotNumbers: lotNumbers };
+  }));
+
+  // Match notices against ingredient stock
+  var redMatches = [];
+  var amberMatches = [];
+  for (var ni = 0; ni < notices.length; ni++) {
+    var notice = notices[ni];
+    var noticeLow = notice.title.toLowerCase();
+    for (var ii = 0; ii < (ings || []).length; ii++) {
+      var ing = ings[ii];
+      if (!ing.brand || !ing.product) continue;
+      var brandL = ing.brand.toLowerCase().trim();
+      var prodL = ing.product.toLowerCase().trim();
+      // Brand: all significant words (>2 chars) must appear in notice title
+      var brandWords = brandL.split(/\s+/).filter(function(w) { return w.length > 2; });
+      if (!brandWords.length || !brandWords.every(function(w) { return noticeLow.includes(w); })) continue;
+      // Product: at least one significant word must appear
+      var prodWords = prodL.split(/\s+/).filter(function(w) { return w.length > 2; });
+      if (!prodWords.length || !prodWords.some(function(w) { return noticeLow.includes(w); })) continue;
+      // Find the most recent cookie batch that used this ingredient
+      var lastUsedInBatch = '';
+      var myBatches = (batches || []).filter(function(b) {
+        return (b.ingredients || []).some(function(bi) { return String(bi.ingId) === String(ing.id); });
+      }).sort(function(a, b2) { return (b2.date || '').localeCompare(a.date || ''); });
+      if (myBatches.length) lastUsedInBatch = myBatches[0].num;
+      var yourBatch = ing.batch || '';
+      var matchObj = {
+        ingId: ing.id,
+        brand: ing.brand,
+        product: ing.product,
+        yourBatch: yourBatch,
+        lastUsedInBatch: lastUsedInBatch,
+        mpiUrl: notice.link,
+        mpiTitle: notice.title,
+        mpiLotNumbers: notice.lotNumbers.join(', ')
+      };
+      // Red: your batch number exactly matches a recalled lot
+      if (yourBatch && notice.lotNumbers.some(function(lot) {
+        return lot.toLowerCase().replace(/[\s\-]/g, '') === yourBatch.toLowerCase().replace(/[\s\-]/g, '');
+      })) {
+        redMatches.push(matchObj);
+      } else {
+        // Amber: brand + product match but no exact lot confirmation
+        amberMatches.push(matchObj);
+      }
+    }
+  }
+
+  // Suppress matches already recorded in recall_actions
+  var resolvedKeys = [];
+  try {
+    var raRes = await db.from('recall_actions').select('mpi_url,ingredient_id');
+    if (raRes.data) {
+      resolvedKeys = raRes.data.map(function(r) { return (r.mpi_url || '') + '|' + String(r.ingredient_id); });
+    }
+  } catch(e3) { console.warn('MPI suppression query failed:', e3); }
+  var filterResolved = function(arr) {
+    return arr.filter(function(m) { return !resolvedKeys.includes((m.mpiUrl || '') + '|' + String(m.ingId)); });
+  };
+
+  var result = {
+    lastChecked: new Date().toISOString(),
+    recallCount: notices.length,
+    redMatches: filterResolved(redMatches),
+    amberMatches: filterResolved(amberMatches)
+  };
+  _mpiLastResult = result;
+  saveCfgKey(CACHE_KEY, result).catch(function(e4) { console.warn('MPI cache save failed:', e4); });
+  renderMpiRecallBanner(result);
+  _mpiSetHomeStatus(statusEl, result);
+  if (spinEl) spinEl.style.display = 'none';
+  if (btnEl) btnEl.disabled = false;
+}
+
+function _mpiSetHomeStatus(el, result) {
+  if (!el) return;
+  if (!result) { el.textContent = ''; return; }
+  var when = result.lastChecked ? new Date(result.lastChecked).toLocaleString('en-NZ') : 'never';
+  var count = result.recallCount || 0;
+  var red = (result.redMatches || []).length;
+  var amber = (result.amberMatches || []).length;
+  var matchTxt = (red + amber) === 0 ? 'No matches in your ingredient stock.' : ((red + amber) + ' alert' + ((red + amber) > 1 ? 's' : '') + ' — see banner above.');
+  el.textContent = 'Last checked: ' + when + ' · ' + count + ' recall' + (count !== 1 ? 's' : '') + ' scanned. ' + matchTxt;
+}
+
+function renderMpiRecallBanner(result) {
+  var el = document.getElementById('mpi-recall-banner');
+  if (!el) return;
+  var red = (result && result.redMatches) ? result.redMatches : [];
+  var amber = (result && result.amberMatches) ? result.amberMatches : [];
+  if (red.length === 0 && amber.length === 0 && !(result && result.error)) {
+    el.style.display = 'none';
+    return;
+  }
+  var when = (result && result.lastChecked) ? new Date(result.lastChecked).toLocaleString('en-NZ') : '';
+  var html = '<div style="max-width:900px;margin:0 auto;padding:0 12px 4px;">';
+  if (result && result.error) {
+    html += '<div style="background:var(--warning-bg);border:1px solid var(--warning);border-radius:var(--radius);padding:10px 14px;margin:8px 0;font-family:sans-serif;font-size:12px;color:var(--warning);">⚠️ ' + esc(result.error) + '</div>';
+  }
+  for (var i = 0; i < red.length; i++) {
+    var m = red[i];
+    html += '<div style="background:var(--danger-bg);border:1.5px solid var(--danger);border-radius:var(--radius-lg);padding:12px 14px;margin:8px 0;cursor:pointer;" onclick="_mpiGoRecall(\'red\',' + i + ')">';
+    html += '<div style="font-size:13px;font-weight:700;color:var(--danger);font-family:sans-serif;">🚨 Red Alert — Recalled Lot Match</div>';
+    html += '<div style="font-size:12px;font-family:sans-serif;margin-top:4px;color:var(--text);">' + esc(m.brand) + ' ' + esc(m.product) + ' — your batch <strong>' + esc(m.yourBatch) + '</strong> matches a recalled lot.</div>';
+    if (m.mpiLotNumbers) html += '<div style="font-size:12px;font-family:sans-serif;margin-top:2px;color:var(--text-muted);">Recalled lots: ' + esc(m.mpiLotNumbers) + '</div>';
+    if (m.lastUsedInBatch) html += '<div style="font-size:12px;font-family:sans-serif;margin-top:2px;color:var(--text-muted);">Last used in cookie batch: ' + esc(m.lastUsedInBatch) + '</div>';
+    html += '<div style="font-size:11px;font-family:sans-serif;margin-top:2px;color:var(--text-muted);">MPI: ' + esc(m.mpiTitle) + '</div>';
+    html += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;">';
+    html += '<button class="btn" style="font-size:12px;background:var(--danger);color:white;border:none;padding:6px 12px;" onclick="event.stopPropagation();openMpiRecallAction(\'red\',' + i + ')">Record action taken</button>';
+    html += '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Tap card to search Recall tab →</span>';
+    html += '</div></div>';
+  }
+  for (var j = 0; j < amber.length; j++) {
+    var am = amber[j];
+    html += '<div style="background:var(--warning-bg);border:1.5px solid var(--warning);border-radius:var(--radius-lg);padding:12px 14px;margin:8px 0;cursor:pointer;" onclick="_mpiGoRecall(\'amber\',' + j + ')">';
+    html += '<div style="font-size:13px;font-weight:700;color:var(--warning);font-family:sans-serif;">⚠️ Amber Alert — Check Required</div>';
+    html += '<div style="font-size:12px;font-family:sans-serif;margin-top:4px;color:var(--text);">' + esc(am.brand) + ' ' + esc(am.product) + (am.yourBatch ? ' (your batch: <strong>' + esc(am.yourBatch) + '</strong>)' : '') + ' — brand and product match an active recall.</div>';
+    html += '<div style="font-size:12px;font-family:sans-serif;margin-top:2px;color:var(--text);">Physically check your packet against recalled lots' + (am.mpiLotNumbers ? ': <strong>' + esc(am.mpiLotNumbers) + '</strong>' : '') + '.</div>';
+    if (am.lastUsedInBatch) html += '<div style="font-size:12px;font-family:sans-serif;margin-top:2px;color:var(--text-muted);">Last used in cookie batch: ' + esc(am.lastUsedInBatch) + '</div>';
+    html += '<div style="font-size:11px;font-family:sans-serif;margin-top:2px;color:var(--text-muted);">MPI: ' + esc(am.mpiTitle) + '</div>';
+    html += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;">';
+    html += '<button class="btn" style="font-size:12px;background:var(--warning);color:white;border:none;padding:6px 12px;" onclick="event.stopPropagation();openMpiRecallAction(\'amber\',' + j + ')">Record action taken</button>';
+    html += '<span style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Tap card to search Recall tab →</span>';
+    html += '</div></div>';
+  }
+  if (when) html += '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;text-align:right;padding:0 0 4px;">MPI recalls last checked: ' + when + '</div>';
+  html += '</div>';
+  el.innerHTML = html;
+  el.style.display = 'block';
+}
+
+function _mpiGoRecall(type, idx) {
+  var arr = (_mpiLastResult || {})[type === 'red' ? 'redMatches' : 'amberMatches'] || [];
+  var m = arr[idx];
+  if (!m) return;
+  go('recall');
+  setTimeout(function() {
+    if (typeof goRecall === 'function') goRecall('search');
+    var rc1 = document.getElementById('rc1-q');
+    var rc2 = document.getElementById('rc2-q');
+    if (rc1 && m.yourBatch) { rc1.value = m.yourBatch; doRecallByIngredient(); }
+    if (rc2 && m.lastUsedInBatch) { rc2.value = m.lastUsedInBatch; doRecallByBatch(); }
+  }, 150);
+}
+
+function openMpiRecallAction(type, idx) {
+  var arr = (_mpiLastResult || {})[type === 'red' ? 'redMatches' : 'amberMatches'] || [];
+  var m = arr[idx];
+  if (!m) return;
+  _mpiActionPending = Object.assign({}, m, { alertType: type });
+  var alertColour = type === 'red' ? 'var(--danger)' : 'var(--warning)';
+  var alertBg = type === 'red' ? 'var(--danger-bg)' : 'var(--warning-bg)';
+  var nowStr = new Date().toLocaleString('en-NZ');
+  var body = '<div style="background:' + alertBg + ';border:1px solid ' + alertColour + ';border-radius:var(--radius);padding:10px 12px;margin-bottom:14px;font-family:sans-serif;font-size:12px;">'
+    + '<strong>' + esc(m.brand) + ' ' + esc(m.product) + (m.yourBatch ? ' — batch ' + esc(m.yourBatch) : '') + '</strong>'
+    + '<div style="margin-top:3px;color:var(--text-muted);">MPI: ' + esc(m.mpiTitle) + '</div>'
+    + '</div>'
+    + '<div class="field"><label>Your name <span style="color:var(--danger)">*</span></label><input id="mpi-act-by" type="text" placeholder="e.g. Kersti" autocomplete="off"/></div>'
+    + '<div class="field"><label>Outcome <span style="color:var(--danger)">*</span></label>'
+    + '<select id="mpi-act-outcome">'
+    + '<option value="">Select outcome...</option>'
+    + '<option value="Quarantined">Quarantined</option>'
+    + '<option value="Discarded">Discarded</option>'
+    + '<option value="Batch confirmed safe">Batch confirmed safe</option>'
+    + '<option value="Other">Other</option>'
+    + '</select></div>'
+    + '<div class="field"><label>Action taken <span style="color:var(--danger)">*</span></label><textarea id="mpi-act-note" placeholder="Describe the steps taken..."></textarea></div>'
+    + '<div class="field"><label>Resolved at</label><input type="text" value="' + esc(nowStr) + '" readonly style="background:var(--gray-light);color:var(--text-muted);cursor:default;"/></div>'
+    + '<div id="mpi-act-err" class="alert alert-danger" style="display:none;margin-top:8px;"></div>';
+  var footer = '<button class="btn btn-primary" style="flex:1;" onclick="saveMpiRecallAction()">Save action</button>'
+    + '<button class="btn" style="flex:1;margin-top:0;" onclick="closeUModal()">Cancel</button>';
+  openUModal('Record Recall Action', body, footer);
+}
+
+async function saveMpiRecallAction() {
+  var byEl = document.getElementById('mpi-act-by');
+  var outcomeEl = document.getElementById('mpi-act-outcome');
+  var noteEl = document.getElementById('mpi-act-note');
+  var errEl = document.getElementById('mpi-act-err');
+  var by = byEl ? byEl.value.trim() : '';
+  var outcome = outcomeEl ? outcomeEl.value : '';
+  var note = noteEl ? noteEl.value.trim() : '';
+  if (!by || !outcome || !note) {
+    if (errEl) { errEl.textContent = 'Please fill in all required fields.'; errEl.style.display = ''; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  var m = _mpiActionPending;
+  if (!m) return;
+  var payload = {
+    mpi_url: m.mpiUrl || null,
+    alert_type: m.alertType || null,
+    ingredient_id: m.ingId || null,
+    product: m.product || null,
+    brand: m.brand || null,
+    your_batch: m.yourBatch || null,
+    mpi_lot_numbers: m.mpiLotNumbers || null,
+    outcome: outcome,
+    action_note: note,
+    resolved_by: by,
+    resolved_at: new Date().toISOString()
+  };
+  var insRes = await db.from('recall_actions').insert(payload).select();
+  if (insRes.error) {
+    if (errEl) { errEl.textContent = 'Save failed: ' + (insRes.error.message || 'Unknown error'); errEl.style.display = ''; }
+    return;
+  }
+  closeUModal();
+  _mpiActionPending = null;
+  // Remove this match from cached result and re-render banner
+  if (_mpiLastResult) {
+    var key = m.alertType === 'red' ? 'redMatches' : 'amberMatches';
+    _mpiLastResult[key] = (_mpiLastResult[key] || []).filter(function(x) {
+      return !(x.mpiUrl === m.mpiUrl && String(x.ingId) === String(m.ingId));
+    });
+    saveCfgKey('mpi_recall_check', _mpiLastResult).catch(function() {});
+    renderMpiRecallBanner(_mpiLastResult);
+    _mpiSetHomeStatus(document.getElementById('mpi-home-status'), _mpiLastResult);
+  }
+}
+
 // ── 3. By customer / organisation — both use the Universal Customer Picker ─
 let _rc3SelectedCustomer = null;
 let _rc3SelectedOrg = null;
@@ -29578,13 +29890,14 @@ async function exportAllData() {
     'order_lines',
     'orders',
     'projects',
+    'recall_actions',
     'supplier_records',
     'tasks',
   ];
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.22',
+    app_version: 'v44.23',
     tables: {}
   };
 
