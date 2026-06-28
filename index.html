@@ -19731,7 +19731,6 @@ var _mpiLastResult = null;
 var _mpiActionPending = null;
 
 async function checkMpiRecalls(forceRefresh) {
-  var MPI_FEED = 'https://www.mpi.govt.nz/feed/food-recalls/';
   var CACHE_KEY = 'mpi_recall_check';
   var CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   var spinEl = document.getElementById('mpi-check-spinner');
@@ -19753,14 +19752,14 @@ async function checkMpiRecalls(forceRefresh) {
     }
   }
 
-  // Fetch MPI RSS feed
+  // Fetch MPI RSS feed via server-side proxy (avoids CORS)
   var feedText;
   try {
-    var res = await fetch(MPI_FEED);
+    var res = await fetch('/api/mpi-recalls');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     feedText = await res.text();
   } catch(e) {
-    var errResult = { lastChecked: new Date().toISOString(), error: 'MPI feed unavailable (' + e.message + ') — CORS or network block.', recallCount: 0, redMatches: [], amberMatches: [] };
+    var errResult = { lastChecked: new Date().toISOString(), error: 'MPI feed unavailable (' + e.message + ').', recallCount: 0, redMatches: [], amberMatches: [] };
     _mpiLastResult = errResult;
     renderMpiRecallBanner(errResult);
     _mpiSetHomeStatus(statusEl, errResult);
@@ -19788,7 +19787,7 @@ async function checkMpiRecalls(forceRefresh) {
     var pageText = '';
     try {
       if (link) {
-        var pr = await fetch(link);
+        var pr = await fetch('/api/mpi-recalls?url=' + encodeURIComponent(link));
         if (pr.ok) pageText = await pr.text();
       }
     } catch(e2) { /* page blocked — lot matching will use RSS title only */ }
