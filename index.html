@@ -19752,14 +19752,14 @@ async function checkMpiRecalls(forceRefresh) {
     }
   }
 
-  // Fetch MPI RSS feed via server-side proxy (avoids CORS)
-  var feedText;
+  // Fetch the MPI recalled products list page via server-side proxy
+  var listHtml;
   try {
     var res = await fetch('/api/mpi-recalls');
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    feedText = await res.text();
+    listHtml = await res.text();
   } catch(e) {
-    var errResult = { lastChecked: new Date().toISOString(), error: 'MPI feed unavailable (' + e.message + ').', recallCount: 0, redMatches: [], amberMatches: [] };
+    var errResult = { lastChecked: new Date().toISOString(), error: 'MPI recalls page unavailable (' + e.message + ').', recallCount: 0, redMatches: [], amberMatches: [] };
     _mpiLastResult = errResult;
     renderMpiRecallBanner(errResult);
     _mpiSetHomeStatus(statusEl, errResult);
@@ -19768,57 +19768,48 @@ async function checkMpiRecalls(forceRefresh) {
     return;
   }
 
-  // Parse RSS XML
-  var xmlParser = new DOMParser();
-  var xmlDoc = xmlParser.parseFromString(feedText, 'text/xml');
-  var rssItems = Array.from(xmlDoc.querySelectorAll('item'));
+  // Parse list page HTML and extract individual recall page links
+  var listDoc = new DOMParser().parseFromString(listHtml, 'text/html');
+  var recallUrls = [];
+  listDoc.querySelectorAll('a[href]').forEach(function(a) {
+    var href = a.getAttribute('href') || '';
+    // Must be a sub-page of /recalled-food-products/ (has a slug after the last slash)
+    if (!/\/recalled-food-products\/[^\s\/?#]+/.test(href)) return;
+    var abs = href.startsWith('http') ? href : 'https://www.mpi.govt.nz' + href;
+    if (!recallUrls.includes(abs)) recallUrls.push(abs);
+  });
 
-  // Fetch notice pages in parallel, extract lot numbers
-  var notices = await Promise.all(rssItems.map(async function(rssItem) {
-    var titleEl = rssItem.querySelector('title');
-    var rawTitle = titleEl ? (titleEl.textContent || '') : '';
-    // <link> in RSS 2.0 is a text node sibling, not an element child
-    var linkEl = rssItem.querySelector('link');
-    var link = '';
-    if (linkEl) {
-      link = (linkEl.textContent || '').trim();
-      if (!link && linkEl.nextSibling) link = (linkEl.nextSibling.nodeValue || '').trim();
-    }
-    var pageText = '';
+  // Fetch each recall page in parallel via proxy
+  var notices = await Promise.all(recallUrls.map(async function(url) {
+    var pageHtml = '';
     try {
-      if (link) {
-        var pr = await fetch('/api/mpi-recalls?url=' + encodeURIComponent(link));
-        if (pr.ok) pageText = await pr.text();
-      }
-    } catch(e2) { /* page blocked — lot matching will use RSS title only */ }
-    var haystack = (pageText || rawTitle).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-    var lotNumbers = [];
-    var lotRe = /(?:lot|batch|code)[:\s#]*([A-Z0-9][A-Z0-9\/\-\.]{1,30})/gi;
-    var lm;
-    while ((lm = lotRe.exec(haystack)) !== null) {
-      var lv = lm[1].trim();
-      if (!lotNumbers.includes(lv)) lotNumbers.push(lv);
-    }
-    return { title: rawTitle.trim(), link: link, lotNumbers: lotNumbers };
+      var pr = await fetch('/api/mpi-recalls?url=' + encodeURIComponent(url));
+      if (pr.ok) pageHtml = await pr.text();
+    } catch(e2) { /* page fetch failed — skip this notice */ }
+    // Extract h1 or title for display; strip all tags for text matching
+    var titleMatch = pageHtml.match(/<h1[^>]*>([^<]+)<\/h1>/i) || pageHtml.match(/<title>([^<|]+)/i);
+    var title = titleMatch ? titleMatch[1].trim() : url.split('/').pop().replace(/-/g, ' ');
+    var text = pageHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+    return { url: url, title: title, text: text };
   }));
 
-  // Match notices against ingredient stock
+  // Match each recall page against ingredient stock
   var redMatches = [];
   var amberMatches = [];
   for (var ni = 0; ni < notices.length; ni++) {
     var notice = notices[ni];
-    var noticeLow = notice.title.toLowerCase();
+    if (!notice.text) continue;
     for (var ii = 0; ii < (ings || []).length; ii++) {
       var ing = ings[ii];
       if (!ing.brand || !ing.product) continue;
       var brandL = ing.brand.toLowerCase().trim();
       var prodL = ing.product.toLowerCase().trim();
-      // Brand: all significant words (>2 chars) must appear in notice title
+      // Brand: all significant words (>2 chars) must appear in the page text
       var brandWords = brandL.split(/\s+/).filter(function(w) { return w.length > 2; });
-      if (!brandWords.length || !brandWords.every(function(w) { return noticeLow.includes(w); })) continue;
+      if (!brandWords.length || !brandWords.every(function(w) { return notice.text.includes(w); })) continue;
       // Product: at least one significant word must appear
       var prodWords = prodL.split(/\s+/).filter(function(w) { return w.length > 2; });
-      if (!prodWords.length || !prodWords.some(function(w) { return noticeLow.includes(w); })) continue;
+      if (!prodWords.length || !prodWords.some(function(w) { return notice.text.includes(w); })) continue;
       // Find the most recent cookie batch that used this ingredient
       var lastUsedInBatch = '';
       var myBatches = (batches || []).filter(function(b) {
@@ -19832,17 +19823,16 @@ async function checkMpiRecalls(forceRefresh) {
         product: ing.product,
         yourBatch: yourBatch,
         lastUsedInBatch: lastUsedInBatch,
-        mpiUrl: notice.link,
+        mpiUrl: notice.url,
         mpiTitle: notice.title,
-        mpiLotNumbers: notice.lotNumbers.join(', ')
+        mpiLotNumbers: ''
       };
-      // Red: your batch number exactly matches a recalled lot
-      if (yourBatch && notice.lotNumbers.some(function(lot) {
-        return lot.toLowerCase().replace(/[\s\-]/g, '') === yourBatch.toLowerCase().replace(/[\s\-]/g, '');
-      })) {
+      // Red: ingredient's own batch code found verbatim in the recall page text
+      if (yourBatch && yourBatch.length >= 3 && notice.text.includes(yourBatch.toLowerCase())) {
+        matchObj.mpiLotNumbers = yourBatch;
         redMatches.push(matchObj);
       } else {
-        // Amber: brand + product match but no exact lot confirmation
+        // Amber: brand + product match but batch not confirmed
         amberMatches.push(matchObj);
       }
     }

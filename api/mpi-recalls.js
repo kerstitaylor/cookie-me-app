@@ -5,7 +5,7 @@
 // GET /api/mpi-recalls          → fetches the MPI recall RSS feed
 // GET /api/mpi-recalls?url=...  → proxies the given URL (mpi.govt.nz only)
 
-const MPI_FEED = 'https://www.mpi.govt.nz/feed/food-recalls/';
+const MPI_FEED = 'https://www.mpi.govt.nz/food-safety-home/food-recalls-and-complaints/recalled-food-products';
 const ALLOWED_HOST = 'www.mpi.govt.nz';
 
 module.exports = async function handler(req, res) {
