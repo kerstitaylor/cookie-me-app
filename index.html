@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v47.0</title>
+<title>Cookie & Me — Kitchen Manager v47.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -16994,8 +16994,8 @@ function _prBuildPest(records) {
       + '<td>' + (d.date||'—') + '</td>'
       + '<td>' + (d.time||'—') + '</td>'
       + '<td>' + outcome + '</td>'
-      + '<td>' + (d.notes||'—') + '</td>'
-      + '<td>' + (d.by||'—') + '</td>'
+      + '<td>' + (d.issues||'—') + '</td>'
+      + '<td>' + (d.completedBy||'—') + '</td>'
       + '</tr>';
   });
   html += '</table>';
@@ -18314,8 +18314,9 @@ async function printRecordsDoc(type) {
   } else if (type === 'pest') {
     title = 'Pest Check Records';
     subtitle = 'Food Control Plan — Pest Control';
-    var res = await db.from('logs').select('*').eq('log_type','pest').order('id', {ascending:true});
-    var records = res.data || [];
+    var res = await db.from('logs').select('*').eq('log_type','checklist').order('id');
+    var records = ((res.data||[]).filter(function(r){ return r.data && r.data.type==='pest'; }));
+    records.sort(function(a,b){ var da=(a.data.date||'')+' '+(a.data.time||''); var db2=(b.data.date||'')+' '+(b.data.time||''); return da<db2?-1:da>db2?1:0; });
     if (from) records = records.filter(function(r){ return ((r.data||{}).date||'') >= from; });
     if (to)   records = records.filter(function(r){ return ((r.data||{}).date||'') <= to; });
     count = records.length;
@@ -29690,7 +29691,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v47.0',
+    app_version: 'v47.1',
     tables: {}
   };
 
