@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.22</title>
+<title>Cookie & Me — Kitchen Manager v44.23</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -29584,7 +29584,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.22',
+    app_version: 'v44.23',
     tables: {}
   };
 
@@ -30564,21 +30564,7 @@ async function saveChecklistEdit(id, type) {
         task = cn || 'Other'; detail = cn;
       } else { detail = detailInput ? detailInput.value.trim() : ''; }
       var displayTask = taskType === 'Other' ? task : (detail ? taskType + ' - ' + detail : taskType);
-      // Collect icing run from new structured sub-form
-      var iceMaterials = null;
-      var icingRun = null;
-      if (taskType === 'Ice') {
-        icingRun = collectIcingRunSubform(row);
-        if (icingRun && icingRun.decoration) {
-          iceMaterials = {
-            fondantItems: icingRun.decoration.fondantItems || [],
-            colours: icingRun.decoration.colours || [],
-            flavourings: icingRun.decoration.flavourings || [],
-            other: icingRun.decoration.other || []
-          };
-        }
-      }
-      if (taskType || batch || qty || fondant) activities.push({task: displayTask||'', taskType: taskType||'', detail: detail||'', batch: batch||'', qty:qty?parseInt(qty):null, fondant:fondant?parseFloat(fondant):null, iceMaterials: iceMaterials||null, icingRun: icingRun||null,
+      if (taskType || batch || qty || fondant) activities.push({task: displayTask||'', taskType: taskType||'', detail: detail||'', batch: batch||'', qty:qty?parseInt(qty):null, fondant:fondant?parseFloat(fondant):null, iceMaterials: null, icingRun: null,
         orderId: (row.querySelector('[data-recip-order]')||{}).value||null,
         campaignId: (row.querySelector('[data-recip-campaign]')||{}).value||null,
         nonOrderedType: (row.querySelector('[data-recip-not]')||{}).value||null
