@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v44.23</title>
+<title>Cookie & Me — Kitchen Manager v45.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -701,6 +701,8 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button onclick="dismissWaterBanner(true)" style="font-size:11px;padding:4px 10px;border:1px solid #1a5fa8;border-radius:99px;background:#1a5fa8;color:white;cursor:pointer;">Dismiss until I re-enable</button>
       </div>
     </div>
+
+    <div id="expiry-home-banner" style="display:none;margin:10px 12px 0;border-radius:var(--radius);padding:12px 14px;font-family:sans-serif;cursor:pointer;font-size:13px;font-weight:600;line-height:1.5;"></div>
 
     <!-- DASHBOARD STATS -->
     <div style="padding:12px 12px 0;">
@@ -8825,6 +8827,46 @@ function renderAlerts() {
   if (expiring.length) h += `<div class="alert alert-success" style="${alertStyle}" onclick="filterInvAlert('bb-soon')">🟡 BB expiring within 14 days: ${expiring.map(i=>i.cat+(i.brand?' ('+i.brand+')':'')).join(', ')} <span style="float:right;font-size:11px;opacity:0.7">tap to view →</span></div>`;
   if (openedSoon.length) h += `<div class="alert alert-success" style="${alertStyle}" onclick="filterInvAlert('uo-soon')">🟡 Use-by (opened) within 14 days: ${openedSoon.map(i=>i.cat+(i.brand?' ('+i.brand+')':'')).join(', ')} <span style="float:right;font-size:11px;opacity:0.7">tap to view →</span></div>`;
   el.innerHTML = h;
+  renderExpiryBanner();
+}
+function renderExpiryBanner() {
+  const banner = document.getElementById('expiry-home-banner');
+  if (!banner) return;
+  const now = new Date(), soon = new Date(Date.now()+14*86400000);
+  const active = activeIngs();
+  const expired = active.filter(i=>i.bb&&new Date(i.bb)<now);
+  const expiring = active.filter(i=>i.bb&&new Date(i.bb)>=now&&new Date(i.bb)<=soon);
+  const openedExpired = active.filter(i=>{
+    if(!i.opened_date)return false;
+    const ubo=calcUseByOpened(i); return ubo&&new Date(ubo)<now;
+  });
+  const openedSoon = active.filter(i=>{
+    if(!i.opened_date)return false;
+    const ubo=calcUseByOpened(i); return ubo&&new Date(ubo)>=now&&new Date(ubo)<=soon;
+  });
+  if (expired.length || openedExpired.length) {
+    const parts = [];
+    if (expired.length) parts.push(expired.length + ' ingredient' + (expired.length>1?'s':'') + ' past best before');
+    if (openedExpired.length) parts.push(openedExpired.length + ' ingredient' + (openedExpired.length>1?'s':'') + ' use-by (opened) expired');
+    banner.style.display = 'block';
+    banner.style.background = '#fde8e8';
+    banner.style.border = '1px solid #f5a8a8';
+    banner.style.color = '#b91c1c';
+    banner.innerHTML = '🔴 ' + parts.join(', ') + ' — tap to view';
+    banner.onclick = function() { go('inv'); setTimeout(function(){ filterInvAlert(expired.length?'bb-expired':'uo-expired'); }, 50); };
+  } else if (expiring.length || openedSoon.length) {
+    const parts = [];
+    if (expiring.length) parts.push(expiring.length + ' ingredient' + (expiring.length>1?'s':'') + ' expiring soon');
+    if (openedSoon.length) parts.push(openedSoon.length + ' ingredient' + (openedSoon.length>1?'s':'') + ' use-by (opened) expiring soon');
+    banner.style.display = 'block';
+    banner.style.background = '#fff8e1';
+    banner.style.border = '1px solid #ffd54f';
+    banner.style.color = '#c77700';
+    banner.innerHTML = '🟡 ' + parts.join(', ') + ' — tap to view';
+    banner.onclick = function() { go('inv'); setTimeout(function(){ filterInvAlert(expiring.length?'bb-soon':'uo-soon'); }, 50); };
+  } else {
+    banner.style.display = 'none';
+  }
 }
 
 let alertFilter = null;
@@ -9712,12 +9754,27 @@ function loadRecipe() {
     const autoId = matched.length ? matched[0].id : '';
     const autoBatch = matched.length ? (matched[0].batch||'') : '';
     const isOpen = matchOpened.length > 0;
+    let expiryTag = '';
+    if (matched.length && (matched[0].bb || matched[0].opened_date)) {
+      const _now = new Date(), _soon = new Date(Date.now()+14*86400000);
+      const _ubo = matched[0].opened_date ? calcUseByOpened(matched[0]) : null;
+      const bbExp = matched[0].bb && new Date(matched[0].bb) < _now;
+      const uboExp = _ubo && new Date(_ubo) < _now;
+      const bbSoon = !bbExp && matched[0].bb && new Date(matched[0].bb) <= _soon;
+      const uboSoon = !uboExp && _ubo && new Date(_ubo) <= _soon;
+      if (bbExp || uboExp) {
+        expiryTag = ' <span style="color:var(--danger);font-weight:600">⚠️ Expired</span>';
+      } else if (bbSoon || uboSoon) {
+        const soonDate = (bbSoon && uboSoon) ? (matched[0].bb <= _ubo ? matched[0].bb : _ubo) : (bbSoon ? matched[0].bb : _ubo);
+        expiryTag = ' <span style="color:#c77700;font-weight:600">⚡ Use by ' + fmtIngDate(soonDate) + '</span>';
+      }
+    }
     const stockInfo = matched.length
       ? '<span style="font-size:11px;color:' + (isOpen?'var(--success)':'var(--text-muted)') + ';font-family:sans-serif">'
         + (isOpen ? 'Open packet' : 'In stock') + ': #' + matched[0].id
         + (matched[0].brand?' · '+matched[0].brand:'')
         + (matched[0].batch?' · lot: '+matched[0].batch:'')
-        + '</span>'
+        + '</span>' + expiryTag
       : '<span style="font-size:11px;color:var(--danger);font-family:sans-serif">Not in stock — enter lot no. manually</span>';
 
     const isEggIng = (ing.category||'').toLowerCase().startsWith('egg');
@@ -29584,7 +29641,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v44.23',
+    app_version: 'v45.0',
     tables: {}
   };
 
