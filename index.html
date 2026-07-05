@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v45.1</title>
+<title>Cookie & Me — Kitchen Manager v46.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18769,7 +18769,7 @@ function _recallResolveBasket(basket) {
   const affected = new Map(); // batchNum -> {batch, wholeBatch, icingEntryIds:Set|null, reasons:Set}
 
   function ensure(b) {
-    if (!affected.has(b.num)) affected.set(b.num, {batch: b, wholeBatch: false, icingEntryIds: new Set(), reasons: new Set()});
+    if (!affected.has(b.num)) affected.set(b.num, {batch: b, wholeBatch: false, icingEntryIds: new Set(), icingIngredients: new Set(), reasons: new Set()});
     return affected.get(b.num);
   }
   function markWhole(b, reason) {
@@ -18778,13 +18778,14 @@ function _recallResolveBasket(basket) {
     e.icingEntryIds = null;
     e.reasons.add(reason);
   }
-  function markIcing(b, entryId, reason) {
+  function markIcing(b, entryId, reason, ingredientLabel) {
     const e = ensure(b);
     if (!e.wholeBatch) {
       if (!e.icingEntryIds) e.icingEntryIds = new Set();
       e.icingEntryIds.add(String(entryId));
     }
     e.reasons.add(reason);
+    if (ingredientLabel) e.icingIngredients.add(ingredientLabel);
   }
 
   // Lots — base ingredients match by ingBatch (historical lot string);
@@ -18804,7 +18805,9 @@ function _recallResolveBasket(basket) {
           if (d.ingId == null) return;
           const ingRec = ings.find(x => x.id === d.ingId);
           if (ingRec && (ingRec.batch || '').trim().toLowerCase() === lotNorm) {
-            markIcing(b, e.id, `Lot ${item.lot} used in icing`);
+            const ingName = [ingRec.brand, ingRec.product || ingRec.category].filter(Boolean).join(' ') || ingRec.category || d.type || 'Icing ingredient';
+            const ingLabel = ingName + (d.type ? ' (' + d.type + ')' : '') + ' · lot ' + item.lot;
+            markIcing(b, e.id, `Lot ${item.lot} used in icing`, ingLabel);
           }
         });
       });
@@ -19257,6 +19260,7 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
     affectedArr.forEach(info => {
       const b = info.batch;
       const ingLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`).join('<br>');
+      const icingIngLines = info.icingIngredients && info.icingIngredients.size ? [...info.icingIngredients].map(x => esc(x)).join('<br>') : '';
       // When people-filters intersected the scope, show the in-scope quantity
       // for those people rather than the whole batch yield.
       const cookieCount = combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (b.yield || '?');
@@ -19265,6 +19269,7 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
         <div>${esc(b.recipe || '')}${b.variation ? ' (' + esc(b.variation) + ')' : ''} · ${cookieCount} cookies</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Why affected: ${esc([...info.reasons].join('; '))}</div>
         ${ingLines ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${ingLines}</div>` : ''}
+        ${icingIngLines ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">🎨 ${icingIngLines}</div>` : ''}
       </div>`;
     });
     h += `</div>`;
@@ -19346,7 +19351,8 @@ function _recallBuildSavePayload() {
       num: info.batch.num,
       date: info.batch.date || '',
       cookies: combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (info.batch.yield || 0),
-      reasons: [...info.reasons]
+      reasons: [...info.reasons],
+      icingIngredients: info.icingIngredients ? [...info.icingIngredients] : []
     })),
     contacts: combined.contacts.map(c => ({ name: c.name, phone: c.phone, email: c.email, lines: c.lines.map(l => l.line) })),
     stockToPull: stockToPull
@@ -19425,12 +19431,14 @@ function _recallReportPrint() {
     affectedArr.forEach(info => {
       const b = info.batch;
       const ingLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`).join('<br>');
+      const icingIngLines = info.icingIngredients && info.icingIngredients.size ? [...info.icingIngredients].map(x => esc(x)).join('<br>') : '';
       const cookieCount = combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (b.yield || '?');
       body += `<div class="batch-block">
         <div style="font-weight:700;">${esc(b.num)} — ${esc(b.date || '')}</div>
         <div>${esc(b.recipe || '')}${b.variation ? ' (' + esc(b.variation) + ')' : ''} · ${cookieCount} cookies</div>
         <div style="font-size:11px;color:#666;margin-top:2px;">Why affected: ${esc([...info.reasons].join('; '))}</div>
         ${ingLines ? `<div style="font-size:11px;color:#666;margin-top:2px;">${ingLines}</div>` : ''}
+        ${icingIngLines ? `<div style="font-size:11px;color:#666;margin-top:2px;">🎨 ${icingIngLines}</div>` : ''}
       </div>`;
     });
   }
@@ -29662,7 +29670,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v45.1',
+    app_version: 'v46.0',
     tables: {}
   };
 
