@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v46.0</title>
+<title>Cookie & Me — Kitchen Manager v47.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -19259,7 +19259,17 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
       <div class="card-title">🍪 Affected batches</div>`;
     affectedArr.forEach(info => {
       const b = info.batch;
-      const ingLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`).join('<br>');
+      const baseIngLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`);
+      const icingDecorLines = [];
+      (b.icingEntries || []).forEach(e => {
+        (e.decoration || []).forEach(d => {
+          const ingRec = d.ingId ? ings.find(x => x.id === d.ingId) : null;
+          const dispName = ingRec ? ([ingRec.brand, ingRec.product || ingRec.category].filter(Boolean).join(' ') || ingRec.category || '') : (d.ingName || d.type || 'Icing ingredient');
+          const lot = ingRec ? (ingRec.batch || '') : '';
+          icingDecorLines.push('🎨 ' + esc(dispName) + (d.type ? ' (' + esc(d.type) + ')' : '') + (lot ? ' · lot ' + esc(lot) : ''));
+        });
+      });
+      const ingLines = [...baseIngLines, ...icingDecorLines].join('<br>');
       const icingIngLines = info.icingIngredients && info.icingIngredients.size ? [...info.icingIngredients].map(x => esc(x)).join('<br>') : '';
       // When people-filters intersected the scope, show the in-scope quantity
       // for those people rather than the whole batch yield.
@@ -19430,7 +19440,17 @@ function _recallReportPrint() {
     body += `<h2>🍪 Affected batches</h2>`;
     affectedArr.forEach(info => {
       const b = info.batch;
-      const ingLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`).join('<br>');
+      const baseIngLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`);
+      const icingDecorLines = [];
+      (b.icingEntries || []).forEach(e => {
+        (e.decoration || []).forEach(d => {
+          const ingRec = d.ingId ? ings.find(x => x.id === d.ingId) : null;
+          const dispName = ingRec ? ([ingRec.brand, ingRec.product || ingRec.category].filter(Boolean).join(' ') || ingRec.category || '') : (d.ingName || d.type || 'Icing ingredient');
+          const lot = ingRec ? (ingRec.batch || '') : '';
+          icingDecorLines.push('🎨 ' + esc(dispName) + (d.type ? ' (' + esc(d.type) + ')' : '') + (lot ? ' · lot ' + esc(lot) : ''));
+        });
+      });
+      const ingLines = [...baseIngLines, ...icingDecorLines].join('<br>');
       const icingIngLines = info.icingIngredients && info.icingIngredients.size ? [...info.icingIngredients].map(x => esc(x)).join('<br>') : '';
       const cookieCount = combined.totalCookiesOverride != null ? (info.inScopeQty || 0) : (b.yield || '?');
       body += `<div class="batch-block">
@@ -29670,7 +29690,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v46.0',
+    app_version: 'v47.0',
     tables: {}
   };
 
