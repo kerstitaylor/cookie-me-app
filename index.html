@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v45.0</title>
+<title>Cookie & Me — Kitchen Manager v45.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -19612,7 +19612,7 @@ function _recallNoMatchHtml(q) {
         <div style="font-size:12px;font-weight:700;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">Did you mean…?</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px">` +
         suggestions.map(s =>
-          `<button onclick="document.getElementById('rc1-q').value=${JSON.stringify(s.display)};doRecallByIngredient();"
+          `<button class="rc-suggest-chip" data-value="${esc(s.display)}" data-target="rc1-q" data-fn="doRecallByIngredient"
             style="padding:5px 12px;border:1px solid var(--border);border-radius:99px;background:var(--white);font-size:13px;font-family:sans-serif;cursor:pointer;color:var(--navy);transition:all 0.15s;"
             onmouseover="this.style.background='var(--gray-light)'" onmouseout="this.style.background='var(--white)'"
           >${esc(s.display)} <span style="font-size:10px;color:var(--text-muted);font-weight:400">${s.category}</span></button>`
@@ -19640,7 +19640,16 @@ function doRecallByIngredient() {
   const mode = _recallDetectMode(q);
   const groups = mode==='lot' ? _recallSearchByLot(q) : _recallSearchByIngredientName(q);
 
-  if (!groups.length) { el.innerHTML = _recallNoMatchHtml(q); return; }
+  if (!groups.length) {
+    el.innerHTML = _recallNoMatchHtml(q);
+    el.querySelectorAll('.rc-suggest-chip').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.getElementById(this.dataset.target).value = this.dataset.value;
+        window[this.dataset.fn]();
+      });
+    });
+    return;
+  }
 
   _recallIngGroups = groups;
   let h = `<div class="alert alert-warning" style="font-weight:600">${groups.length} lot${groups.length>1?'s':''} found — tick the lots to trace, then add to the basket</div>`;
@@ -19705,7 +19714,7 @@ function _recallRenderBatchListWithAdd(el, matches, emptyMsg, q) {
           <div style="font-size:12px;font-weight:700;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">Did you mean…?</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px">` +
           suggestions.map(s =>
-            `<button onclick="document.getElementById('rc2-q').value=${JSON.stringify(s.display)};doRecallByBatch();"
+            `<button class="rc-suggest-chip" data-value="${esc(s.display)}" data-target="rc2-q" data-fn="doRecallByBatch"
               style="padding:5px 12px;border:1px solid var(--border);border-radius:99px;background:var(--white);font-size:13px;font-family:sans-serif;cursor:pointer;color:var(--navy);transition:all 0.15s;"
               onmouseover="this.style.background='var(--gray-light)'" onmouseout="this.style.background='var(--white)'"
             >${esc(s.display)} <span style="font-size:10px;color:var(--text-muted);font-weight:400">${s.category}</span></button>`
@@ -19719,6 +19728,12 @@ function _recallRenderBatchListWithAdd(el, matches, emptyMsg, q) {
           • Try a partial batch number (e.g. "B001").
         </div>`;
     el.innerHTML = `<div class="card"><div class="empty">${esc(emptyMsg)}</div>${suggestHtml}</div>`;
+    el.querySelectorAll('.rc-suggest-chip').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.getElementById(this.dataset.target).value = this.dataset.value;
+        window[this.dataset.fn]();
+      });
+    });
     return;
   }
   let h = `<div class="alert alert-warning" style="font-weight:600">${matches.length} batch${matches.length>1?'es':''} matched</div>`;
@@ -20018,7 +20033,7 @@ async function doRecall() {
           <div style="font-size:12px;font-weight:700;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">Did you mean…?</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px">` +
           suggestions.map(s =>
-            `<button onclick="document.getElementById('rc-q').value=${JSON.stringify(s.display)};doRecall();"
+            `<button class="rc-suggest-chip" data-value="${esc(s.display)}" data-target="rc-q" data-fn="doRecall"
               style="padding:5px 12px;border:1px solid var(--border);border-radius:99px;background:var(--white);font-size:13px;font-family:sans-serif;cursor:pointer;color:var(--navy);transition:all 0.15s;"
               onmouseover="this.style.background='var(--gray-light)'" onmouseout="this.style.background='var(--white)'"
             >${esc(s.display)} <span style="font-size:10px;color:var(--text-muted);font-weight:400">${s.category}</span></button>`
@@ -20035,6 +20050,12 @@ async function doRecall() {
       <div class="empty" style="line-height:1.6">No batches found for "<strong>${esc(q)}</strong>".</div>
       ${suggestHtml}
     </div>`;
+    el.querySelectorAll('.rc-suggest-chip').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.getElementById(this.dataset.target).value = this.dataset.value;
+        window[this.dataset.fn]();
+      });
+    });
     _recallLastMb = null;
     return;
   }
@@ -29641,7 +29662,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v45.0',
+    app_version: 'v45.1',
     tables: {}
   };
 
