@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v48.0</title>
+<title>Cookie & Me — Kitchen Manager v49.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -4411,6 +4411,8 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           <option value="">All leads</option>
           <option value="unassigned">Unassigned</option>
         </select>
+        <button class="btn btn-sm" onclick="openLeadsPrintModal()" style="font-size:11px;">🖨 Print report</button>
+        <button class="btn btn-sm" onclick="exportLeadsCSV()" style="font-size:11px;">⬇ Export CSV</button>
       </div>
 
       <div id="lead-table-wrap" style="overflow-x:auto;"></div>
@@ -4789,6 +4791,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;" onclick="printRecordsDoc('orders')">Orders</button>
         <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;" onclick="printRecordsDoc('campaigns')">Campaigns</button>
         <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;" onclick="printRecordsDoc('b2b_sales')">B2B Sales</button>
+        <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;" onclick="printRecordsDoc('leads')">Leads</button>
         <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;grid-column:1/-1;" onclick="printRecordsDoc('corp_gifting')">🎁 Corporate Gifting Register</button>
       </div>
       <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;width:100%;margin-bottom:12px;" onclick="_activeSubSection['records']='fin-report';go('records')">💰 Financial Report</button>
@@ -4830,6 +4833,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="btn" onclick="go('hist');setTimeout(()=>goHist('hist-orders'),60)">Orders</button>
         <button class="btn" onclick="go('hist');setTimeout(()=>goHist('hist-campaigns'),60)">Campaigns</button>
         <button class="btn" onclick="go('customers');setTimeout(()=>goCust('cust-b2b'),60)">B2B Sales</button>
+        <button class="btn" onclick="go('leads')">Leads</button>
         <button class="btn" style="grid-column:1/-1;" onclick="_activeSubSection['records']='corp-gifting';go('records')">🎁 Corporate Gifting Register</button>
       </div>
       <button class="btn" style="width:100%;margin-top:6px;" onclick="_activeSubSection['records']='fin-report';go('records')">💰 Financial Report</button>
@@ -17300,6 +17304,42 @@ function _prBuildCustomers(customers) {
   return html;
 }
 
+function _prBuildLeads(list, includeLogs) {
+  if (!list.length) return '<p style="color:#888;font-style:italic">No leads found.</p>';
+  var html = '<table><tr><th>Name</th><th>Company</th><th>Source</th><th>Status</th><th>Est. Qty</th><th>Est. Value</th><th>Next Action</th><th>Due Date</th><th>Starred</th></tr>';
+  list.forEach(function(l) {
+    html += '<tr>'
+      + '<td>' + esc(l.name||'—') + '</td>'
+      + '<td>' + esc(l.company||'—') + '</td>'
+      + '<td>' + esc(l.source||'—') + '</td>'
+      + '<td>' + esc(l.status||'—') + '</td>'
+      + '<td>' + (l.est_quantity != null && l.est_quantity !== '' ? esc(l.est_quantity) : '—') + '</td>'
+      + '<td>' + (l.est_value != null && l.est_value !== '' ? esc(l.est_value) : '—') + '</td>'
+      + '<td>' + esc(l.next_action||'—') + '</td>'
+      + '<td>' + (l.next_action_due ? fmtDate(l.next_action_due) : '—') + '</td>'
+      + '<td>' + (l.starred ? '★' : '') + '</td>'
+      + '</tr>';
+  });
+  html += '</table>';
+
+  if (includeLogs) {
+    var logSections = '';
+    list.forEach(function(l) {
+      var logs = leadMessageLogs[l.id] || [];
+      if (!logs.length) return;
+      logSections += '<div style="margin:6px 0 12px 16px;">'
+        + '<h3>' + esc(l.name||'Lead') + ' — Message Log</h3>'
+        + '<table><tr><th>Label</th><th>Date</th><th>Content</th></tr>'
+        + logs.map(function(m) {
+            return '<tr><td>' + esc(m.label||'—') + '</td><td>' + (m.created_at ? fmtDate((m.created_at||'').slice(0,10)) : '—') + '</td><td>' + esc(m.content||'') + '</td></tr>';
+          }).join('')
+        + '</table></div>';
+    });
+    if (logSections) html += '<h2>Message Logs</h2>' + logSections;
+  }
+  return html;
+}
+
 // Pre-compute: orders (one per page)
 function _prBuildOrders(orderArr, orderLinesArr, customers) {
   if (!orderArr.length) return '<p style="color:#888;font-style:italic">No orders found for this date range.</p>';
@@ -18430,6 +18470,12 @@ async function printRecordsDoc(type) {
     var custList = (cfg.customers || []).slice();
     count = custList.length;
     body = _prBuildCustomers(custList);
+
+  } else if (type === 'leads') {
+    title = 'Lead Records';
+    subtitle = 'Sales Records — All Leads';
+    count = leads.length;
+    body = _prBuildLeads(leads.slice(), false);
 
   } else if (type === 'orders') {
     title = 'Order Records';
@@ -26602,6 +26648,47 @@ async function _doInsertLeadQuick(fields) {
   updateLeadsBadge();
 }
 
+// ── Print report + CSV export (respects on-screen filters) ──
+function openLeadsPrintModal() {
+  openUModal(
+    'Print leads report',
+    '<p style="font-size:13px;font-family:sans-serif;">Include message log entries in the printed report?</p>',
+    '<button class="btn" style="flex:1" onclick="printLeadsReport(false)">Summary only</button>'
+    + '<button class="btn btn-primary" style="flex:1" onclick="printLeadsReport(true)">Include message logs</button>'
+  );
+}
+
+async function printLeadsReport(includeLogs) {
+  closeUModal();
+  var list = getFilteredLeads();
+  if (includeLogs) {
+    var toLoad = list.filter(function(l) { return !leadMessageLogs[l.id]; });
+    await Promise.all(toLoad.map(function(l) { return loadLeadMessageLogs(l.id); }));
+  }
+  var version = (document.title.match(/v[\d.]+/) || [''])[0] || '';
+  var now = new Date().toLocaleString('en-NZ',{day:'2-digit',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  var styles = _prSharedStyles();
+  function secH(title, sub) {
+    return '<div class="hdr"><div class="hdr-left"><div class="brand-cookie">Cookie &amp; Me</div><div class="brand-sub">LEADS REPORT '+version+'</div><h1 style="margin-top:6px">'+title+'</h1>'+(sub?'<p>'+sub+'</p>':'')+'<p>Generated: '+now+'</p></div><button class="no-print" onclick="window.print()" style="padding:8px 16px;background:#122640;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">&#x1F5A8; Print / Save PDF</button></div>';
+  }
+  var hdr = secH('Leads Report', includeLogs ? 'Includes message log entries' : 'Summary only');
+  var body = _prBuildLeads(list, includeLogs);
+  _prOpenWindow('Leads_Report', styles, hdr, body, _prFooter(version, now));
+}
+
+function exportLeadsCSV() {
+  var list = getFilteredLeads();
+  var headers = ['Name','Company','Source','Status','Est. Qty','Est. Value','Next Action','Due Date','Starred'];
+  var rows = list.map(function(l) {
+    return [
+      l.name||'', l.company||'', l.source||'', l.status||'',
+      l.est_quantity!=null ? l.est_quantity : '', l.est_value!=null ? l.est_value : '',
+      l.next_action||'', l.next_action_due||'', l.starred ? 'Yes' : ''
+    ];
+  });
+  downloadCSV('leads_' + new Date().toISOString().slice(0,10) + '.csv', headers, rows);
+}
+
 // ═══════════════════════════════════════════════════════
 // COLLECTION — Navigation
 // ═══════════════════════════════════════════════════════
@@ -30218,7 +30305,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v48.0',
+    app_version: 'v49.0',
     tables: {}
   };
 
