@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v49.0</title>
+<title>Cookie & Me — Kitchen Manager v49.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -26671,7 +26671,18 @@ async function printLeadsReport(includeLogs) {
   function secH(title, sub) {
     return '<div class="hdr"><div class="hdr-left"><div class="brand-cookie">Cookie &amp; Me</div><div class="brand-sub">LEADS REPORT '+version+'</div><h1 style="margin-top:6px">'+title+'</h1>'+(sub?'<p>'+sub+'</p>':'')+'<p>Generated: '+now+'</p></div><button class="no-print" onclick="window.print()" style="padding:8px 16px;background:#122640;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">&#x1F5A8; Print / Save PDF</button></div>';
   }
-  var hdr = secH('Leads Report', includeLogs ? 'Includes message log entries' : 'Summary only');
+  var campaignLabel = 'All campaigns';
+  if (leadCampaignFilter === 'unassigned') {
+    campaignLabel = 'Unassigned only';
+  } else if (leadCampaignFilter) {
+    var _prCamp = (campaigns||[]).find(function(c) { return String(c.id) === String(leadCampaignFilter); });
+    campaignLabel = _prCamp ? _prCamp.name : leadCampaignFilter;
+  }
+  var statusLabel = leadStatusFilter.length === LEAD_STATUSES.length ? 'All' : leadStatusFilter.join(', ');
+  var searchLabel = leadSearchQuery ? '"' + leadSearchQuery + '"' : '—';
+  var filterSummary = 'Campaign: ' + esc(campaignLabel) + ' · Status: ' + esc(statusLabel) + ' · Search: ' + esc(searchLabel);
+  var subLine = (includeLogs ? 'Includes message log entries' : 'Summary only') + '</p><p>' + filterSummary;
+  var hdr = secH('Leads Report', subLine);
   var body = _prBuildLeads(list, includeLogs);
   _prOpenWindow('Leads_Report', styles, hdr, body, _prFooter(version, now));
 }
@@ -30305,7 +30316,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v49.0',
+    app_version: 'v49.1',
     tables: {}
   };
 
