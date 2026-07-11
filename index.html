@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v49.1</title>
+<title>Cookie & Me — Kitchen Manager v50.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -26701,6 +26701,142 @@ function exportLeadsCSV() {
 }
 
 // ═══════════════════════════════════════════════════════
+// LEADS — Campaign detail card
+// ═══════════════════════════════════════════════════════
+let campLeadsShowAll = false; // client-side toggle: reveal Converted/Lost-Ghosted leads in the campaign card
+
+function popCampLeadQuickAddSource() {
+  selOpts('camp-lead-qa-source', cfg.leadSources||[], false, 'Select source...', null);
+  const srcSel = document.getElementById('camp-lead-qa-source');
+  if (srcSel && !srcSel.querySelector('option[value="Other"]')) {
+    srcSel.insertAdjacentHTML('beforeend', '<option value="Other">Other</option>');
+  }
+}
+
+function renderCampLeadsCard() {
+  const bodyEl = document.getElementById('camp-leads-card-body');
+  if (!bodyEl) return;
+  const all = (leads||[]).filter(function(l) { return String(l.campaign_id) === String(activeCampaignId); });
+  const hidden = all.filter(function(l) { return l.status === 'Converted' || l.status === 'Lost/Ghosted'; });
+  const visible = campLeadsShowAll ? all : all.filter(function(l) { return l.status !== 'Converted' && l.status !== 'Lost/Ghosted'; });
+  var html = '';
+  if (hidden.length) {
+    html += '<div style="margin-bottom:8px;"><a href="javascript:void(0)" onclick="toggleCampLeadsShowAll()" style="font-size:11px;color:var(--navy);font-family:sans-serif;text-decoration:underline;">'
+      + (campLeadsShowAll ? 'Hide converted/lost' : 'Show converted/lost (' + hidden.length + ')') + '</a></div>';
+  }
+  html += !visible.length
+    ? '<div class="empty">No leads yet for this campaign.</div>'
+    : visible.map(_campLeadRowHtml).join('');
+  bodyEl.innerHTML = html;
+  const countEl = document.getElementById('camp-leads-count');
+  if (countEl) countEl.textContent = '(' + all.length + ')';
+}
+
+function toggleCampLeadsShowAll() {
+  campLeadsShowAll = !campLeadsShowAll;
+  renderCampLeadsCard();
+}
+
+function _campLeadRowHtml(l) {
+  const cls = LEAD_STATUS_COLOUR[l.status] || 'tag-gray';
+  const statusOpts = LEAD_STATUSES.map(function(s) {
+    return '<option value="' + s + '"' + (s===l.status?' selected':'') + '>' + s + '</option>';
+  }).join('');
+  const logOpen = !!leadLogExpanded[l.id];
+  const overdue = l.next_action_due && l.status!=='Converted' && l.status!=='Lost/Ghosted' && l.next_action_due<=today();
+  const nextActionLine = [l.next_action||'', l.next_action_due?fmtDate(l.next_action_due):''].filter(Boolean).join(' · ') || '—';
+  return '<div style="border-bottom:1px solid var(--border);padding:8px 0;">'
+    + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+    + '<div style="flex:1;min-width:100px;font-weight:600;font-family:sans-serif;font-size:13px;">' + esc(l.name||'—')
+    + (l.company ? ' <span style="font-weight:400;color:var(--text-muted);font-size:11px;">· ' + esc(l.company) + '</span>' : '') + '</div>'
+    + '<select onchange="campOnLeadStatusChange(this,\'' + l.id + '\')" class="tag ' + cls + '" style="border:none;font-weight:600;font-size:11px;">' + statusOpts + '</select>'
+    + '<span style="font-size:11px;font-family:sans-serif;' + (overdue?'color:var(--danger);font-weight:700;':'color:var(--text-muted);') + '">' + esc(nextActionLine) + '</span>'
+    + '<span style="cursor:pointer;" onclick="toggleLeadStar(\'' + l.id + '\').then(renderCampLeadsCard)">' + (l.starred ? '⭐' : '☆') + '</span>'
+    + '<span style="cursor:pointer;" onclick="toggleLeadNeedsReply(\'' + l.id + '\').then(renderCampLeadsCard)" title="Needs reply">' + (l.needs_reply ? '🔴' : '⚪') + '</span>'
+    + '<button class="btn btn-sm" onclick="toggleLeadLog(\'' + l.id + '\').then(renderCampLeadsCard)" style="font-size:10px;">' + (logOpen ? 'Hide log ▲' : 'Log ▼') + '</button>'
+    + '</div>'
+    + (logOpen ? '<div style="margin-top:6px;background:var(--white);border-radius:var(--radius);">' + _campLeadLogPanelHtml(l) + '</div>' : '')
+    + '</div>';
+}
+
+// Reuses renderLeadLogPanel() verbatim, only adjusting the "+ Add log entry" button so it
+// refreshes this card afterward instead of the (not-visible) main tab's #lead-table-wrap.
+function _campLeadLogPanelHtml(l) {
+  const html = renderLeadLogPanel(l);
+  return html.replace(
+    "addLeadLogEntry('" + l.id + "')",
+    "addLeadLogEntry('" + l.id + "').then(renderCampLeadsCard)"
+  );
+}
+
+// Lightweight equivalent of onLeadStatusChange() scoped to this card — same updateLead() call,
+// but refreshes the campaign card instead of the main tab's #lead-table-wrap.
+async function campOnLeadStatusChange(sel, leadId) {
+  await updateLead(leadFindId(leadId), { status: sel.value });
+  renderCampLeadsCard();
+  updateLeadsBadge();
+}
+
+function viewCampLeadsInTab(campId) {
+  go('leads');
+  leadCampaignFilter = campId;
+  popLeadCampaignFilter();
+  renderLeadTable();
+}
+
+// ── Quick add (scoped to activeCampaignId) — reuses findLeadDuplicate()/_doInsertLeadQuick() ──
+let _pendingCampLeadQuickAdd = null;
+
+function _clearCampLeadQuickAddFields() {
+  ['camp-lead-qa-name','camp-lead-qa-phone','camp-lead-qa-email'].forEach(function(id) {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const srcOtherEl = document.getElementById('camp-lead-qa-source-other');
+  if (srcOtherEl) { srcOtherEl.value = ''; srcOtherEl.style.display = 'none'; }
+  const srcSelEl = document.getElementById('camp-lead-qa-source');
+  if (srcSelEl) srcSelEl.value = '';
+}
+
+async function addCampLeadQuick() {
+  const name = (document.getElementById('camp-lead-qa-name')||{value:''}).value.trim();
+  if (!name) { alert('Please enter a name.'); return; }
+  const phone = (document.getElementById('camp-lead-qa-phone')||{value:''}).value.trim();
+  const email = (document.getElementById('camp-lead-qa-email')||{value:''}).value.trim();
+  const srcSel = (document.getElementById('camp-lead-qa-source')||{value:''}).value;
+  const srcOther = (document.getElementById('camp-lead-qa-source-other')||{value:''}).value.trim();
+  const source = srcSel === 'Other' ? srcOther : srcSel;
+
+  const fields = {
+    name, phone: phone||null, email: email||null, source: source||null,
+    campaign_id: activeCampaignId, status: 'New', starred: false, needs_reply: false, completed: false
+  };
+
+  const dupe = findLeadDuplicate(name, phone, email);
+  if (dupe) {
+    _pendingCampLeadQuickAdd = fields;
+    openUModal(
+      'Possible duplicate',
+      '<p style="font-size:13px;font-family:sans-serif;">This looks similar to an existing ' + dupe.type + ': <strong>' + esc(dupe.name) + '</strong> — add anyway?</p>',
+      '<button class="btn btn-primary" style="flex:1" onclick="campConfirmAddLeadAnyway()">Add anyway</button>'
+      + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>'
+    );
+    return;
+  }
+  await _doInsertLeadQuick(fields);
+  _clearCampLeadQuickAddFields();
+  renderCampLeadsCard();
+}
+
+async function campConfirmAddLeadAnyway() {
+  closeUModal();
+  if (!_pendingCampLeadQuickAdd) return;
+  await _doInsertLeadQuick(_pendingCampLeadQuickAdd);
+  _pendingCampLeadQuickAdd = null;
+  _clearCampLeadQuickAddFields();
+  renderCampLeadsCard();
+}
+
+// ═══════════════════════════════════════════════════════
 // COLLECTION — Navigation
 // ═══════════════════════════════════════════════════════
 function goCollection(sub) {
@@ -28285,6 +28421,7 @@ function openCampBoxAssign(engId) {
 
 function renderCampDetailView(el, c) {
   const engs = campEngagements.filter(e=>e.campaign_id===c.id);
+  const campLeadsForCamp = (leads||[]).filter(l => String(l.campaign_id) === String(c.id));
   const soldBoxes = engs.filter(e=>e.box_type==='Sold').reduce((s,e)=>s+(e.boxes||0),0);
   const giftedBoxes = engs.filter(e=>e.box_type==='Gifted').reduce((s,e)=>s+(e.boxes||0),0);
   const disposedBoxes = engs.filter(e=>e.box_type==='Disposed').reduce((s,e)=>s+(e.boxes||0),0);
@@ -28421,6 +28558,34 @@ function renderCampDetailView(el, c) {
         ${col.phone||col.email?`<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;">${[col.phone,col.email].filter(Boolean).join(' · ')}</div>`:''}
       </div>`).join('')}
     </div>`:''}
+
+    <!-- Leads (collapsible) -->
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleCampSection('camp-leads-body','camp-leads-toggle')">
+        <div class="card-title" style="margin:0;">Leads <span id="camp-leads-count" style="font-size:12px;font-weight:400;color:var(--text-muted);">(${campLeadsForCamp.length})</span></div>
+        <span id="camp-leads-toggle" style="font-size:16px;color:var(--text-muted);">▲</span>
+      </div>
+      <div id="camp-leads-body" style="display:block;margin-top:10px;">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+          <button class="btn btn-sm" onclick="viewCampLeadsInTab('${c.id}')" style="font-size:11px;">View all in Leads tab →</button>
+        </div>
+        <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px;margin-bottom:10px;">
+          <div class="r2">
+            <div class="field"><label>Name <span style="color:var(--danger);">*</span></label><input id="camp-lead-qa-name" placeholder="Name" class="search-input" style="margin:0;"/></div>
+            <div class="field"><label>Phone</label><input id="camp-lead-qa-phone" type="tel" placeholder="Phone" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+          </div>
+          <div class="r2">
+            <div class="field"><label>Email</label><input id="camp-lead-qa-email" type="email" placeholder="Email" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+            <div class="field"><label>Source</label>
+              <select id="camp-lead-qa-source" onchange="toggleOtherField('camp-lead-qa-source','camp-lead-qa-source-other')" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"></select>
+              <input id="camp-lead-qa-source-other" placeholder="Enter source" style="display:none;margin-top:6px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" style="margin-top:2px;" onclick="addCampLeadQuick()">+ Add lead</button>
+        </div>
+        <div id="camp-leads-card-body"></div>
+      </div>
+    </div>
 
     <!-- Engagements (collapsible) -->
     <div class="card" style="margin-bottom:10px;">
@@ -28658,6 +28823,8 @@ function renderCampDetailView(el, c) {
 
     <button class="btn btn-sm" onclick="goCamp('camp-list');renderCampList();" style="margin-bottom:10px;">← Back to campaigns</button>
   `;
+  popCampLeadQuickAddSource();
+  renderCampLeadsCard();
 }
 
 function toggleCampSection(bodyId, toggleId) {
@@ -30316,7 +30483,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v49.1',
+    app_version: 'v50.0',
     tables: {}
   };
 
