@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v50.0</title>
+<title>Cookie & Me — Kitchen Manager v50.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -28916,6 +28916,34 @@ function renderCampDetailEdit(el, c) {
       <div class="field"><label>Promotion plan</label><textarea id="cf-promo">${esc(c.promotion_plan||'')}</textarea></div>
     </div>
 
+    <!-- Leads (collapsible) -->
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleCampSection('camp-leads-body','camp-leads-toggle')">
+        <div class="card-title" style="margin:0;">Leads <span id="camp-leads-count" style="font-size:12px;font-weight:400;color:var(--text-muted);">(${(leads||[]).filter(l => String(l.campaign_id) === String(c.id)).length})</span></div>
+        <span id="camp-leads-toggle" style="font-size:16px;color:var(--text-muted);">▲</span>
+      </div>
+      <div id="camp-leads-body" style="display:block;margin-top:10px;">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+          <button class="btn btn-sm" onclick="viewCampLeadsInTab('${c.id}')" style="font-size:11px;">View all in Leads tab →</button>
+        </div>
+        <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px;margin-bottom:10px;">
+          <div class="r2">
+            <div class="field"><label>Name <span style="color:var(--danger);">*</span></label><input id="camp-lead-qa-name" placeholder="Name" class="search-input" style="margin:0;"/></div>
+            <div class="field"><label>Phone</label><input id="camp-lead-qa-phone" type="tel" placeholder="Phone" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+          </div>
+          <div class="r2">
+            <div class="field"><label>Email</label><input id="camp-lead-qa-email" type="email" placeholder="Email" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+            <div class="field"><label>Source</label>
+              <select id="camp-lead-qa-source" onchange="toggleOtherField('camp-lead-qa-source','camp-lead-qa-source-other')" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"></select>
+              <input id="camp-lead-qa-source-other" placeholder="Enter source" style="display:none;margin-top:6px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" style="margin-top:2px;" onclick="addCampLeadQuick()">+ Add lead</button>
+        </div>
+        <div id="camp-leads-card-body"></div>
+      </div>
+    </div>
+
     <!-- Engagements -->
     <div class="card" style="margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -29061,6 +29089,8 @@ function renderCampDetailEdit(el, c) {
   clearCampImageForm();
   document.getElementById('camp-detail-planning-imgs')?.remove();
   document.getElementById('camp-detail-conclusion-imgs')?.remove();
+  popCampLeadQuickAddSource();
+  renderCampLeadsCard();
 }
 
 function openBakeForCampaign(campId) {
@@ -30483,7 +30513,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v50.0',
+    app_version: 'v50.1',
     tables: {}
   };
 
