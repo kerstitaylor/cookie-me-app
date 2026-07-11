@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v47.2</title>
+<title>Cookie & Me — Kitchen Manager v48.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -631,6 +631,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="sub-tab" data-sub="campaigns" onclick="go('campaigns')">📣 Campaigns</button>
         <button class="sub-tab" data-sub="markets" onclick="go('markets')">🛍️ Markets</button>
         <button class="sub-tab" data-sub="b2b" onclick="go('b2b')">B2B Sales</button>
+        <button class="sub-tab" data-sub="leads" onclick="go('leads')">🧾 Leads <span id="leads-badge" style="display:none;background:var(--danger);color:white;font-size:10px;font-weight:700;min-width:16px;height:16px;border-radius:99px;align-items:center;justify-content:center;padding:0 4px;font-family:sans-serif;line-height:1;margin-left:2px;">0</span></button>
       </div>
     </div>
     <div id="subnav-records" class="compound-subnav" style="display:none;">
@@ -3397,6 +3398,28 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <div id="cat-mgr-msg" class="alert alert-success" style="display:none;margin-top:8px;"></div>
       </div>
 
+      <!-- LEAD SOURCES MANAGER -->
+      <div class="card" style="margin-bottom:10px;">
+        <div class="card-title">Lead sources</div>
+        <p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">Options shown in the Leads "Source" dropdown.</p>
+        <div id="cfg-lead-source-list" style="margin-bottom:10px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input id="new-lead-source" placeholder="New lead source" class="search-input" style="margin:0;flex:1"/>
+          <button class="btn btn-sm btn-primary" onclick="addLeadPicklistItem('leadSources','new-lead-source','cfg-lead-source-list')">Add</button>
+        </div>
+      </div>
+
+      <!-- LEAD NEXT ACTIONS MANAGER -->
+      <div class="card" style="margin-bottom:10px;">
+        <div class="card-title">Lead next actions</div>
+        <p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">Options shown in the Leads "Next action" dropdown.</p>
+        <div id="cfg-lead-next-action-list" style="margin-bottom:10px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input id="new-lead-next-action" placeholder="New next action" class="search-input" style="margin:0;flex:1"/>
+          <button class="btn btn-sm btn-primary" onclick="addLeadPicklistItem('leadNextActions','new-lead-next-action','cfg-lead-next-action-list')">Add</button>
+        </div>
+      </div>
+
       <!-- PRODUCT TYPES MANAGER -->
       <div class="card">
         <div class="card-title">Product types</div>
@@ -4354,6 +4377,46 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
     </div>
   </div>
 
+  <!-- LEADS -->
+  <div id="s-leads" class="section">
+    <div style="padding:12px 16px 0;">
+      <!-- QUICK ADD -->
+      <div class="card" style="margin-bottom:10px;">
+        <div class="card-title">Add lead</div>
+        <div class="r2">
+          <div class="field"><label>Name <span style="color:var(--danger);">*</span></label><input id="lead-qa-name" placeholder="Name" class="search-input" style="margin:0;"/></div>
+          <div class="field"><label>Phone</label><input id="lead-qa-phone" type="tel" placeholder="Phone" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+        </div>
+        <div class="r2">
+          <div class="field"><label>Email</label><input id="lead-qa-email" type="email" placeholder="Email" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+          <div class="field"><label>Source</label>
+            <select id="lead-qa-source" onchange="toggleOtherField('lead-qa-source','lead-qa-source-other')" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"></select>
+            <input id="lead-qa-source-other" placeholder="Enter source" style="display:none;margin-top:6px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/>
+          </div>
+        </div>
+        <div class="field"><label>Campaign</label>
+          <select id="lead-qa-campaign" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;">
+            <option value="">Unassigned</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" style="margin-top:6px;" onclick="addLeadQuick()">+ Add lead</button>
+        <div id="lead-qa-msg" class="alert alert-success" style="display:none;margin-top:8px;"></div>
+      </div>
+
+      <!-- FILTERS -->
+      <div id="lead-status-pills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+        <input class="search-input" id="lead-search" placeholder="Search by name, company, phone, email..." oninput="onLeadSearchInput()" style="flex:1;min-width:160px;margin:0;"/>
+        <select id="lead-campaign-filter" onchange="onLeadCampaignFilterChange()" style="padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);font-family:sans-serif;">
+          <option value="">All leads</option>
+          <option value="unassigned">Unassigned</option>
+        </select>
+      </div>
+
+      <div id="lead-table-wrap" style="overflow-x:auto;"></div>
+    </div>
+  </div>
+
   <!-- SUPPLIERS -->
   <div id="s-suppliers" class="section">
     <div class="sub-tabs">
@@ -5211,6 +5274,12 @@ let editEngagementId = null; // engagement being edited
 let campFilter = 'all'; // campaign list filter
 let collectionTemplates = []; // collection templates
 let collectionInstances = []; // collection instances
+let leads = []; // leads
+let leadMessageLogs = {}; // lead id -> array of message log entries, populated on demand
+let leadStatusFilter = ['New','In Contact','Waiting Reply','Ready to Convert','Converted','Lost/Ghosted']; // active status filter pills; default = all shown
+let leadSearchQuery = ''; // client-side name/company/phone/email search
+let leadCampaignFilter = ''; // '' = all leads, 'unassigned' = no campaign_id, or a campaign id
+let leadLogExpanded = {}; // lead id -> bool, which message log panels are expanded
 let recentSetupSessions = []; // last 10 setup checklist records for date pickers
 let _colTemplateFormOpen = false; // is template form visible
 let _colInstanceFormOpen = false; // is instance form visible
@@ -6872,6 +6941,14 @@ async function loadCfg() {
   } else if (typeof cfg.stepsLibrary[0] === 'string') {
     migrateStepsLibrary();
   }
+  if (!cfg.leadSources) {
+    cfg.leadSources = ['Instagram', 'Facebook', 'Market stall', 'Word of mouth', 'Email', 'Phone'];
+    await saveCfgKey('leadSources', cfg.leadSources);
+  }
+  if (!cfg.leadNextActions) {
+    cfg.leadNextActions = ['Send quote', 'Follow up', 'Confirm order', 'Send invoice'];
+    await saveCfgKey('leadNextActions', cfg.leadNextActions);
+  }
 }
 
 // Per-key serialization queue: ensures saves to the same config key run strictly
@@ -7436,6 +7513,7 @@ async function init() {
     safeLoad(loadInteractions, 'interactions'),
     safeLoad(loadCampaigns, 'campaigns'),
     safeLoad(loadCampEngagements, 'campEngagements'),
+    safeLoad(loadLeads, 'leads'),
     safeLoad(loadCollectionTemplates, 'collectionTemplates'),
     safeLoad(loadCollectionInstances, 'collectionInstances'),
     safeLoad(loadRecentSetupSessions, 'recentSetupSessions'),
@@ -7530,6 +7608,7 @@ async function init() {
     checkUserIdentity();
     renderNotifBadge();
     renderTaskBadge();
+    updateLeadsBadge();
     if (getCurrentUser()) generateNotifications();
   } catch(e) {
     console.warn('Notification init error (non-fatal):', e);
@@ -7623,7 +7702,7 @@ const TAB_MAP = {
   forms:      ['kitchen','logs','transport'],
   production: ['production'],
   stock:      ['inv','suppliers'],
-  sales:      ['customers','orders','campaigns','markets','b2b'],
+  sales:      ['customers','orders','campaigns','markets','b2b','leads'],
   team:       ['team'],
   records:    ['recall','hist','configure','rec-inventory','fin-report'],
 };
@@ -7637,7 +7716,7 @@ const TAB_DEFAULT = {
 // Which tab owns each legacy section name
 const SECTION_TAB = {
   home:'home', kitchen:'forms', logs:'forms', transport:'forms', production:'production',
-  inv:'stock', suppliers:'stock', customers:'sales', orders:'sales', b2b:'sales', campaigns:'sales', markets:'sales',
+  inv:'stock', suppliers:'stock', customers:'sales', orders:'sales', b2b:'sales', campaigns:'sales', markets:'sales', leads:'sales',
   team:'team', recall:'records', hist:'records', configure:'records', 'fin-report':'records',
 };
 
@@ -7647,7 +7726,7 @@ function go(t) {
   // Resolve legacy names to new tab names
   const legacyMap = {
     kitchen:'forms', logs:'forms', transport:'forms', inv:'stock', suppliers:'stock',
-    customers:'sales', orders:'sales', b2b:'sales', campaigns:'sales', markets:'sales', recall:'records', hist:'records', configure:'records',
+    customers:'sales', orders:'sales', b2b:'sales', campaigns:'sales', markets:'sales', leads:'sales', recall:'records', hist:'records', configure:'records',
     'rec-inventory':'records'
   };
   const newT = legacyMap[t] || t;
@@ -7729,6 +7808,7 @@ function go(t) {
       b2b:       ()=>{ document.getElementById('s-customers').classList.add('active'); goCust('cust-b2b'); popLogSelects(); renderB2BList(); },
       campaigns: ()=>{ document.getElementById('s-campaigns').classList.add('active'); goCamp('camp-list'); renderCampList(); },
       markets:   ()=>{ document.getElementById('s-markets').classList.add('active'); },
+      leads:     ()=>{ document.getElementById('s-leads').classList.add('active'); renderLeads(); },
     });
   } else if(newT==='records'){
     // Always show the records sub-nav bar
@@ -13268,6 +13348,8 @@ function renderConfigure() {
   renderCatList();
   renderProdTypeList();
   selOpts('scat', cfg.categories, false, 'Select category...');
+  renderLeadPicklist('leadSources', 'cfg-lead-source-list');
+  renderLeadPicklist('leadNextActions', 'cfg-lead-next-action-list');
 }
 
 function renderCfgTeam() {
@@ -24496,6 +24578,48 @@ async function delCat(i){
   showMsg('cat-mgr-msg','Category deleted ✓');
 }
 
+// ── Lead picklists manager (cfg.leadSources / cfg.leadNextActions) ──
+function renderLeadPicklist(key, listElId){
+  const el=document.getElementById(listElId);
+  if(!el)return;
+  const list=[...(cfg[key]||[])];
+  if(!list.length){el.innerHTML='<div class="empty">No options yet.</div>';return;}
+  el.innerHTML=list.map((v,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);gap:6px;">
+      <div style="flex:1;min-width:0;font-family:sans-serif;font-size:13px;font-weight:600;">${v}</div>
+      <button class="btn btn-sm" onclick="editLeadPicklistItem('${key}',${i},'${listElId}')" style="font-size:11px;">Edit</button>
+      <button class="btn btn-sm" onclick="delLeadPicklistItem('${key}',${i},'${listElId}')" style="font-size:11px;color:var(--danger);border-color:var(--danger);">Delete</button>
+    </div>`).join('');
+}
+
+async function addLeadPicklistItem(key, inputId, listElId){
+  const inputEl=document.getElementById(inputId);
+  const v=inputEl.value.trim();
+  if(!v)return;
+  if(!cfg[key])cfg[key]=[];
+  if(cfg[key].includes(v)){alert('That option already exists.');return;}
+  cfg[key].push(v);
+  await saveCfgKey(key,cfg[key]);
+  inputEl.value='';
+  renderLeadPicklist(key,listElId);
+}
+
+async function editLeadPicklistItem(key, i, listElId){
+  const cur=cfg[key][i];
+  const v=prompt('Rename option:',cur);
+  if(!v||v.trim()===cur)return;
+  cfg[key][i]=v.trim();
+  await saveCfgKey(key,cfg[key]);
+  renderLeadPicklist(key,listElId);
+}
+
+async function delLeadPicklistItem(key, i, listElId){
+  const cur=cfg[key][i];
+  if(!confirm(`Delete option "${cur}"?`))return;
+  cfg[key].splice(i,1);
+  await saveCfgKey(key,cfg[key]);
+  renderLeadPicklist(key,listElId);
+}
+
 // ── Product types manager ──
 function renderProdTypeList(){
   const el=document.getElementById('cfg-prod-type-list');
@@ -25985,6 +26109,11 @@ async function loadCampEngagements() {
   if (!error && data) campEngagements = data;
 }
 
+async function loadLeads() {
+  const { data, error } = await db.from('leads').select('*').order('created_at', { ascending: false });
+  if (!error && data) leads = data;
+}
+
 async function loadCollectionTemplates() {
   const { data, error } = await db.from('collection_templates').select('*').order('id', { ascending: true });
   if (!error && data) collectionTemplates = data;
@@ -26076,6 +26205,401 @@ async function deleteEngagement(id) {
   campEngagements = campEngagements.filter(x=>x.id!==id);
   setSyncStatus('ok','Saved ✓');
   return true;
+}
+
+// ═══════════════════════════════════════════════════════
+// LEADS — Supabase helpers
+// ═══════════════════════════════════════════════════════
+async function insertLead(l) {
+  setSyncStatus('syncing','Saving...');
+  const { data, error } = await db.from('leads').insert([l]).select();
+  if (!error && data) { leads.push(data[0]); setSyncStatus('ok','Saved ✓'); return data[0]; }
+  setSyncStatus('err','Sync error'); return null;
+}
+
+async function updateLead(id, fields) {
+  setSyncStatus('syncing','Saving...');
+  const { error } = await db.from('leads').update(fields).eq('id', id);
+  if (!error) {
+    const i = leads.findIndex(x=>x.id===id);
+    if (i>-1) Object.assign(leads[i], fields);
+    setSyncStatus('ok','Saved ✓'); return true;
+  }
+  setSyncStatus('err','Sync error'); return false;
+}
+
+async function deleteLead(id) {
+  setSyncStatus('syncing','Saving...');
+  const { error } = await db.from('leads').delete().eq('id', id);
+  if (error) { setSyncStatus('err','Sync error'); console.error('deleteLead error', error); return false; }
+  leads = leads.filter(x=>x.id!==id);
+  setSyncStatus('ok','Saved ✓');
+  return true;
+}
+
+async function loadLeadMessageLogs(leadId) {
+  const { data, error } = await db.from('lead_message_logs').select('*').eq('lead_id', leadId).order('created_at', { ascending: false });
+  if (!error && data) leadMessageLogs[leadId] = data;
+}
+
+async function insertLeadMessageLog(leadId, label, content) {
+  setSyncStatus('syncing','Saving...');
+  const { data, error } = await db.from('lead_message_logs').insert([{ lead_id: leadId, label, content }]).select();
+  if (!error && data) {
+    if (!leadMessageLogs[leadId]) leadMessageLogs[leadId] = [];
+    leadMessageLogs[leadId].unshift(data[0]);
+    setSyncStatus('ok','Saved ✓'); return data[0];
+  }
+  setSyncStatus('err','Sync error'); return null;
+}
+
+// ═══════════════════════════════════════════════════════
+// LEADS — UI
+// ═══════════════════════════════════════════════════════
+const LEAD_STATUSES = ['New','In Contact','Waiting Reply','Ready to Convert','Converted','Lost/Ghosted'];
+const LEAD_STATUS_COLOUR = {
+  'New': 'tag-blue',
+  'In Contact': 'tag-purple',
+  'Waiting Reply': 'tag-amber',
+  'Ready to Convert': 'tag-orange',
+  'Converted': 'tag-green',
+  'Lost/Ghosted': 'tag-gray'
+};
+
+function renderLeads() {
+  popLeadQuickAddSelects();
+  popLeadCampaignFilter();
+  renderLeadStatusPills();
+  renderLeadTable();
+  updateLeadsBadge();
+}
+
+function popLeadQuickAddSelects() {
+  selOpts('lead-qa-source', cfg.leadSources||[], false, 'Select source...', null);
+  const srcSel = document.getElementById('lead-qa-source');
+  if (srcSel && !srcSel.querySelector('option[value="Other"]')) {
+    srcSel.insertAdjacentHTML('beforeend', '<option value="Other">Other</option>');
+  }
+  const campSel = document.getElementById('lead-qa-campaign');
+  if (campSel) {
+    const prev = campSel.value;
+    campSel.innerHTML = '<option value="">Unassigned</option>' + (campaigns||[]).map(function(c) {
+      return '<option value="' + c.id + '">' + esc(c.name) + '</option>';
+    }).join('');
+    if (prev) campSel.value = prev;
+  }
+}
+
+function popLeadCampaignFilter() {
+  const sel = document.getElementById('lead-campaign-filter');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All leads</option><option value="unassigned">Unassigned</option>'
+    + (campaigns||[]).map(function(c) { return '<option value="' + c.id + '">' + esc(c.name) + '</option>'; }).join('');
+  sel.value = prev || leadCampaignFilter || '';
+}
+
+function renderLeadStatusPills() {
+  const el = document.getElementById('lead-status-pills');
+  if (!el) return;
+  el.innerHTML = LEAD_STATUSES.map(function(s) {
+    const active = leadStatusFilter.includes(s);
+    return '<button class="btn btn-sm" onclick="toggleLeadStatusFilter(\'' + s + '\')" style="font-size:11px;'
+      + (active ? 'background:var(--navy);color:white;border-color:var(--navy);' : '') + '">' + s + '</button>';
+  }).join('');
+}
+
+function toggleLeadStatusFilter(status) {
+  const i = leadStatusFilter.indexOf(status);
+  if (i > -1) leadStatusFilter.splice(i, 1); else leadStatusFilter.push(status);
+  renderLeadStatusPills();
+  renderLeadTable();
+}
+
+function onLeadSearchInput() {
+  leadSearchQuery = (document.getElementById('lead-search')||{value:''}).value.toLowerCase().trim();
+  renderLeadTable();
+}
+
+function onLeadCampaignFilterChange() {
+  leadCampaignFilter = (document.getElementById('lead-campaign-filter')||{value:''}).value;
+  renderLeadTable();
+}
+
+function getFilteredLeads() {
+  return (leads||[]).filter(function(l) {
+    if (!leadStatusFilter.includes(l.status)) return false;
+    if (leadCampaignFilter === 'unassigned' && l.campaign_id) return false;
+    if (leadCampaignFilter && leadCampaignFilter !== 'unassigned' && String(l.campaign_id) !== String(leadCampaignFilter)) return false;
+    if (leadSearchQuery) {
+      const hay = [l.name, l.company, l.phone, l.email].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(leadSearchQuery)) return false;
+    }
+    return true;
+  });
+}
+
+function leadDueClass(l) {
+  if (!l.next_action_due) return '';
+  if (l.status === 'Converted' || l.status === 'Lost/Ghosted') return '';
+  return l.next_action_due <= today() ? 'color:var(--danger);font-weight:700;' : '';
+}
+
+function renderLeadTable() {
+  const wrap = document.getElementById('lead-table-wrap');
+  if (!wrap) return;
+  const list = getFilteredLeads();
+  if (!list.length) { wrap.innerHTML = '<div class="empty">No leads found.</div>'; return; }
+  const rows = list.map(function(l) {
+    const logOpen = !!leadLogExpanded[l.id];
+    return '<tr>'
+      + '<td>' + leadCellText(l.id, 'name', l.name) + '</td>'
+      + '<td>' + leadCellText(l.id, 'company', l.company) + '</td>'
+      + '<td>' + leadCellSelect(l.id, 'source', l.source, cfg.leadSources||[]) + '</td>'
+      + '<td>' + leadCellStatus(l.id, l.status) + '</td>'
+      + '<td>' + leadCellNumber(l.id, 'est_quantity', l.est_quantity) + '</td>'
+      + '<td>' + leadCellNumber(l.id, 'est_value', l.est_value) + '</td>'
+      + '<td>' + leadCellSelect(l.id, 'next_action', l.next_action, cfg.leadNextActions||[]) + '</td>'
+      + '<td><span style="' + leadDueClass(l) + '">' + leadCellDate(l.id, 'next_action_due', l.next_action_due) + '</span></td>'
+      + '<td style="text-align:center;cursor:pointer;" onclick="toggleLeadStar(\'' + l.id + '\')">' + (l.starred ? '⭐' : '☆') + '</td>'
+      + '<td style="text-align:center;cursor:pointer;" onclick="toggleLeadNeedsReply(\'' + l.id + '\')" title="Needs reply">' + (l.needs_reply ? '🔴' : '⚪') + '</td>'
+      + '<td style="text-align:center;"><input type="checkbox" ' + (l.completed?'checked':'') + ' onchange="toggleLeadCompleted(\'' + l.id + '\')"/></td>'
+      + '<td><button class="btn btn-sm" onclick="toggleLeadLog(\'' + l.id + '\')" style="font-size:11px;">' + (logOpen ? 'Hide log ▲' : 'Log ▼') + '</button></td>'
+      + '<td><button class="btn btn-sm" onclick="confirmDeleteLead(\'' + l.id + '\')" style="font-size:11px;color:var(--danger);border-color:var(--danger);">Delete</button></td>'
+      + '</tr>'
+      + (logOpen ? '<tr><td colspan="13" style="background:var(--gray-light);">' + renderLeadLogPanel(l) + '</td></tr>' : '');
+  }).join('');
+  wrap.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+    + '<tr><th>Name</th><th>Company</th><th>Source</th><th>Status</th><th>Est. qty</th><th>Est. value</th><th>Next action</th><th>Due</th><th>⭐</th><th>Reply</th><th>Done</th><th>Log</th><th></th></tr>'
+    + rows + '</table>';
+}
+
+// ── Inline-editable cells (click to edit, blur to save) ──
+function leadCellText(leadId, field, value) {
+  return '<span class="lead-cell" onclick="leadCellEdit(this,\'' + leadId + '\',\'' + field + '\',\'text\')" style="cursor:text;display:inline-block;min-width:40px;">'
+    + (value ? esc(value) : '<span style="color:var(--text-muted);">—</span>') + '</span>';
+}
+function leadCellNumber(leadId, field, value) {
+  return '<span class="lead-cell" onclick="leadCellEdit(this,\'' + leadId + '\',\'' + field + '\',\'number\')" style="cursor:text;display:inline-block;min-width:30px;">'
+    + (value != null && value !== '' ? esc(value) : '<span style="color:var(--text-muted);">—</span>') + '</span>';
+}
+function leadCellDate(leadId, field, value) {
+  return '<span class="lead-cell" onclick="leadCellEdit(this,\'' + leadId + '\',\'' + field + '\',\'date\')" style="cursor:text;display:inline-block;min-width:70px;">'
+    + (value ? fmtDate(value) : '<span style="color:var(--text-muted);">—</span>') + '</span>';
+}
+
+function leadCellEdit(el, leadId, field, type) {
+  const lead = (leads||[]).find(function(x){ return String(x.id)===String(leadId); });
+  if (!lead) return;
+  const cur = lead[field];
+  const input = document.createElement('input');
+  input.type = type === 'number' ? 'number' : (type === 'date' ? 'date' : 'text');
+  input.value = cur == null ? '' : cur;
+  input.style.cssText = 'width:100%;min-width:70px;padding:4px 6px;border:1px solid var(--navy);border-radius:4px;font-size:12px;font-family:sans-serif;box-sizing:border-box;';
+  input.onblur = function() { saveLeadCell(leadId, field, input.value, type); };
+  input.onkeydown = function(e) { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') renderLeadTable(); };
+  el.replaceWith(input);
+  input.focus();
+  if (input.select) input.select();
+}
+
+async function saveLeadCell(leadId, field, value, type) {
+  let v = value === '' ? null : value;
+  if (type === 'number' && v != null) v = parseFloat(v);
+  await updateLead(leadFindId(leadId), { [field]: v });
+  renderLeadTable();
+}
+
+// leads[].id may be a UUID string or a numeric id — resolve the matching stored id value
+function leadFindId(leadId) {
+  const lead = (leads||[]).find(function(x){ return String(x.id)===String(leadId); });
+  return lead ? lead.id : leadId;
+}
+
+function leadCellSelect(leadId, field, value, options) {
+  const opts = (options||[]).map(function(o) {
+    return '<option value="' + esc(o) + '"' + (o===value?' selected':'') + '>' + esc(o) + '</option>';
+  }).join('');
+  const hasCustom = value && !(options||[]).includes(value);
+  return '<select onchange="onLeadSelectChange(this,\'' + leadId + '\',\'' + field + '\')" style="font-size:11px;padding:3px 4px;border:1px solid var(--border);border-radius:4px;background:var(--white);color:var(--text);font-family:sans-serif;max-width:120px;">'
+    + '<option value="">—</option>' + opts + (hasCustom ? '<option value="' + esc(value) + '" selected>' + esc(value) + '</option>' : '')
+    + '<option value="__other__">Other...</option></select>';
+}
+
+async function onLeadSelectChange(sel, leadId, field) {
+  if (sel.value === '__other__') {
+    const v = prompt('Enter custom value:');
+    if (!v) { renderLeadTable(); return; }
+    const cfgKey = field === 'source' ? 'leadSources' : 'leadNextActions';
+    if (!cfg[cfgKey].includes(v.trim())) {
+      cfg[cfgKey].push(v.trim());
+      await saveCfgKey(cfgKey, cfg[cfgKey]);
+    }
+    await updateLead(leadFindId(leadId), { [field]: v.trim() });
+  } else {
+    await updateLead(leadFindId(leadId), { [field]: sel.value || null });
+  }
+  renderLeadTable();
+}
+
+function leadCellStatus(leadId, status) {
+  const opts = LEAD_STATUSES.map(function(s) {
+    return '<option value="' + s + '"' + (s===status?' selected':'') + '>' + s + '</option>';
+  }).join('');
+  const cls = LEAD_STATUS_COLOUR[status] || 'tag-gray';
+  return '<select onchange="onLeadStatusChange(this,\'' + leadId + '\')" class="tag ' + cls + '" style="border:none;font-weight:600;">' + opts + '</select>';
+}
+
+async function onLeadStatusChange(sel, leadId) {
+  await updateLead(leadFindId(leadId), { status: sel.value });
+  renderLeadTable();
+  updateLeadsBadge();
+}
+
+async function toggleLeadStar(leadId) {
+  const lead = (leads||[]).find(function(x){ return String(x.id)===String(leadId); });
+  if (!lead) return;
+  await updateLead(lead.id, { starred: !lead.starred });
+  renderLeadTable();
+}
+
+async function toggleLeadNeedsReply(leadId) {
+  const lead = (leads||[]).find(function(x){ return String(x.id)===String(leadId); });
+  if (!lead) return;
+  await updateLead(lead.id, { needs_reply: !lead.needs_reply });
+  renderLeadTable();
+}
+
+async function toggleLeadCompleted(leadId) {
+  const lead = (leads||[]).find(function(x){ return String(x.id)===String(leadId); });
+  if (!lead) return;
+  await updateLead(lead.id, { completed: !lead.completed });
+  renderLeadTable();
+}
+
+async function confirmDeleteLead(leadId) {
+  if (!confirm('Delete this lead? This cannot be undone.')) return;
+  await deleteLead(leadFindId(leadId));
+  renderLeadTable();
+  updateLeadsBadge();
+}
+
+// ── Message log panel ──
+function renderLeadLogPanel(l) {
+  const logs = leadMessageLogs[l.id] || [];
+  const entries = logs.length
+    ? logs.map(function(m) {
+        return '<div style="border-bottom:1px solid var(--border);padding:6px 0;">'
+          + '<div style="font-size:11px;font-weight:700;font-family:sans-serif;">' + esc(m.label) + ' <span style="font-weight:400;color:var(--text-muted);">' + fmtDate((m.created_at||'').slice(0,10)) + '</span></div>'
+          + '<div style="font-size:12px;font-family:sans-serif;white-space:pre-wrap;">' + esc(m.content) + '</div>'
+        + '</div>';
+      }).join('')
+    : '<div class="empty" style="font-size:12px;">No log entries yet.</div>';
+  return '<div style="padding:8px 4px;">'
+    + '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">'
+    + '<input id="lead-log-label-' + l.id + '" placeholder="Label (e.g. Instagram DM)" class="search-input" style="margin:0;flex:1;min-width:120px;"/>'
+    + '</div>'
+    + '<textarea id="lead-log-content-' + l.id + '" placeholder="Message content..." style="width:100%;min-height:60px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;margin-bottom:6px;"></textarea>'
+    + '<button class="btn btn-sm btn-primary" onclick="addLeadLogEntry(\'' + l.id + '\')">+ Add log entry</button>'
+    + '<div style="margin-top:10px;">' + entries + '</div>'
+    + '</div>';
+}
+
+async function toggleLeadLog(leadId) {
+  const wasOpen = !!leadLogExpanded[leadId];
+  leadLogExpanded[leadId] = !wasOpen;
+  if (!wasOpen && !leadMessageLogs[leadId]) {
+    await loadLeadMessageLogs(leadFindId(leadId));
+  }
+  renderLeadTable();
+}
+
+async function addLeadLogEntry(leadId) {
+  const labelEl = document.getElementById('lead-log-label-' + leadId);
+  const contentEl = document.getElementById('lead-log-content-' + leadId);
+  const label = labelEl ? labelEl.value.trim() : '';
+  const content = contentEl ? contentEl.value.trim() : '';
+  if (!label || !content) { alert('Please enter both a label and message content.'); return; }
+  await insertLeadMessageLog(leadFindId(leadId), label, content);
+  renderLeadTable();
+}
+
+// ── Quick add + dedupe check ──
+function findLeadDuplicate(name, phone, email) {
+  const nameLc = name.toLowerCase().trim();
+  const custMatch = (cfg.customers||[]).find(function(c) {
+    if ((c.name||'').toLowerCase().trim() === nameLc) return true;
+    if (phone && c.phone && c.phone === phone) return true;
+    if (email && c.email && c.email.toLowerCase() === email.toLowerCase()) return true;
+    return false;
+  });
+  if (custMatch) return { type: 'customer', name: custDisplayName(custMatch) };
+  const leadMatch = (leads||[]).find(function(l) {
+    if (l.status === 'Converted' || l.status === 'Lost/Ghosted') return false;
+    if ((l.name||'').toLowerCase().trim() === nameLc) return true;
+    if (phone && l.phone && l.phone === phone) return true;
+    if (email && l.email && l.email.toLowerCase() === email.toLowerCase()) return true;
+    return false;
+  });
+  if (leadMatch) return { type: 'lead', name: leadMatch.name };
+  return null;
+}
+
+let _pendingLeadQuickAdd = null;
+
+async function addLeadQuick() {
+  const name = (document.getElementById('lead-qa-name')||{value:''}).value.trim();
+  if (!name) { alert('Please enter a name.'); return; }
+  const phone = (document.getElementById('lead-qa-phone')||{value:''}).value.trim();
+  const email = (document.getElementById('lead-qa-email')||{value:''}).value.trim();
+  const srcSel = (document.getElementById('lead-qa-source')||{value:''}).value;
+  const srcOther = (document.getElementById('lead-qa-source-other')||{value:''}).value.trim();
+  const source = srcSel === 'Other' ? srcOther : srcSel;
+  const campaignId = (document.getElementById('lead-qa-campaign')||{value:''}).value || null;
+
+  const fields = {
+    name, phone: phone||null, email: email||null, source: source||null,
+    campaign_id: campaignId, status: 'New', starred: false, needs_reply: false, completed: false
+  };
+
+  const dupe = findLeadDuplicate(name, phone, email);
+  if (dupe) {
+    _pendingLeadQuickAdd = fields;
+    openUModal(
+      'Possible duplicate',
+      '<p style="font-size:13px;font-family:sans-serif;">This looks similar to an existing ' + dupe.type + ': <strong>' + esc(dupe.name) + '</strong> — add anyway?</p>',
+      '<button class="btn btn-primary" style="flex:1" onclick="confirmAddLeadAnyway()">Add anyway</button>'
+      + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>'
+    );
+    return;
+  }
+  await _doInsertLeadQuick(fields);
+}
+
+async function confirmAddLeadAnyway() {
+  closeUModal();
+  if (!_pendingLeadQuickAdd) return;
+  await _doInsertLeadQuick(_pendingLeadQuickAdd);
+  _pendingLeadQuickAdd = null;
+}
+
+async function _doInsertLeadQuick(fields) {
+  if (fields.source && !(cfg.leadSources||[]).includes(fields.source)) {
+    cfg.leadSources.push(fields.source);
+    await saveCfgKey('leadSources', cfg.leadSources);
+  }
+  const saved = await insertLead(fields);
+  if (!saved) { alert('Could not save lead — please try again.'); return; }
+  ['lead-qa-name','lead-qa-phone','lead-qa-email'].forEach(function(id) {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const srcOtherEl = document.getElementById('lead-qa-source-other');
+  if (srcOtherEl) { srcOtherEl.value = ''; srcOtherEl.style.display = 'none'; }
+  const srcSelEl = document.getElementById('lead-qa-source');
+  if (srcSelEl) srcSelEl.value = '';
+  showMsg('lead-qa-msg', 'Lead added ✓');
+  renderLeadTable();
+  updateLeadsBadge();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -29694,7 +30218,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v47.2',
+    app_version: 'v48.0',
     tables: {}
   };
 
@@ -33675,6 +34199,22 @@ function renderTaskBadge() {
   const myOpen = _tasks.filter(t => t.owner === user && !t.archived && t.status !== 'done').length;
   if (myOpen > 0) {
     badge.textContent = myOpen > 99 ? '99+' : myOpen;
+    badge.style.display = 'inline-flex';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function updateLeadsBadge() {
+  const badge = document.getElementById('leads-badge');
+  if (!badge) return;
+  const t = today();
+  const count = (leads||[]).filter(function(l) {
+    if (l.status === 'Converted' || l.status === 'Lost/Ghosted') return false;
+    return l.next_action_due && l.next_action_due <= t;
+  }).length;
+  if (count > 0) {
+    badge.textContent = count > 99 ? '99+' : count;
     badge.style.display = 'inline-flex';
   } else {
     badge.style.display = 'none';
