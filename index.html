@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v47.1</title>
+<title>Cookie & Me — Kitchen Manager v47.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -5856,6 +5856,8 @@ function showSyncPrompt(batchNum, iceMaterials, onYes) {
 }
 async function syncIceToBatch(batch, iceMaterials, closedownLogId) {
   var existing = Array.isArray(batch.icingMaterials) ? batch.icingMaterials : [];
+  // If batch has v3 icing-tab entries, skip — flat-array merge would corrupt them
+  if (batch.icingMaterials && batch.icingMaterials._v === 3) return;
   // If batch has v2 icingRuns, route to the new sync function instead
   if (batch.icingMaterials && batch.icingMaterials._v === 2) {
     var runFromMaterials = {
@@ -10092,7 +10094,8 @@ async function saveBake() {
 
   let result;
   if (bkEditId) {
-    const _editFields = { date, recipe: rec ? rec.name : (_origBatch ? _origBatch.recipe : ''), mult:m, made_by:madeBy, yield:yld, failed, bb, notes, variation, ingredients:ingUsed, chocolate:chocUsed, flavouring:flavUsed, campaign_id:campIdVal||null, extra_campaign_ids:bkExtraCampIds.length?bkExtraCampIds:null, order_ids:bkOrderIds.length?bkOrderIds:null, icingMaterials };
+    const _iceProtected = _origBatch && _origBatch.icingMaterials && _origBatch.icingMaterials._v === 3;
+    const _editFields = { date, recipe: rec ? rec.name : (_origBatch ? _origBatch.recipe : ''), mult:m, made_by:madeBy, yield:yld, failed, bb, notes, variation, ingredients:ingUsed, chocolate:chocUsed, flavouring:flavUsed, campaign_id:campIdVal||null, extra_campaign_ids:bkExtraCampIds.length?bkExtraCampIds:null, order_ids:bkOrderIds.length?bkOrderIds:null, ...(_iceProtected ? {} : {icingMaterials}) };
     const ok = await updateBatch(bkEditId, _editFields);
     result = ok ? batches.find(x=>x.id===bkEditId) : null;
   } else {
@@ -29691,7 +29694,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v47.1',
+    app_version: 'v47.2',
     tables: {}
   };
 
@@ -31218,7 +31221,7 @@ async function saveSplitCard(cardIdx) {
   const updates = {};
   if (chocUsed.length) updates.chocolate = chocUsed;
   if (flavUsed.length) updates.flavouring = flavUsed;
-  if (icingMaterials.length) updates.icingMaterials = icingMaterials;
+  if (icingMaterials.length && !(batch.icingMaterials && batch.icingMaterials._v === 3)) updates.icingMaterials = icingMaterials;
   if (Object.keys(updates).length) {
     await updateBatch(batch.id, updates);
   }
