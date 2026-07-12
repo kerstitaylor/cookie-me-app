@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v51.0</title>
+<title>Cookie & Me — Kitchen Manager v51.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -26883,7 +26883,17 @@ async function convertLead(leadId) {
 }
 
 function convertLeadToEngagement(lead, customerId) {
-  activeCampaignId = lead.campaign_id;
+  // If we're not already sitting on this campaign's own detail page (e.g. Convert was clicked
+  // from the main Leads tab), do the full navigation — same as openCustomer() does for orders.
+  // If we ARE already there (Convert clicked from that campaign's own Leads card), skip this —
+  // go('campaigns') + openCampDetail() would reset _campEditMode to false and bounce an Edit-mode
+  // user back to View mode, which is not a real navigation gap, just a state reset to avoid.
+  const s = document.getElementById('s-campaigns');
+  const onThisCampaign = s && s.classList.contains('active') && String(activeCampaignId) === String(lead.campaign_id);
+  if (!onThisCampaign) {
+    go('campaigns');
+    openCampDetail(lead.campaign_id);
+  }
   goCamp('eng-form-panel');
   openEngForm(null);
   custPickerSelect('ef-cust-picker', customerId);
@@ -30596,7 +30606,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v51.0',
+    app_version: 'v51.1',
     tables: {}
   };
 
