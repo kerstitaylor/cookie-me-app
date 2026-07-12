@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v50.1</title>
+<title>Cookie & Me — Kitchen Manager v51.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -23390,6 +23390,7 @@ function openOrderForm(orderId) {
 }
 
 function closeOrderForm() {
+  window._pendingLeadConversion = null;
   custViews('cust-detail-view');
   renderCustDetailOrders();
 }
@@ -23483,6 +23484,7 @@ async function saveOrderForm() {
     if (!newOrder) return;
     const newLines = lines.map(l => ({ _dbId: undefined, ...l, order_id: newOrder.id }));
     await insertOrderLines(newLines.map(l => { const { _dbId, ...fields } = l; return fields; }));
+    await finalizeLeadConversion(newOrder.id, 'order');
   }
 
   showSaveToast('Order saved');
@@ -26411,12 +26413,15 @@ function renderLeadTable() {
       + '<td style="text-align:center;cursor:pointer;" onclick="toggleLeadNeedsReply(\'' + l.id + '\')" title="Needs reply">' + (l.needs_reply ? '🔴' : '⚪') + '</td>'
       + '<td style="text-align:center;"><input type="checkbox" ' + (l.completed?'checked':'') + ' onchange="toggleLeadCompleted(\'' + l.id + '\')"/></td>'
       + '<td><button class="btn btn-sm" onclick="toggleLeadLog(\'' + l.id + '\')" style="font-size:11px;">' + (logOpen ? 'Hide log ▲' : 'Log ▼') + '</button></td>'
+      + '<td>' + (l.customer_id
+          ? '<button class="btn btn-sm" onclick="openCustomer(\'' + l.customer_id + '\')" style="font-size:11px;">View customer</button>'
+          : '<button class="btn btn-sm btn-primary" onclick="convertLead(\'' + l.id + '\')" style="font-size:11px;">Convert</button>') + '</td>'
       + '<td><button class="btn btn-sm" onclick="confirmDeleteLead(\'' + l.id + '\')" style="font-size:11px;color:var(--danger);border-color:var(--danger);">Delete</button></td>'
       + '</tr>'
-      + (logOpen ? '<tr><td colspan="13" style="background:var(--gray-light);">' + renderLeadLogPanel(l) + '</td></tr>' : '');
+      + (logOpen ? '<tr><td colspan="14" style="background:var(--gray-light);">' + renderLeadLogPanel(l) + '</td></tr>' : '');
   }).join('');
   wrap.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
-    + '<tr><th>Name</th><th>Company</th><th>Source</th><th>Status</th><th>Est. qty</th><th>Est. value</th><th>Next action</th><th>Due</th><th>⭐</th><th>Reply</th><th>Done</th><th>Log</th><th></th></tr>'
+    + '<tr><th>Name</th><th>Company</th><th>Source</th><th>Status</th><th>Est. qty</th><th>Est. value</th><th>Next action</th><th>Due</th><th>⭐</th><th>Reply</th><th>Done</th><th>Log</th><th>Convert</th><th></th></tr>'
     + rows + '</table>';
 }
 
@@ -26754,6 +26759,9 @@ function _campLeadRowHtml(l) {
     + '<span style="cursor:pointer;" onclick="toggleLeadStar(\'' + l.id + '\').then(renderCampLeadsCard)">' + (l.starred ? '⭐' : '☆') + '</span>'
     + '<span style="cursor:pointer;" onclick="toggleLeadNeedsReply(\'' + l.id + '\').then(renderCampLeadsCard)" title="Needs reply">' + (l.needs_reply ? '🔴' : '⚪') + '</span>'
     + '<button class="btn btn-sm" onclick="toggleLeadLog(\'' + l.id + '\').then(renderCampLeadsCard)" style="font-size:10px;">' + (logOpen ? 'Hide log ▲' : 'Log ▼') + '</button>'
+    + (l.customer_id
+        ? '<button class="btn btn-sm" onclick="openCustomer(\'' + l.customer_id + '\')" style="font-size:10px;">View customer</button>'
+        : '<button class="btn btn-sm btn-primary" onclick="convertLead(\'' + l.id + '\')" style="font-size:10px;">Convert</button>')
     + '</div>'
     + (logOpen ? '<div style="margin-top:6px;background:var(--white);border-radius:var(--radius);">' + _campLeadLogPanelHtml(l) + '</div>' : '')
     + '</div>';
@@ -26834,6 +26842,78 @@ async function campConfirmAddLeadAnyway() {
   _pendingCampLeadQuickAdd = null;
   _clearCampLeadQuickAddFields();
   renderCampLeadsCard();
+}
+
+// ═══════════════════════════════════════════════════════
+// LEADS — Convert to Customer (engagement / order)
+// ═══════════════════════════════════════════════════════
+
+// Shared customer resolution for both conversion paths — same match criteria as
+// findLeadDuplicate(), and the exact quick-create shape from saveEngagement().
+async function resolveOrCreateCustomerForLead(lead) {
+  const nameLc = (lead.name||'').toLowerCase().trim();
+  const existing = (cfg.customers||[]).find(function(c) {
+    if ((c.name||'').toLowerCase().trim() === nameLc) return true;
+    if (lead.phone && c.phone && c.phone === lead.phone) return true;
+    if (lead.email && c.email && c.email.toLowerCase() === lead.email.toLowerCase()) return true;
+    return false;
+  });
+  if (existing) return existing.id;
+  const newCust = {
+    name: lead.name, phone: lead.phone||'', email: lead.email||'', address: '',
+    type: lead.campaign_id ? 'campaign' : 'individual', additionalTypes: [],
+    quickAdd: true, status: 'active', id: crypto.randomUUID()
+  };
+  if (!cfg.customers) cfg.customers = [];
+  cfg.customers.push(newCust);
+  await saveCfgArrayItem('customers', newCust);
+  return newCust.id;
+}
+
+async function convertLead(leadId) {
+  const lead = (leads||[]).find(function(x) { return String(x.id) === String(leadId); });
+  if (!lead) return;
+  if (lead.customer_id) { openCustomer(lead.customer_id); return; }
+  const customerId = await resolveOrCreateCustomerForLead(lead);
+  if (lead.campaign_id) {
+    convertLeadToEngagement(lead, customerId);
+  } else {
+    convertLeadToOrder(lead, customerId);
+  }
+}
+
+function convertLeadToEngagement(lead, customerId) {
+  activeCampaignId = lead.campaign_id;
+  goCamp('eng-form-panel');
+  openEngForm(null);
+  custPickerSelect('ef-cust-picker', customerId);
+  window._pendingLeadConversion = { leadId: lead.id, customerId: customerId, kind: 'engagement' };
+}
+
+function convertLeadToOrder(lead, customerId) {
+  openCustomer(customerId);
+  // openCustomer()'s own navigation completes after its internal 50ms + 80ms setTimeouts (130ms) — wait past that.
+  setTimeout(function() {
+    openOrderForm();
+  }, 200);
+  window._pendingLeadConversion = { leadId: lead.id, customerId: customerId, kind: 'order' };
+}
+
+// Called after a NEW engagement or order insert succeeds — writes the lead <-> record link back.
+async function finalizeLeadConversion(recordId, kind) {
+  const pending = window._pendingLeadConversion;
+  if (!pending || pending.kind !== kind) return;
+  const fields = {
+    customer_id: pending.customerId,
+    converted_at: new Date().toISOString(),
+    status: 'Converted'
+  };
+  fields[kind === 'engagement' ? 'engagement_id' : 'order_id'] = recordId;
+  await updateLead(pending.leadId, fields);
+  window._pendingLeadConversion = null;
+  if (document.getElementById('lead-table-wrap')) renderLeadTable();
+  if (document.getElementById('camp-leads-card-body')) renderCampLeadsCard();
+  updateLeadsBadge();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -29390,6 +29470,7 @@ function openEngForm(id, returnMode) {
 }
 
 function closeEngForm() {
+  window._pendingLeadConversion = null;
   editEngagementId = null;
   _engLinkedCustomerId = null;
   if (_engFormReturnMode === 'edit') {
@@ -30053,6 +30134,8 @@ async function _doSaveEngagement(f) {
     if(result) showMsg('ef-msg','Engagement saved \u2713','success');
   }
   if (result) {
+    // Only a fresh insert (not an edit) can be the record a pending lead conversion is waiting on
+    if (!editEngagementId) await finalizeLeadConversion(result.id, 'engagement');
     // Tag campaign on customer record
     if (_engLinkedCustomerId && cfg.customers) {
       const cust = cfg.customers.find(x=>x.id===_engLinkedCustomerId);
@@ -30513,7 +30596,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v50.1',
+    app_version: 'v51.0',
     tables: {}
   };
 
