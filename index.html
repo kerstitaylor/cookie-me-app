@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v51.2</title>
+<title>Cookie & Me — Kitchen Manager v52.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2641,14 +2641,17 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <div id="hist-orders-list"></div>
     </div>
     <div id="hist-campaigns" class="section">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
         <select id="hist-camp-filter" onchange="renderHistCampaigns()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--white);color:var(--text);font-family:sans-serif;">
           <option value="">All statuses</option>
           <option value="Draft">Draft</option>
           <option value="Active">Active</option>
           <option value="Closed">Closed</option>
         </select>
-        <button class="btn btn-sm btn-orange" onclick="printRecordsDoc('campaigns')" style="font-size:11px;">🖨 Print</button>
+        <select id="hist-camp-print-picker" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--white);color:var(--text);font-family:sans-serif;">
+          <option value="">All campaigns (date range)</option>
+        </select>
+        <button class="btn btn-sm btn-orange" onclick="printHistCampaigns()" style="font-size:11px;">🖨 Print</button>
       </div>
       <div id="hist-campaigns-list"></div>
     </div>
@@ -28565,6 +28568,7 @@ function renderCampDetailView(el, c) {
         </div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-sm" onclick="printSingleCampaignReport('${c.id}')" style="font-size:11px;">🖨 Print report</button>
         <button class="btn btn-sm" onclick="exportCampCSV('${c.id}')" style="font-size:11px;">⬇ Export CSV</button>
         <button class="btn btn-sm" onclick="exportThankyouNotes('${c.id}')" style="font-size:11px;">💌 Thank you notes</button>
         <button class="btn btn-sm btn-primary" onclick="_campEditMode=true;renderCampDetail();" style="font-size:11px;">✏️ Edit campaign</button>
@@ -30449,6 +30453,20 @@ function resetBkRecipients() {
 }
 
 // ═══════════════════════════════════════════════════════
+// CAMPAIGNS — Print
+// ═══════════════════════════════════════════════════════
+function printSingleCampaignReport(campId) {
+  const c = campaigns.find(x=>x.id===campId);
+  if (!c) { alert('Campaign not found.'); return; }
+  const version = (document.title.match(/v[\d.]+/) || [''])[0] || '';
+  const now = new Date().toLocaleString('en-NZ',{day:'2-digit',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  const styles = _prSharedStyles();
+  const hdr = '<div class="hdr"><div class="hdr-left"><div class="brand-cookie">Cookie &amp; Me</div><div class="brand-sub">CAMPAIGN REPORT ' + version + '</div><h1 style="margin-top:6px">' + esc(c.name) + '</h1><p>Generated: ' + now + '</p></div><button class="no-print" onclick="window.print()" style="padding:8px 16px;background:#122640;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">&#x1F5A8; Print / Save PDF</button></div>';
+  const body = _prBuildCampaigns([c], campEngagements, collectionTemplates, collectionInstances);
+  _prOpenWindow('Cookie & Me — ' + c.name, styles, hdr, body, _prFooter(version, now));
+}
+
+// ═══════════════════════════════════════════════════════
 // CAMPAIGNS — Export
 // ═══════════════════════════════════════════════════════
 function exportCampCSV(campId) {
@@ -30517,6 +30535,8 @@ function exportThankyouNotes(campId) {
 function renderHistCampaigns() {
   const el = document.getElementById('hist-campaigns-list');
   if (!el) return;
+  const sortedCampsForPicker = [...campaigns].sort((a,b)=>(a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()));
+  selOpts('hist-camp-print-picker', sortedCampsForPicker.map(c=>c.name), false, 'All campaigns (date range)', sortedCampsForPicker.map(c=>c.id));
   const filter = (document.getElementById('hist-camp-filter')||{}).value||'';
   let list = [...campaigns].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
   if (filter) list = list.filter(c=>c.status===filter);
@@ -30539,6 +30559,14 @@ function renderHistCampaigns() {
       <button class="btn btn-sm btn-primary" onclick="go('campaigns');setTimeout(()=>openCampDetail('${c.id}'),100)" style="font-size:11px;">Open →</button>
     </div>`;
   }).join('');
+}
+
+// If a specific campaign is picked, print just that one (reusing printSingleCampaignReport);
+// otherwise fall back to the existing date-range bulk report.
+function printHistCampaigns() {
+  const id = (document.getElementById('hist-camp-print-picker')||{}).value || '';
+  if (id) printSingleCampaignReport(id);
+  else printRecordsDoc('campaigns');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -30602,7 +30630,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v51.2',
+    app_version: 'v52.0',
     tables: {}
   };
 
