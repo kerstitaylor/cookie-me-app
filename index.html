@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v51.1</title>
+<title>Cookie & Me — Kitchen Manager v51.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -17573,8 +17573,7 @@ function _prBuildCampaigns(campArr, engArr, collTemplates, collInstances) {
     var engRevenue = engs.reduce(function(s,e){
       if (!e.payments||!e.payments.length) return s;
       var received = e.payments.filter(function(p){ return !p._meta; }).reduce(function(ps,p){ return ps+(parseFloat(p.amount)||0); }, 0);
-      var courierCharged = (e.deliveries||[]).reduce(function(cs,d){ return d.type==='Courier'?cs+(parseFloat(d.courier_charged)||0):cs; }, 0);
-      return s + Math.max(0, received - courierCharged);
+      return s + received;
     }, 0);
     var rev = engRevenue > 0 ? engRevenue : (parseFloat(c.revenue_total)||0);
     var engCourierActual = engs.reduce(function(s,e){ return s+(e.deliveries||[]).reduce(function(ds,d){ return d.type==='Courier'?ds+(parseFloat(d.courier_actual)||0):ds; }, 0); }, 0);
@@ -27847,8 +27846,7 @@ function renderCampList() {
     const engRevenue = engs.reduce(function(s,e){
       if (!e.payments||!e.payments.length) return s;
       var received = e.payments.filter(p=>!p._meta).reduce((ps,p)=>ps+(parseFloat(p.amount)||0),0);
-      var courierCharged = (e.deliveries||[]).reduce((cs,d)=>d.type==='Courier'?cs+(parseFloat(d.courier_charged)||0):cs,0);
-      return s+Math.max(0,received-courierCharged);
+      return s+received;
     },0);
     const rev = engRevenue>0 ? engRevenue : (parseFloat(c.revenue_total)||0);
     const engCourierActual = engs.reduce((s,e)=>s+(e.deliveries||[]).reduce((ds,d)=>d.type==='Courier'?ds+(parseFloat(d.courier_actual)||0):ds,0),0);
@@ -28524,13 +28522,13 @@ function renderCampDetailView(el, c) {
   const statusColour = {Draft:'tag-gray',Active:'tag-green',Closed:'tag-blue'}[c.status]||'tag-gray';
   const linkedBatches = batches.filter(b=>b.campaign_id===c.id);
 
-  // Financials — revenue = sum of all payment rows across all engagements (never amount_owed, never unpaid, never courier)
+  // Financials — revenue = sum of all payment rows across all engagements (never amount_owed, never unpaid)
+  // Courier fees the customer pays ARE real revenue received; the matching courier_actual cost
+  // is deducted below as "Delivery costs" — excluding it here as well would double-count it.
   const engRevenue = engs.reduce(function(s,e){
     if (!e.payments || !e.payments.length) return s;
     var received = e.payments.filter(function(p){ return !p._meta; }).reduce(function(ps,p){ return ps+(parseFloat(p.amount)||0); },0);
-    // Subtract courier charged — that's not our revenue
-    var courierCharged = (e.deliveries||[]).reduce(function(cs,d){ return d.type==='Courier'?cs+(parseFloat(d.courier_charged)||0):cs; },0);
-    return s + Math.max(0, received - courierCharged);
+    return s + received;
   },0);
   const rev = engRevenue > 0 ? engRevenue : (parseFloat(c.revenue_total)||0);
   // Courier actual costs across all engagement delivery rows
@@ -28937,8 +28935,7 @@ function renderCampDetailEdit(el, c) {
   const engRevenueEdit = engsEdit.reduce(function(s,e){
     if (!e.payments || !e.payments.length) return s;
     var received = e.payments.filter(function(p){ return !p._meta; }).reduce(function(ps,p){ return ps+(parseFloat(p.amount)||0); },0);
-    var courierCharged = (e.deliveries||[]).reduce(function(cs,d){ return d.type==='Courier'?cs+(parseFloat(d.courier_charged)||0):cs; },0);
-    return s + Math.max(0, received - courierCharged);
+    return s + received;
   },0);
   const rev = engRevenueEdit > 0 ? engRevenueEdit : (parseFloat(c.revenue_total)||0);
 
@@ -29298,8 +29295,7 @@ async function saveCampaignInline() {
       var calc = engsForCamp.reduce(function(s,e){
         if (!e.payments || !e.payments.length) return s;
         var received = e.payments.filter(function(p){ return !p._meta; }).reduce(function(ps,p){ return ps+(parseFloat(p.amount)||0); },0);
-        var courierCharged = (e.deliveries||[]).reduce(function(cs,d){ return d.type==='Courier'?cs+(parseFloat(d.courier_charged)||0):cs; },0);
-        return s + Math.max(0, received - courierCharged);
+        return s + received;
       },0);
       return calc > 0 ? calc : (parseFloat(document.getElementById('cf-rev')?.value)||null);
     })(),
@@ -30606,7 +30602,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v51.1',
+    app_version: 'v51.2',
     tables: {}
   };
 
@@ -33382,35 +33378,26 @@ function frSetDatePreset(preset) {
 
 // ── Courier helpers ───────────────────────────────────
 
-// What the customer paid for courier — excluded from income
-function frCourierCharged(deliveries) {
-  return (deliveries||[]).reduce(function(s,d){ return d.type==='Courier'?s+(parseFloat(d.courier_charged)||0):s; },0);
-}
-// Our top-up only: max(0, actual − charged) per row
-function frCourierTopup(deliveries) {
-  return (deliveries||[]).reduce(function(s,d){
-    if(d.type!=='Courier') return s;
-    const actual  = parseFloat(d.courier_actual)||0;
-    const charged = parseFloat(d.courier_charged)||0;
-    return s + Math.max(0, actual - charged);
-  },0);
+// Full courier cost actually paid out — the "Delivery costs" line. Courier fees the customer
+// pays are real income (see frOrderReceived/frEngReceived below), so this is never netted
+// against courier_charged here — doing so on both sides double-counted it as a loss.
+function frCourierActual(deliveries) {
+  return (deliveries||[]).reduce(function(s,d){ return d.type==='Courier'?s+(parseFloat(d.courier_actual)||0):s; },0);
 }
 
-// ── Income helpers (exclude courier_charged) ──────────
+// ── Income helpers ─────────────────────────────────────
 
 function frOrderReceived(o) {
-  const payments = (o.payments||[]).filter(p=>!p._meta).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
-  return Math.max(0, payments - frCourierCharged(o.deliveries));
+  return (o.payments||[]).filter(p=>!p._meta).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
 }
 
 function frEngReceived(e) {
-  const payments = (e.payments||[]).filter(p=>!p._meta).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
-  return Math.max(0, payments - frCourierCharged(e.deliveries));
+  return (e.payments||[]).filter(p=>!p._meta).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
 }
 
 // ── COGS helpers ──────────────────────────────────────
 
-// All production/delivery costs on an order (courier topup only, not full charged)
+// All production/delivery costs on an order
 function frOrderCosts(o) {
   const lines = [];
   if (parseFloat(o.cost_ingredients) >0) lines.push({label:'Ingredients',   amount:parseFloat(o.cost_ingredients)});
@@ -33418,8 +33405,8 @@ function frOrderCosts(o) {
   if (parseFloat(o.cost_printing)    >0) lines.push({label:'Printing',      amount:parseFloat(o.cost_printing)});
   if (parseFloat(o.cost_social)      >0) lines.push({label:'Social media',  amount:parseFloat(o.cost_social)});
   if (parseFloat(o.cost_extra_cookies)>0)lines.push({label:'Extra cookies', amount:parseFloat(o.cost_extra_cookies)});
-  const topup = frCourierTopup(o.deliveries);
-  if (topup>0) lines.push({label:'Courier top-up', amount:topup});
+  const courierActual = frCourierActual(o.deliveries);
+  if (courierActual>0) lines.push({label:'Delivery costs', amount:courierActual});
   (o.other_expenses||[]).forEach(function(e){ const a=parseFloat(e.amount); if(a>0) lines.push({label:e.type||'Other', amount:a}); });
   return lines;
 }
@@ -33431,9 +33418,9 @@ function frCampCosts(c, engs) {
   if (parseFloat(c.cost_packaging)      >0) lines.push({label:'Packaging',    amount:parseFloat(c.cost_packaging)});
   if (parseFloat(c.cost_printing)       >0) lines.push({label:'Printing',     amount:parseFloat(c.cost_printing)});
   if (parseFloat(c.social_media_expenses)>0)lines.push({label:'Social media', amount:parseFloat(c.social_media_expenses)});
-  // Courier top-ups across all engagements
-  const topup = (engs||[]).reduce(function(s,e){ return s+frCourierTopup(e.deliveries); },0);
-  if (topup>0) lines.push({label:'Courier top-up', amount:topup});
+  // Full courier cost across all engagements
+  const courierActual = (engs||[]).reduce(function(s,e){ return s+frCourierActual(e.deliveries); },0);
+  if (courierActual>0) lines.push({label:'Delivery costs', amount:courierActual});
   (c.other_expenses||[]).forEach(function(e){ const a=parseFloat(e.amount); if(a>0) lines.push({label:e.type||'Other', amount:a}); });
   return lines;
 }
@@ -33465,7 +33452,8 @@ function renderFinReport() {
   const f = frGetFilters();
 
   // ── Section A: Income ──────────────────────────────
-  // Income = payments received minus courier_charged (pass-through, not our revenue)
+  // Income = full payments received (courier fees the customer pays are real income;
+  // the matching courier_actual cost is deducted in COGS as "Delivery costs")
 
   // A1 — Orders
   let orderRows = [];       // sold orders — income section
@@ -33714,12 +33702,12 @@ function renderFinReport() {
     +'<span>Total income</span><span>'+frFmt(grandReceived)+'</span></div>';
 
   // ── Section B — COGS breakdown ──
-  let bHtml = '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">All costs to make and deliver cookies — ingredients, packaging, printing, social media, courier top-ups, other expenses, and production cost on sold allocations.</div>';
+  let bHtml = '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">All costs to make and deliver cookies — ingredients, packaging, printing, social media, delivery costs, other expenses, and production cost on sold allocations.</div>';
 
   // Orders COGS table
   if (f.inclOrders && orderRows.length) {
     bHtml += '<div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">From orders</div>';
-    const orderCostLabels=['Ingredients','Packaging','Printing','Social media','Extra cookies','Courier top-up'];
+    const orderCostLabels=['Ingredients','Packaging','Printing','Social media','Extra cookies','Delivery costs'];
     bHtml += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;font-family:sans-serif;margin-bottom:4px;">'
       +'<thead><tr style="background:var(--gray-light);"><th style="padding:5px 8px;text-align:left;font-size:11px;color:var(--navy);">Order</th><th style="padding:5px 8px;text-align:left;font-size:11px;color:var(--navy);">Customer</th>';
     orderCostLabels.forEach(function(l){ bHtml+='<th style="padding:5px 8px;text-align:right;font-size:11px;color:var(--navy);">'+l+'</th>'; });
@@ -33749,7 +33737,7 @@ function renderFinReport() {
   // Campaigns COGS table
   if (f.inclCampaigns && campBlocks.length) {
     bHtml += '<div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;margin-top:10px;">From campaigns</div>';
-    const campCostLabels=['Ingredients','Packaging','Printing','Social media','Courier top-up'];
+    const campCostLabels=['Ingredients','Packaging','Printing','Social media','Delivery costs'];
     bHtml += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;font-family:sans-serif;margin-bottom:4px;">'
       +'<thead><tr style="background:var(--gray-light);"><th style="padding:5px 8px;text-align:left;font-size:11px;color:var(--navy);">Campaign</th>';
     campCostLabels.forEach(function(l){ bHtml+='<th style="padding:5px 8px;text-align:right;font-size:11px;color:var(--navy);">'+l+'</th>'; });
@@ -34221,7 +34209,7 @@ function exportFinReportCSV() {
 
   // ── A1 Orders ──
   rows.push(['=== A — INCOME: CUSTOMER ORDERS ===']);
-  rows.push(['Order','Customer','Date','Occasion','Cookies','Payment Status','Received (excl. courier charged)','Ingredients','Packaging','Printing','Social Media','Extra Cookies','Courier Top-up','Other Costs','Alloc CTM','Total COGS','Gross Profit']);
+  rows.push(['Order','Customer','Date','Occasion','Cookies','Payment Status','Received','Ingredients','Packaging','Printing','Social Media','Extra Cookies','Delivery Costs','Other Costs','Alloc CTM','Total COGS','Gross Profit']);
   let pGrandRec=0,pGrandCogs=0;
   let csvOrdersRec=0, csvCampsRec=0;
   let csvOrderGivRows=[]; // non-sold orders for Section C
@@ -34252,15 +34240,15 @@ function exportFinReportCSV() {
       const cs=oLines.map(l=>(l.quantity||'?')+'x '+(l.cookie_type||l.flavour||'?')).join('; ');
       pGrandRec+=rec; pGrandCogs+=gc; csvOrdersRec+=rec;
       const byLabel=function(lbl){ const li=cl.find(x=>x.label===lbl); return li?li.amount.toFixed(2):''; };
-      const otherC=cl.filter(l=>!['Ingredients','Packaging','Printing','Social media','Extra cookies','Courier top-up'].includes(l.label)).reduce((s,l)=>s+l.amount,0);
-      rows.push([o.order_number||'ORD-'+String(o.id).slice(-4),cust?custDisplayName(cust):'—',frOrderDate(o)||'',o.occasion||'',cs,o.payment_status||'',rec.toFixed(2),byLabel('Ingredients'),byLabel('Packaging'),byLabel('Printing'),byLabel('Social media'),byLabel('Extra cookies'),byLabel('Courier top-up'),otherC||'',allocCtm||'',gc.toFixed(2),(rec-gc).toFixed(2)]);
+      const otherC=cl.filter(l=>!['Ingredients','Packaging','Printing','Social media','Extra cookies','Delivery costs'].includes(l.label)).reduce((s,l)=>s+l.amount,0);
+      rows.push([o.order_number||'ORD-'+String(o.id).slice(-4),cust?custDisplayName(cust):'—',frOrderDate(o)||'',o.occasion||'',cs,o.payment_status||'',rec.toFixed(2),byLabel('Ingredients'),byLabel('Packaging'),byLabel('Printing'),byLabel('Social media'),byLabel('Extra cookies'),byLabel('Delivery costs'),otherC||'',allocCtm||'',gc.toFixed(2),(rec-gc).toFixed(2)]);
     });
   }
   rows.push([]);
 
   // ── A2 Campaigns ──
   rows.push(['=== A — INCOME: CAMPAIGNS & MARKET STALLS ===']);
-  rows.push(['Campaign','Close Date','Sold Engagements','Received','Ingredients','Packaging','Printing','Social Media','Courier Top-up','Donation','Other Costs','Alloc CTM','Total COGS','Gross Profit']);
+  rows.push(['Campaign','Close Date','Sold Engagements','Received','Ingredients','Packaging','Printing','Social Media','Delivery Costs','Donation','Other Costs','Alloc CTM','Total COGS','Gross Profit']);
   rows.push(['--- Engagement detail follows each campaign ---']);
   if (f.inclCampaigns) {
     (campaigns||[]).filter(c=>frInDateRange(frCampDate(c),f.from,f.to)).forEach(function(c){
@@ -34273,8 +34261,8 @@ function exportFinReportCSV() {
       const gc=tc+allocCtm;
       pGrandRec+=cr; pGrandCogs+=gc; csvCampsRec+=cr;
       const byLabel=function(lbl){ const li=cl.find(x=>x.label===lbl); return li?li.amount.toFixed(2):''; };
-      const otherC=cl.filter(l=>!['Ingredients','Packaging','Printing','Social media','Courier top-up','Donation paid out'].includes(l.label)).reduce((s,l)=>s+l.amount,0);
-      rows.push([c.name,frCampDate(c)||'',soldEngs.length,cr.toFixed(2),byLabel('Ingredients'),byLabel('Packaging'),byLabel('Printing'),byLabel('Social media'),byLabel('Courier top-up'),byLabel('Donation paid out'),otherC||'',allocCtm||'',gc.toFixed(2),(cr-gc).toFixed(2)]);
+      const otherC=cl.filter(l=>!['Ingredients','Packaging','Printing','Social media','Delivery costs','Donation paid out'].includes(l.label)).reduce((s,l)=>s+l.amount,0);
+      rows.push([c.name,frCampDate(c)||'',soldEngs.length,cr.toFixed(2),byLabel('Ingredients'),byLabel('Packaging'),byLabel('Printing'),byLabel('Social media'),byLabel('Delivery costs'),byLabel('Donation paid out'),otherC||'',allocCtm||'',gc.toFixed(2),(cr-gc).toFixed(2)]);
       rows.push(['','Recipient','Collection Orders','Amount Owed','Discount','Received','Payment Status','Fulfilment Type','Fulfilment Date']);
       soldEngs.forEach(function(e){
         const er=frEngReceived(e);
