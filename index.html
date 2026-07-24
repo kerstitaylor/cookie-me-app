@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v53.0</title>
+<title>Cookie & Me — Kitchen Manager v53.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -17229,6 +17229,60 @@ function _prBuildRecipes(recipes) {
 }
 
 // Pre-compute: customers list (from cfg.customers)
+// Renders one aggregated (by batch_num+type+method, qty summed) direct-allocations table
+// under its own heading. Used by _prBuildCustomers() to keep sold vs given-away separate.
+function _prAllocTable(label, list) {
+  if (!list.length) return '';
+  var allocMap = {};
+  var allocKeys = [];
+  list.forEach(function(a) {
+    var key = (a.batch_num||'') + '|' + (a.type||'') + '|' + (a.method||'');
+    if (!allocMap[key]) {
+      allocMap[key] = { date: a.date||'', batch: a.batch_num||'—', type: a.type||'—', method: a.method||'—', qty: 0 };
+      allocKeys.push(key);
+    }
+    allocMap[key].qty += (a.qty||0);
+    // Keep earliest date
+    if (a.date && (!allocMap[key].date || a.date < allocMap[key].date)) allocMap[key].date = a.date;
+  });
+  var html = '<div style="font-size:10px;font-weight:700;color:#122640;text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-top:8px;margin-bottom:4px;">' + esc(label) + '</div>';
+  html += '<table><tr><th>Date</th><th>Batch</th><th>Qty</th><th>Type</th><th>Method</th></tr>';
+  allocKeys.forEach(function(key) {
+    var a = allocMap[key];
+    html += '<tr>'
+      + '<td>' + esc(a.date) + '</td>'
+      + '<td>' + esc(a.batch) + '</td>'
+      + '<td>' + a.qty + '</td>'
+      + '<td>' + esc(a.type) + '</td>'
+      + '<td>' + esc(a.method) + '</td>'
+      + '</tr>';
+  });
+  html += '</table>';
+  return html;
+}
+
+// Renders one campaign-engagement table (Date/Campaign/Boxes/Type/Amount/Payment) under its
+// own heading. Boxes are a box COUNT, not a cookie count — see collection_orders/templates for
+// per-box cookie size if ever needed. Used by _prBuildCustomers() for campaign purchase history.
+function _prEngagementTable(label, list) {
+  if (!list.length) return '';
+  var html = '<div style="font-size:10px;font-weight:700;color:#122640;text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-top:8px;margin-bottom:4px;">' + esc(label) + '</div>';
+  html += '<table><tr><th>Date</th><th>Campaign</th><th>Boxes</th><th>Type</th><th>Amount</th><th>Payment</th></tr>';
+  list.forEach(function(e) {
+    var camp = (campaigns||[]).find(function(x){ return String(x.id) === String(e.campaign_id); });
+    html += '<tr>'
+      + '<td>' + esc(e.fulfilment_date||'—') + '</td>'
+      + '<td>' + esc(camp ? camp.name : '—') + '</td>'
+      + '<td>' + (e.boxes||0) + '</td>'
+      + '<td>' + esc(e.box_type||'Sold') + '</td>'
+      + '<td>' + (e.amount_owed!=null ? '$'+parseFloat(e.amount_owed).toFixed(2) : '—') + '</td>'
+      + '<td>' + esc(e.payment_status||'—') + '</td>'
+      + '</tr>';
+  });
+  html += '</table>';
+  return html;
+}
+
 function _prBuildCustomers(customers) {
   if (!customers.length) return '<p style="color:#888;font-style:italic">No customers found.</p>';
   // Build groups by type
@@ -17288,11 +17342,20 @@ function _prBuildCustomers(customers) {
         html += '</table>';
       }
 
-      // Direct allocations to this customer (samples, giveaways etc — no order)
+      // Direct, non-campaign allocations to this customer (samples, giveaways etc — no order).
+      // Campaign-linked purchases are reported via custEngagements below instead.
       var custName = c.name || '';
       var custDispName = custDisplayName(c);
       var custDirectAllocs = (allocs||[]).filter(function(a) {
         if (a.type === 'disposal') return false;
+        // Campaign-linked allocs (collection_instance_id set) are excluded here and reported via
+        // campaign_engagements instead (see custEngagements below). The old
+        // collection_instance_id -> campEngagements.find() -> customer_id fallback that used to
+        // live in this branch is REMOVED: a single collection_instance_id is shared by every
+        // customer collecting at that event (collection_instance_id=6 alone spans 10 different
+        // customers' engagements), so .find() picked whichever engagement happened to be first in
+        // the array and misattributed every other customer's cookies to that one customer.
+        if (a.collection_instance_id) return false;
         var r = a.recipient || {};
         var rName = typeof r === 'string' ? r : (r.name || '');
         var rNameLc = rName.toLowerCase();
@@ -17304,40 +17367,23 @@ function _prBuildCustomers(customers) {
           var _prEng = (campEngagements||[]).find(function(e){ return String(e.id) === String(_prEid); });
           if (_prEng && _prEng.customer_id && String(_prEng.customer_id) === String(c.id)) return true;
         }
-        if (a.collection_instance_id) {
-          var _prCollEng = (campEngagements||[]).find(function(e){ return String(e.collection_instance_id) === String(a.collection_instance_id); });
-          if (_prCollEng && _prCollEng.customer_id && String(_prCollEng.customer_id) === String(c.id)) return true;
-        }
         return false;
       });
-      if (custDirectAllocs.length) {
-        // Aggregate by batch_num + type + method
-        var allocMap = {};
-        var allocKeys = [];
-        custDirectAllocs.forEach(function(a) {
-          var key = (a.batch_num||'') + '|' + (a.type||'') + '|' + (a.method||'');
-          if (!allocMap[key]) {
-            allocMap[key] = { date: a.date||'', batch: a.batch_num||'—', type: a.type||'—', method: a.method||'—', qty: 0 };
-            allocKeys.push(key);
-          }
-          allocMap[key].qty += (a.qty||0);
-          // Keep earliest date
-          if (a.date && (!allocMap[key].date || a.date < allocMap[key].date)) allocMap[key].date = a.date;
-        });
-        html += '<div style="font-size:10px;font-weight:700;color:#122640;text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-top:8px;margin-bottom:4px;">Direct allocations (samples / giveaways)</div>';
-        html += '<table><tr><th>Date</th><th>Batch</th><th>Qty</th><th>Type</th><th>Method</th></tr>';
-        allocKeys.forEach(function(key) {
-          var a = allocMap[key];
-          html += '<tr>'
-            + '<td>' + esc(a.date) + '</td>'
-            + '<td>' + esc(a.batch) + '</td>'
-            + '<td>' + a.qty + '</td>'
-            + '<td>' + esc(a.type) + '</td>'
-            + '<td>' + esc(a.method) + '</td>'
-            + '</tr>';
-        });
-        html += '</table>';
-      }
+      var custSoldAllocs = custDirectAllocs.filter(function(a){ return a.type === 'sold'; });
+      var custGivenAllocs = custDirectAllocs.filter(function(a){ return a.type !== 'sold'; });
+
+      // Campaign purchase history, filtered by customer_id the same way orders are above.
+      // Reuses the Financial Report's box_type convention (missing box_type defaults to Sold;
+      // 'Gifted'/'Disposed' are non-revenue) — see e.g. lines ~34198, ~34245.
+      var custEngagements = (campEngagements||[]).filter(function(e){ return String(e.customer_id) === String(c.id); })
+        .sort(function(a,b){ return (a.fulfilment_date||'').localeCompare(b.fulfilment_date||''); });
+      var custSoldEngs = custEngagements.filter(function(e){ return !e.box_type || e.box_type === 'Sold'; });
+      var custGivenEngs = custEngagements.filter(function(e){ return e.box_type === 'Gifted' || e.box_type === 'Disposed'; });
+
+      html += _prEngagementTable('Campaign — Sold (paid)', custSoldEngs);
+      html += _prEngagementTable('Campaign — Gifted / Disposed', custGivenEngs);
+      html += _prAllocTable('Non-campaign direct sales (paid)', custSoldAllocs);
+      html += _prAllocTable('Non-campaign giveaways (samples, gifts, testing, etc.)', custGivenAllocs);
 
       html += '</div>'; // end customer card
     });
@@ -17361,6 +17407,7 @@ function _custReportGather(c) {
   var custDispName = custDisplayName(c);
   var custDirectAllocs = (allocs||[]).filter(function(a) {
     if (a.type === 'disposal') return false;
+    if (a.collection_instance_id) return false; // see _prBuildCustomers() for why
     var r = a.recipient || {};
     var rName = typeof r === 'string' ? r : (r.name || '');
     var rNameLc = rName.toLowerCase();
@@ -17372,14 +17419,27 @@ function _custReportGather(c) {
       var _crEng = (campEngagements||[]).find(function(e){ return String(e.id) === String(_crEid); });
       if (_crEng && _crEng.customer_id && String(_crEng.customer_id) === String(c.id)) return true;
     }
-    if (a.collection_instance_id) {
-      var _crCollEng = (campEngagements||[]).find(function(e){ return String(e.collection_instance_id) === String(a.collection_instance_id); });
-      if (_crCollEng && _crCollEng.customer_id && String(_crCollEng.customer_id) === String(c.id)) return true;
-    }
     return false;
   });
 
-  return { orders: custOrders, directAllocs: custDirectAllocs };
+  var custSoldAllocs = custDirectAllocs.filter(function(a){ return a.type === 'sold'; });
+  var custGivenAllocs = custDirectAllocs.filter(function(a){ return a.type !== 'sold'; });
+  var soldQty = custSoldAllocs.reduce(function(s,a){ return s + (a.qty||0); }, 0);
+  var givenQty = custGivenAllocs.reduce(function(s,a){ return s + (a.qty||0); }, 0);
+  var orderCookieQty = custOrders.reduce(function(s,o){ return s + (_orderCookieSummary(o).qty || 0); }, 0);
+
+  var custEngagements = (campEngagements||[]).filter(function(e){ return String(e.customer_id) === String(c.id); });
+  var soldEngs = custEngagements.filter(function(e){ return !e.box_type || e.box_type === 'Sold'; });
+  var givenEngs = custEngagements.filter(function(e){ return e.box_type === 'Gifted' || e.box_type === 'Disposed'; });
+  var soldBoxes = soldEngs.reduce(function(s,e){ return s + (e.boxes||0); }, 0);
+  var givenBoxes = givenEngs.reduce(function(s,e){ return s + (e.boxes||0); }, 0);
+  var soldAmount = soldEngs.reduce(function(s,e){ return s + (parseFloat(e.amount_owed)||0); }, 0);
+
+  return {
+    orders: custOrders, directAllocs: custDirectAllocs,
+    soldQty: soldQty, givenQty: givenQty, orderCookieQty: orderCookieQty,
+    engagements: custEngagements, soldBoxes: soldBoxes, givenBoxes: givenBoxes, soldAmount: soldAmount
+  };
 }
 
 function openCustomerReport() {
@@ -17402,14 +17462,16 @@ function renderCustomerReport() {
 
 function exportCustomersCSV() {
   var list = (cfg.customers||[]).slice();
-  var headers = ['Name','Org','Type','Phone','Email','Address','Notes','Order Count','Last Order Date','Order Numbers','Samples/Giveaways Count'];
+  var headers = ['Name','Org','Type','Phone','Email','Address','Notes','Order Count','Last Order Date','Order Numbers','Order Cookie Qty','Campaign Boxes Sold','Campaign Boxes Gifted/Disposed','Campaign Sales Amount ($)','Other Items Sold (qty)','Other Items Given Away (qty)'];
   var rows = list.map(function(c) {
     var data = _custReportGather(c);
     var orderNums = data.orders.map(function(o){ return o.order_number || ('ORD-' + String(o.id).slice(-4)); });
     var lastOrderDate = data.orders.length ? (data.orders[data.orders.length-1].date_placed||'') : '';
     return [
       c.name||'', c.org||'', c.type||'', c.phone||'', c.email||'', c.address||'', c.notes||'',
-      data.orders.length, lastOrderDate, orderNums.join('; '), data.directAllocs.length
+      data.orders.length, lastOrderDate, orderNums.join('; '), data.orderCookieQty,
+      data.soldBoxes, data.givenBoxes, data.soldAmount.toFixed(2),
+      data.soldQty, data.givenQty
     ];
   });
   downloadCSV('cookie_me_customers_' + new Date().toISOString().slice(0,10) + '.csv', headers, rows);
@@ -30738,7 +30800,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v53.0',
+    app_version: 'v53.1',
     tables: {}
   };
 
