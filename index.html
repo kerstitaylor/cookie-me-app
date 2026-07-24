@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v53.1</title>
+<title>Cookie & Me — Kitchen Manager v54.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -5045,12 +5045,18 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
     <div style="font-size:17px;font-weight:700;color:var(--navy);margin-bottom:4px;">📋 Customer Report</div>
     <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:12px;">All customers grouped by type, with contact details and order / allocation history.</div>
 
+    <div class="type-pills" id="cr-type-pills">
+      <button class="type-pill active" data-type="" onclick="setCrTypeFilter('')">All</button>
+      <button class="type-pill" data-type="individual" onclick="setCrTypeFilter('individual')">Individual</button>
+      <button class="type-pill" data-type="corporate" onclick="setCrTypeFilter('corporate')">Corporate</button>
+      <button class="type-pill" data-type="campaign" onclick="setCrTypeFilter('campaign')">Campaign</button>
+    </div>
     <input class="search-input" id="cr-search" placeholder="Search by name or organisation..." oninput="renderCustomerReport()" style="margin-bottom:10px;"/>
 
     <!-- Action buttons -->
     <div style="display:flex;gap:8px;margin-bottom:12px;">
       <button class="btn" style="flex:1;" onclick="printRecordsDoc('customers')">🖨 Print</button>
-      <button class="btn" style="flex:1;" onclick="exportCustomersCSV()">⬇ Export CSV</button>
+      <button class="btn" style="flex:1;" onclick="exportCustomersCSV(true)">⬇ Export CSV</button>
     </div>
 
     <!-- Report output -->
@@ -17324,7 +17330,7 @@ function _prBuildCustomers(customers) {
         .sort(function(a,b){ return (a.date_placed||'').localeCompare(b.date_placed||''); });
       if (custOrders.length) {
         html += '<div style="font-size:10px;font-weight:700;color:#122640;text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-bottom:4px;">Orders</div>';
-        html += '<table><tr><th>Order #</th><th>Date</th><th>Occasion</th><th>Cookies</th><th>Batches</th><th>Status</th></tr>';
+        html += '<table><tr><th>Order #</th><th>Date</th><th>Occasion</th><th>Cookies</th><th>Batches</th><th>Status</th><th>Amount</th><th>Payment</th></tr>';
         custOrders.forEach(function(o) {
           var oNum = o.order_number || ('ORD-' + String(o.id).slice(-4));
           var batchNums = _getOrderBatchNums(o).map(function(x){ return x.num; }).join(', ') || '—';
@@ -17337,6 +17343,8 @@ function _prBuildCustomers(customers) {
             + '<td>' + qtyDisplay + '</td>'
             + '<td style="font-size:11px;">' + esc(batchNums) + '</td>'
             + '<td>' + esc(o.status||'—') + '</td>'
+            + '<td>$' + frOrderReceived(o).toFixed(2) + '</td>'
+            + '<td>' + esc(o.payment_status||'—') + '</td>'
             + '</tr>';
         });
         html += '</table>';
@@ -17427,6 +17435,10 @@ function _custReportGather(c) {
   var soldQty = custSoldAllocs.reduce(function(s,a){ return s + (a.qty||0); }, 0);
   var givenQty = custGivenAllocs.reduce(function(s,a){ return s + (a.qty||0); }, 0);
   var orderCookieQty = custOrders.reduce(function(s,o){ return s + (_orderCookieSummary(o).qty || 0); }, 0);
+  // Reuses the Financial Report's exact payments-sum logic (frOrderReceived) rather than
+  // o.total, since o.total is the agreed price and may exceed what's actually been paid.
+  var orderAmountReceived = custOrders.reduce(function(s,o){ return s + frOrderReceived(o); }, 0);
+  var ordersPaidCount = custOrders.filter(function(o){ return o.payment_status === 'Paid'; }).length;
 
   var custEngagements = (campEngagements||[]).filter(function(e){ return String(e.customer_id) === String(c.id); });
   var soldEngs = custEngagements.filter(function(e){ return !e.box_type || e.box_type === 'Sold'; });
@@ -17438,6 +17450,7 @@ function _custReportGather(c) {
   return {
     orders: custOrders, directAllocs: custDirectAllocs,
     soldQty: soldQty, givenQty: givenQty, orderCookieQty: orderCookieQty,
+    orderAmountReceived: orderAmountReceived, ordersPaidCount: ordersPaidCount,
     engagements: custEngagements, soldBoxes: soldBoxes, givenBoxes: givenBoxes, soldAmount: soldAmount
   };
 }
@@ -17447,22 +17460,44 @@ function openCustomerReport() {
   go('records');
 }
 
-function renderCustomerReport() {
-  var q = ((document.getElementById('cr-search')||{}).value||'').trim().toLowerCase();
-  var list = (cfg.customers||[]).slice();
+// Type filter for the onscreen Customer Report only — separate from _custTypeFilter (the live
+// cust-b2b screen's own filter state) to avoid touching that screen's behaviour.
+var _crTypeFilter = '';
+function setCrTypeFilter(type) {
+  _crTypeFilter = type;
+  document.querySelectorAll('#cr-type-pills .type-pill').forEach(function(el){
+    el.classList.toggle('active', el.dataset.type === type);
+  });
+  renderCustomerReport();
+}
+
+function _crFilterList(list, q) {
   if (q) {
     list = list.filter(function(c) {
       var hay = ((c.name||'') + ' ' + (c.org||'')).toLowerCase();
       return hay.indexOf(q) !== -1;
     });
   }
+  if (_crTypeFilter) {
+    list = list.filter(function(c){ return c.type === _crTypeFilter || (c.additionalTypes||[]).includes(_crTypeFilter); });
+  }
+  return list;
+}
+
+function renderCustomerReport() {
+  var q = ((document.getElementById('cr-search')||{}).value||'').trim().toLowerCase();
+  var list = _crFilterList((cfg.customers||[]).slice(), q);
   var body = document.getElementById('cr-body');
   if (body) body.innerHTML = _prBuildCustomers(list);
 }
 
-function exportCustomersCSV() {
+function exportCustomersCSV(useCurrentFilters) {
   var list = (cfg.customers||[]).slice();
-  var headers = ['Name','Org','Type','Phone','Email','Address','Notes','Order Count','Last Order Date','Order Numbers','Order Cookie Qty','Campaign Boxes Sold','Campaign Boxes Gifted/Disposed','Campaign Sales Amount ($)','Other Items Sold (qty)','Other Items Given Away (qty)'];
+  if (useCurrentFilters) {
+    var q = ((document.getElementById('cr-search')||{}).value||'').trim().toLowerCase();
+    list = _crFilterList(list, q);
+  }
+  var headers = ['Name','Org','Type','Phone','Email','Address','Notes','Order Count','Last Order Date','Order Numbers','Order Cookie Qty','Order Amount Received ($)','Orders Paid Count','Campaign Boxes Sold','Campaign Boxes Gifted/Disposed','Campaign Sales Amount ($)','Other Items Sold (qty)','Other Items Given Away (qty)'];
   var rows = list.map(function(c) {
     var data = _custReportGather(c);
     var orderNums = data.orders.map(function(o){ return o.order_number || ('ORD-' + String(o.id).slice(-4)); });
@@ -17470,6 +17505,7 @@ function exportCustomersCSV() {
     return [
       c.name||'', c.org||'', c.type||'', c.phone||'', c.email||'', c.address||'', c.notes||'',
       data.orders.length, lastOrderDate, orderNums.join('; '), data.orderCookieQty,
+      data.orderAmountReceived.toFixed(2), data.ordersPaidCount,
       data.soldBoxes, data.givenBoxes, data.soldAmount.toFixed(2),
       data.soldQty, data.givenQty
     ];
@@ -30800,7 +30836,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v53.1',
+    app_version: 'v54.0',
     tables: {}
   };
 
