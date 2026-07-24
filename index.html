@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v52.0</title>
+<title>Cookie & Me — Kitchen Manager v53.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -562,6 +562,13 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
   padding: 28px 24px; max-width: 320px; width: 100%; text-align: center;
   box-shadow: 0 8px 40px rgba(0,0,0,0.25);
 }
+
+/* Customer Report — onscreen rendering of _prBuildCustomers() output */
+.pr-embed h2 { font-size: 13px; color: var(--navy); border-bottom: 2px solid var(--orange); padding-bottom: 3px; margin: 16px 0 8px; font-family: sans-serif; }
+.pr-embed table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+.pr-embed th, .pr-embed td { padding: 5px 8px; border: 1px solid var(--border); text-align: left; font-size: 11px; vertical-align: top; font-family: sans-serif; }
+.pr-embed th { background: var(--gray-light); font-weight: 600; color: var(--navy); }
+.pr-embed tr:nth-child(even) td { background: var(--cream); }
 </style>
 </head>
 <body>
@@ -3057,6 +3064,14 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </div>
         </div>
 
+        <!-- CUSTOMERS -->
+        <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden">
+          <div style="background:var(--gray-light);padding:8px 12px;font-size:12px;font-weight:700;font-family:sans-serif;color:var(--navy)">👤 Customers</div>
+          <div style="padding:10px 12px">
+            <button class="btn btn-primary" onclick="exportCustomersCSV()" style="width:100%;">⬇ Export CSV</button>
+          </div>
+        </div>
+
         <!-- B2B SALES -->
         <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden">
           <div style="background:var(--gray-light);padding:8px 12px;font-size:12px;font-weight:700;font-family:sans-serif;color:var(--navy)">&#127970; B2B sales</div>
@@ -4833,6 +4848,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.07em;font-family:sans-serif;margin-bottom:10px;">💰 Sales records</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         <button class="btn" onclick="go('customers');setTimeout(()=>goCust('cust-b2b'),60)">Customers</button>
+        <button class="btn" onclick="openCustomerReport()">📋 Customer Report</button>
         <button class="btn" onclick="go('hist');setTimeout(()=>goHist('hist-orders'),60)">Orders</button>
         <button class="btn" onclick="go('hist');setTimeout(()=>goHist('hist-campaigns'),60)">Campaigns</button>
         <button class="btn" onclick="go('customers');setTimeout(()=>goCust('cust-b2b'),60)">B2B Sales</button>
@@ -5018,6 +5034,27 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 
     <!-- Report output -->
     <div id="fin-report-output"></div>
+  </div>
+
+  <!-- ═══ CUSTOMER REPORT SECTION ═══ -->
+  <div id="s-customer-report" class="section" style="padding:12px 16px 0;">
+
+    <!-- Back button -->
+    <button class="btn btn-sm" style="margin-bottom:12px;font-size:12px;" onclick="_activeSubSection['records']='__hub__';go('records')">← Records</button>
+
+    <div style="font-size:17px;font-weight:700;color:var(--navy);margin-bottom:4px;">📋 Customer Report</div>
+    <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:12px;">All customers grouped by type, with contact details and order / allocation history.</div>
+
+    <input class="search-input" id="cr-search" placeholder="Search by name or organisation..." oninput="renderCustomerReport()" style="margin-bottom:10px;"/>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="btn" style="flex:1;" onclick="printRecordsDoc('customers')">🖨 Print</button>
+      <button class="btn" style="flex:1;" onclick="exportCustomersCSV()">⬇ Export CSV</button>
+    </div>
+
+    <!-- Report output -->
+    <div id="cr-body" class="pr-embed"></div>
   </div>
 
 </div>
@@ -7832,6 +7869,7 @@ function go(t) {
         hist:            ()=>{ document.getElementById('s-hist').classList.add('active'); renderHist(); },
         configure:       ()=>{ document.getElementById('s-configure').classList.add('active'); renderConfigure(); },
         'fin-report':    ()=>{ document.getElementById('s-fin-report').classList.add('active'); renderFinReport(); },
+        'customer-report': ()=>{ document.getElementById('s-customer-report').classList.add('active'); renderCustomerReport(); },
         'icing-report':  ()=>{ document.getElementById('s-icing-report').classList.add('active'); renderIcingReport(); },
         'stocktake-report': ()=>{ document.getElementById('s-stocktake-report').classList.add('active'); renderStocktakeReport(); },
         'trusted-suppliers': ()=>{ document.getElementById('s-trusted-suppliers').classList.add('active'); renderTrustedSuppliers(); },
@@ -17305,6 +17343,76 @@ function _prBuildCustomers(customers) {
     });
   });
   return html;
+}
+
+// ═══════════════════════════════════════════════════════
+// CUSTOMER REPORT — onscreen + CSV
+// Renders _prBuildCustomers()'s HTML directly into an onscreen container (styled via the
+// .pr-embed rules in <head>) so the onscreen view, Print, and CSV all read from the same
+// customer/order/allocation data. _custReportGather() mirrors (does not modify) the
+// customer->orders and customer->direct-allocations matching logic inside _prBuildCustomers()
+// above, so CSV export stays consistent with what Print and the onscreen view show.
+// ═══════════════════════════════════════════════════════
+function _custReportGather(c) {
+  var custOrders = (orders||[]).filter(function(o){ return String(o.customer_id) === String(c.id); })
+    .sort(function(a,b){ return (a.date_placed||'').localeCompare(b.date_placed||''); });
+
+  var custName = c.name || '';
+  var custDispName = custDisplayName(c);
+  var custDirectAllocs = (allocs||[]).filter(function(a) {
+    if (a.type === 'disposal') return false;
+    var r = a.recipient || {};
+    var rName = typeof r === 'string' ? r : (r.name || '');
+    var rNameLc = rName.toLowerCase();
+    if (typeof r === 'object' && r.customerId && String(r.customerId) === String(c.id)) return true;
+    if (rNameLc === custName.toLowerCase()) return true;
+    if (custDispName && custDispName !== custName && rNameLc === custDispName.toLowerCase()) return true;
+    if (a.notes && a.notes.indexOf('eng:') === 0) {
+      var _crEid = a.notes.slice(4);
+      var _crEng = (campEngagements||[]).find(function(e){ return String(e.id) === String(_crEid); });
+      if (_crEng && _crEng.customer_id && String(_crEng.customer_id) === String(c.id)) return true;
+    }
+    if (a.collection_instance_id) {
+      var _crCollEng = (campEngagements||[]).find(function(e){ return String(e.collection_instance_id) === String(a.collection_instance_id); });
+      if (_crCollEng && _crCollEng.customer_id && String(_crCollEng.customer_id) === String(c.id)) return true;
+    }
+    return false;
+  });
+
+  return { orders: custOrders, directAllocs: custDirectAllocs };
+}
+
+function openCustomerReport() {
+  _activeSubSection['records'] = 'customer-report';
+  go('records');
+}
+
+function renderCustomerReport() {
+  var q = ((document.getElementById('cr-search')||{}).value||'').trim().toLowerCase();
+  var list = (cfg.customers||[]).slice();
+  if (q) {
+    list = list.filter(function(c) {
+      var hay = ((c.name||'') + ' ' + (c.org||'')).toLowerCase();
+      return hay.indexOf(q) !== -1;
+    });
+  }
+  var body = document.getElementById('cr-body');
+  if (body) body.innerHTML = _prBuildCustomers(list);
+}
+
+function exportCustomersCSV() {
+  var list = (cfg.customers||[]).slice();
+  var headers = ['Name','Org','Type','Phone','Email','Address','Notes','Order Count','Last Order Date','Order Numbers','Samples/Giveaways Count'];
+  var rows = list.map(function(c) {
+    var data = _custReportGather(c);
+    var orderNums = data.orders.map(function(o){ return o.order_number || ('ORD-' + String(o.id).slice(-4)); });
+    var lastOrderDate = data.orders.length ? (data.orders[data.orders.length-1].date_placed||'') : '';
+    return [
+      c.name||'', c.org||'', c.type||'', c.phone||'', c.email||'', c.address||'', c.notes||'',
+      data.orders.length, lastOrderDate, orderNums.join('; '), data.directAllocs.length
+    ];
+  });
+  downloadCSV('cookie_me_customers_' + new Date().toISOString().slice(0,10) + '.csv', headers, rows);
 }
 
 function _prBuildLeads(list, includeLogs) {
@@ -30630,7 +30738,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v52.0',
+    app_version: 'v53.0',
     tables: {}
   };
 
