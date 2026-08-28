@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v54.0</title>
+<title>Cookie & Me — Kitchen Manager v55.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2093,6 +2093,8 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           <button class="btn btn-sm" onclick="closeEngForm()">✕ Cancel</button>
         </div>
 
+        <div id="ef-website-banner" style="display:none;background:var(--warning-bg);border-left:3px solid var(--warning);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px;font-size:12px;font-family:sans-serif;"></div>
+
         <div class="field"><label>Customer</label>
           <div id="ef-cust-picker" class="cust-picker-wrap">
             <input class="cust-picker-input" id="ef-name" placeholder="Search or add customer..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"/>
@@ -2184,6 +2186,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
               <select id="ef-pay-method">
                 <option value="Bank transfer">Bank transfer</option>
                 <option value="Cash">Cash</option>
+                <option value="Website">Website</option>
               </select>
             </div>
           </div>
@@ -5330,6 +5333,9 @@ let leadStatusFilter = ['New','In Contact','Waiting Reply','Ready to Convert','C
 let leadSearchQuery = ''; // client-side name/company/phone/email search
 let leadCampaignFilter = ''; // '' = all leads, 'unassigned' = no campaign_id, or a campaign id
 let leadLogExpanded = {}; // lead id -> bool, which message log panels are expanded
+let websiteOrders = []; // pending website gift box orders (logs rows, log_type 'website_order_pending')
+let campOrdersFilter = { confirmed:'', paid:'', delivery:'', dateFrom:'', dateTo:'' }; // Campaign Orders table filters
+let campOrdersShowDone = false; // include Delivered engagements and Converted/Lost enquiries
 let recentSetupSessions = []; // last 10 setup checklist records for date pickers
 let _colTemplateFormOpen = false; // is template form visible
 let _colInstanceFormOpen = false; // is instance form visible
@@ -7564,6 +7570,7 @@ async function init() {
     safeLoad(loadCampaigns, 'campaigns'),
     safeLoad(loadCampEngagements, 'campEngagements'),
     safeLoad(loadLeads, 'leads'),
+    safeLoad(loadWebsiteOrders, 'websiteOrders'),
     safeLoad(loadCollectionTemplates, 'collectionTemplates'),
     safeLoad(loadCollectionInstances, 'collectionInstances'),
     safeLoad(loadRecentSetupSessions, 'recentSetupSessions'),
@@ -26370,6 +26377,18 @@ async function loadLeads() {
   if (!error && data) leads = data;
 }
 
+// Pending website gift box orders. The public website writes one logs row per paid order
+// (log_type 'website_order_pending'); the kitchen app reads them here and turns the ones it
+// confirms into real campaign_engagements. Nothing is ever hard-deleted — a reviewed order is
+// stamped inside data and its log_type is moved to 'website_order_reviewed'.
+async function loadWebsiteOrders() {
+  const { data, error } = await db.from('logs')
+    .select('*')
+    .eq('log_type', 'website_order_pending')
+    .order('id', { ascending: false });
+  if (!error && data) websiteOrders = data.filter(function(r){ return !(r.data && r.data.reviewed); });
+}
+
 async function loadCollectionTemplates() {
   const { data, error } = await db.from('collection_templates').select('*').order('id', { ascending: true });
   if (!error && data) collectionTemplates = data;
@@ -27041,6 +27060,7 @@ async function addCampLeadQuick() {
   await _doInsertLeadQuick(fields);
   _clearCampLeadQuickAddFields();
   renderCampLeadsCard();
+  renderCampOrders();
 }
 
 async function campConfirmAddLeadAnyway() {
@@ -27050,7 +27070,532 @@ async function campConfirmAddLeadAnyway() {
   _pendingCampLeadQuickAdd = null;
   _clearCampLeadQuickAddFields();
   renderCampLeadsCard();
+  renderCampOrders();
 }
+
+// ═══════════════════════════════════════════════════════
+// CAMPAIGN ORDERS — one fulfilment table per campaign
+// ═══════════════════════════════════════════════════════
+// Replaces the small Leads box that used to sit on the campaign page. Pulls three
+// sources into a single table for one campaign:
+//   1. pending website orders sitting in logs, not yet reviewed → "New, needs review"
+//   2. leads tied to this campaign, not yet converted           → "Enquiry"
+//   3. campaign_engagements                                     → fulfilment_stage
+//      ("Order Confirmed" / "Prepared" / "Delivered")
+// Only engagements are real records; the first two are pre-order data waiting to become one.
+
+const ENGAGEMENT_STAGES = ['Order Confirmed', 'Prepared', 'Delivered'];
+const CAMP_ORDER_STAGES = ['New, needs review', 'Enquiry'].concat(ENGAGEMENT_STAGES);
+const CAMP_ORDER_DELIVERY_METHODS = ['Collect', 'Delivered by us', 'Courier'];
+const CAMP_ORDER_STAGE_STYLE = {
+  'New, needs review': 'background:var(--warning-bg);color:var(--warning);',
+  'Enquiry':           'background:var(--gray-light);color:var(--text-muted);',
+  'Order Confirmed':   'background:#eef2fb;color:var(--navy);',
+  'Prepared':          'background:#fff5f1;color:var(--orange);',
+  'Delivered':         'background:var(--success-bg);color:var(--success);'
+};
+
+// ── Website order payload ─────────────────────────────────────────────────
+// The website's own job writes the logs row, so this reader stays tolerant: it takes
+// the documented nested shape and falls back to flat aliases for the same fields.
+function _woDeliveryMethod(raw) {
+  const v = String(raw == null ? '' : raw).toLowerCase().trim();
+  if (!v) return '';
+  if (v.indexOf('courier') > -1 || v.indexOf('post') > -1 || v.indexOf('ship') > -1) return 'Courier';
+  if (v.indexOf('collect') > -1 || v.indexOf('pickup') > -1 || v.indexOf('pick up') > -1) return 'Collect';
+  if (v.indexOf('deliver') > -1) return 'Delivered by us';
+  return '';
+}
+
+function _woCourierService(raw) {
+  const v = String(raw == null ? '' : raw).toLowerCase().trim();
+  if (!v) return '';
+  if (v.indexOf('overnight') > -1 || v.indexOf('express') > -1 || v.indexOf('next day') > -1) return 'Overnight';
+  if (v.indexOf('economy') > -1 || v.indexOf('standard') > -1 || v.indexOf('saver') > -1) return 'Economy';
+  return '';
+}
+
+function _woNorm(logRow) {
+  const d = (logRow && logRow.data) || {};
+  const cust = d.customer || d.buyer || {};
+  const del = d.delivery || d.shipping || {};
+  const items = Array.isArray(d.items) ? d.items : (Array.isArray(d.line_items) ? d.line_items : []);
+  const itemBoxes = items.reduce(function(s, it){ return s + (parseInt(it.qty != null ? it.qty : it.quantity) || 0); }, 0);
+  const boxes = parseInt(d.boxes != null ? d.boxes : itemBoxes) || itemBoxes || 1;
+  const payStatusRaw = String(d.payment_status || d.status || '').toLowerCase();
+  const paid = payStatusRaw ? (payStatusRaw.indexOf('paid') > -1 && payStatusRaw.indexOf('unpaid') === -1) : true;
+  return {
+    logId:          logRow.id,
+    campaignId:     d.campaign_id || d.campaignId || null,
+    orderRef:       d.order_ref || d.order_number || d.reference || '',
+    orderedAt:      d.ordered_at || logRow.saved_at || logRow.created_at || '',
+    name:           d.customer_name || cust.name || d.name || '',
+    phone:          cust.phone || d.phone || '',
+    email:          cust.email || d.email || '',
+    boxes:          boxes,
+    boxType:        d.box_type || 'Sold',
+    items:          items,
+    amount:         parseFloat(d.amount_paid != null ? d.amount_paid : (d.total != null ? d.total : d.amount)) || null,
+    paid:           paid,
+    paymentMethod:  d.payment_method || 'Website',
+    method:         _woDeliveryMethod(del.method || del.type || d.delivery_method || d.fulfilment_type || ''),
+    courierService: _woCourierService(del.service || del.courier_service || d.courier_service || ''),
+    dueDate:        (del.date || del.delivery_date || d.delivery_date || d.fulfilment_date || '') || '',
+    address:        del.address || cust.address || d.address || '',
+    recipientName:  del.recipient_name || d.recipient_name || '',
+    cardMessage:    d.card_message || d.gift_message || d.message || '',
+    notes:          d.notes || ''
+  };
+}
+
+// ── Row building ──────────────────────────────────────────────────────────
+// Customer's saved address, for delivery rows flagged "use customer's address".
+function _campOrderCustAddress(customerId) {
+  if (!customerId) return '';
+  const c = (cfg.customers || []).find(function(x){ return x && String(x.id) === String(customerId); });
+  return c ? (c.address || '') : '';
+}
+
+function _campOrderEngOrderText(e) {
+  const cols = e.collection_orders || [];
+  if (cols.length) {
+    return cols.map(function(r) {
+      const qty = r.qty || 0;
+      const t = collectionTemplates.find(function(x){ return String(x.id) === String(r.template_id); });
+      const label = t ? (' × ' + t.name) : (' box' + (qty === 1 ? '' : 'es'));
+      return qty + label + (r.box_type && r.box_type !== 'Sold' ? ' (' + r.box_type + ')' : '');
+    }).join(', ');
+  }
+  if (e.boxes) return e.boxes + ' box' + (e.boxes === 1 ? '' : 'es') + (e.box_type && e.box_type !== 'Sold' ? ' (' + e.box_type + ')' : '');
+  return '—';
+}
+
+function _campOrderEngRow(e) {
+  const dels = (e.deliveries && e.deliveries.length) ? e.deliveries : [{
+    type: e.fulfilment_type || 'Collect', date: e.fulfilment_date || '', address: e.address || ''
+  }];
+  const methods = [];
+  dels.forEach(function(d){ if (d.type && methods.indexOf(d.type) === -1) methods.push(d.type); });
+  const dates = dels.map(function(d){ return d.date; }).filter(Boolean).sort();
+  const shipBys = dels.filter(function(d){ return d.type === 'Courier' && d.ship_by; }).map(function(d){ return d.ship_by; }).sort();
+  const addrs = [];
+  dels.forEach(function(d) {
+    if (d.type === 'Collect') return;
+    const a = d.use_cust_addr ? _campOrderCustAddress(e.customer_id) : (d.address || '');
+    if (a && addrs.indexOf(a) === -1) addrs.push(a);
+  });
+  if (!addrs.length && e.address && methods.some(function(m){ return m !== 'Collect'; })) addrs.push(e.address);
+  const liveCust = e.customer_id ? (cfg.customers || []).find(function(c){ return c && String(c.id) === String(e.customer_id); }) : null;
+  return {
+    kind:       'engagement',
+    id:         e.id,
+    stage:      e.fulfilment_stage || 'Order Confirmed',
+    name:       liveCust ? custDisplayName(liveCust) : (e.name || '—'),
+    orderText:  _campOrderEngOrderText(e),
+    confirmed:  true,
+    paid:       e.payment_status || 'Unpaid',
+    methods:    methods,
+    courierService: (dels.find(function(d){ return d.type === 'Courier' && d.courier_service; }) || {}).courier_service || '',
+    dueDate:    dates[0] || '',
+    shipBy:     shipBys[0] || '',
+    address:    addrs.join(' / '),
+    notes:      e.notes || '',
+    customerId: e.customer_id || null,
+    raw:        e
+  };
+}
+
+function _campOrderLeadRow(l) {
+  return {
+    kind:      'lead',
+    id:        l.id,
+    stage:     'Enquiry',
+    name:      l.name || '—',
+    orderText: l.est_quantity ? (l.est_quantity + ' box' + (l.est_quantity === 1 ? '' : 'es') + ' (est.)') : '—',
+    confirmed: false,
+    paid:      'Unpaid',
+    methods:   [],
+    courierService: '',
+    dueDate:   l.next_action_due || '',
+    shipBy:    '',
+    address:   '',
+    notes:     l.notes || '',
+    customerId: l.customer_id || null,
+    leadStatus: l.status || 'New',
+    raw:       l
+  };
+}
+
+function _campOrderWebsiteRow(logRow) {
+  const w = _woNorm(logRow);
+  return {
+    kind:      'website',
+    id:        w.logId,
+    stage:     'New, needs review',
+    name:      w.name || '—',
+    orderText: w.boxes + ' box' + (w.boxes === 1 ? '' : 'es') + (w.boxType && w.boxType !== 'Sold' ? ' (' + w.boxType + ')' : '') + (w.orderRef ? ' · ' + w.orderRef : ''),
+    confirmed: false,
+    paid:      w.paid ? 'Paid' : 'Unpaid',
+    methods:   w.method ? [w.method] : [],
+    courierService: w.courierService,
+    dueDate:   w.dueDate || '',
+    shipBy:    '',
+    address:   w.method === 'Collect' ? '' : (w.address || ''),
+    notes:     [w.cardMessage ? 'Card message: "' + w.cardMessage + '"' : '', w.notes].filter(Boolean).join(' · '),
+    customerId: null,
+    web:       w,
+    raw:       logRow
+  };
+}
+
+// Every row for one campaign, sorted by stage then due date.
+function campOrderRows(campId) {
+  const rows = [];
+  websiteOrders.forEach(function(logRow) {
+    const w = _woNorm(logRow);
+    if (String(w.campaignId) !== String(campId)) return;
+    rows.push(_campOrderWebsiteRow(logRow));
+  });
+  (leads || []).forEach(function(l) {
+    if (String(l.campaign_id) !== String(campId)) return;
+    const done = l.status === 'Converted' || l.status === 'Lost/Ghosted';
+    if (done && !campOrdersShowDone) return;
+    rows.push(_campOrderLeadRow(l));
+  });
+  (campEngagements || []).forEach(function(e) {
+    if (String(e.campaign_id) !== String(campId)) return;
+    const row = _campOrderEngRow(e);
+    if (row.stage === 'Delivered' && !campOrdersShowDone) return;
+    rows.push(row);
+  });
+  rows.sort(function(a, b) {
+    const sa = CAMP_ORDER_STAGES.indexOf(a.stage), sb = CAMP_ORDER_STAGES.indexOf(b.stage);
+    if (sa !== sb) return sa - sb;
+    if (a.dueDate !== b.dueDate) return (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+    return String(a.name).localeCompare(String(b.name));
+  });
+  return rows;
+}
+
+function _campOrderPassesFilters(r) {
+  const f = campOrdersFilter;
+  if (f.confirmed === 'yes' && !r.confirmed) return false;
+  if (f.confirmed === 'no' && r.confirmed) return false;
+  if (f.paid === 'paid' && r.paid !== 'Paid') return false;
+  if (f.paid === 'unpaid' && r.paid === 'Paid') return false;
+  if (f.delivery && r.methods.indexOf(f.delivery) === -1) return false;
+  if (f.dateFrom && (!r.dueDate || r.dueDate < f.dateFrom)) return false;
+  if (f.dateTo && (!r.dueDate || r.dueDate > f.dateTo)) return false;
+  return true;
+}
+
+// ── Filter handlers ───────────────────────────────────────────────────────
+function campOrdersSetFilter(key, val) {
+  campOrdersFilter[key] = val;
+  renderCampOrders();
+}
+
+function campOrdersClearFilters() {
+  campOrdersFilter = { confirmed:'', paid:'', delivery:'', dateFrom:'', dateTo:'' };
+  renderCampOrders();
+}
+
+function campOrdersToggleShowDone() {
+  campOrdersShowDone = !campOrdersShowDone;
+  renderCampOrders();
+}
+
+// ── Inline edits ──────────────────────────────────────────────────────────
+async function campOrderSetStage(engId, stage) {
+  if (ENGAGEMENT_STAGES.indexOf(stage) === -1) return;
+  if (!(await updateEngagement(engId, { fulfilment_stage: stage }))) {
+    showSaveError('Could not update the fulfilment stage.');
+    return;
+  }
+  renderCampOrders();
+}
+
+async function campOrderSaveNotes(kind, id, val) {
+  const notes = (val || '').trim() || null;
+  if (kind === 'engagement') {
+    const eng = campEngagements.find(function(e){ return String(e.id) === String(id); });
+    if (eng && (eng.notes || null) === notes) return;
+    if (!(await updateEngagement(id, { notes: notes }))) showSaveError('Could not save the note.');
+  } else if (kind === 'lead') {
+    const lead = (leads || []).find(function(l){ return String(l.id) === String(id); });
+    if (lead && (lead.notes || null) === notes) return;
+    if (!(await updateLead(leadFindId(id), { notes: notes }))) showSaveError('Could not save the note.');
+  }
+}
+
+function campOrdersRefresh() {
+  loadWebsiteOrders().then(function(){ renderCampOrders(); });
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function _campOrderFilterSelect(key, label, opts) {
+  const cur = campOrdersFilter[key] || '';
+  return '<label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;">' + label
+    + '<select onchange="campOrdersSetFilter(\'' + key + '\', this.value)" style="display:block;margin-top:2px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:var(--white);color:var(--text);font-family:sans-serif;">'
+    + opts.map(function(o){ return '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('')
+    + '</select></label>';
+}
+
+function _campOrderStageCell(r) {
+  const style = CAMP_ORDER_STAGE_STYLE[r.stage] || CAMP_ORDER_STAGE_STYLE['Enquiry'];
+  if (r.kind !== 'engagement') {
+    return '<span style="display:inline-block;font-size:10px;font-weight:700;padding:3px 7px;border-radius:99px;font-family:sans-serif;white-space:nowrap;' + style + '">' + esc(r.stage) + '</span>';
+  }
+  return '<select onchange="campOrderSetStage(\'' + r.id + '\', this.value)" style="font-size:11px;font-weight:600;padding:3px 5px;border:1px solid var(--border);border-radius:var(--radius);font-family:sans-serif;' + style + '">'
+    + ENGAGEMENT_STAGES.map(function(s){ return '<option value="' + s + '"' + (r.stage === s ? ' selected' : '') + '>' + s + '</option>'; }).join('')
+    + '</select>';
+}
+
+function _campOrderActionsCell(r) {
+  if (r.kind === 'website') {
+    return '<button class="btn btn-sm btn-primary" onclick="reviewWebsiteOrder(' + r.id + ')" style="font-size:10px;white-space:nowrap;">Review &amp; confirm</button>';
+  }
+  if (r.kind === 'lead') {
+    return r.customerId
+      ? '<button class="btn btn-sm" onclick="openCustomer(\'' + r.customerId + '\')" style="font-size:10px;white-space:nowrap;">Customer</button>'
+      : '<button class="btn btn-sm btn-primary" onclick="convertLead(\'' + r.id + '\')" style="font-size:10px;white-space:nowrap;">Convert</button>';
+  }
+  return '<button class="btn btn-sm" onclick="openEngForm(\'' + r.id + '\')" style="font-size:10px;white-space:nowrap;">Edit</button>';
+}
+
+function _campOrderRowHtml(r) {
+  const payStyle = r.paid === 'Paid' ? 'background:var(--success-bg);color:var(--success);'
+    : r.paid === 'Partial' ? 'background:#fff5f1;color:var(--orange);'
+    : 'background:var(--warning-bg);color:var(--warning);';
+  const confStyle = r.confirmed ? 'background:var(--success-bg);color:var(--success);' : 'background:var(--gray-light);color:var(--text-muted);';
+  const td = 'padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:sans-serif;font-size:12px;';
+  const methodText = r.methods.length
+    ? esc(r.methods.join(' + ')) + (r.courierService ? '<div style="font-size:10px;color:var(--text-muted);">' + esc(r.courierService) + '</div>' : '')
+    : '<span style="color:var(--text-muted);">—</span>';
+  const dateText = (r.dueDate ? fmtDate(r.dueDate) : '<span style="color:var(--text-muted);">—</span>')
+    + (r.shipBy ? '<div style="font-size:10px;color:var(--text-muted);">Ship by ' + fmtDate(r.shipBy) + '</div>' : '');
+  const showAddr = r.methods.some(function(m){ return m !== 'Collect'; });
+  const addrText = showAddr
+    ? (r.address ? esc(r.address) : '<span style="color:var(--warning);">No address</span>')
+    : '<span style="color:var(--text-muted);">—</span>';
+  const notesCell = r.kind === 'website'
+    ? '<div style="font-size:11px;white-space:pre-wrap;">' + (r.notes ? esc(r.notes) : '<span style="color:var(--text-muted);">—</span>') + '</div>'
+    : '<textarea rows="2" placeholder="Notes..." onchange="campOrderSaveNotes(\'' + r.kind + '\', \'' + r.id + '\', this.value)" style="width:100%;min-width:130px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;font-family:sans-serif;box-sizing:border-box;resize:vertical;">' + esc(r.notes) + '</textarea>';
+  return '<tr>'
+    + '<td style="' + td + '">' + _campOrderStageCell(r) + '</td>'
+    + '<td style="' + td + 'font-weight:600;min-width:110px;">' + esc(r.name) + '</td>'
+    + '<td style="' + td + 'min-width:120px;">' + esc(r.orderText) + '</td>'
+    + '<td style="' + td + '"><span style="display:inline-block;font-size:10px;font-weight:700;padding:2px 6px;border-radius:99px;white-space:nowrap;' + confStyle + '">' + (r.confirmed ? 'Confirmed' : 'Unconfirmed') + '</span></td>'
+    + '<td style="' + td + '"><span style="display:inline-block;font-size:10px;font-weight:700;padding:2px 6px;border-radius:99px;white-space:nowrap;' + payStyle + '">' + esc(r.paid) + '</span></td>'
+    + '<td style="' + td + '">' + methodText + '</td>'
+    + '<td style="' + td + 'white-space:nowrap;">' + dateText + '</td>'
+    + '<td style="' + td + 'min-width:130px;">' + addrText + '</td>'
+    + '<td style="' + td + '">' + notesCell + '</td>'
+    + '<td style="' + td + '">' + _campOrderActionsCell(r) + '</td>'
+    + '</tr>';
+}
+
+function renderCampOrders() {
+  const filtersEl = document.getElementById('camp-orders-filters');
+  const tableEl = document.getElementById('camp-orders-table-wrap');
+  if (!filtersEl || !tableEl) return;
+
+  const all = campOrderRows(activeCampaignId);
+  const rows = all.filter(_campOrderPassesFilters);
+  const newCount = all.filter(function(r){ return r.kind === 'website'; }).length;
+
+  filtersEl.innerHTML =
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px;">'
+    + _campOrderFilterSelect('confirmed', 'Confirmed', [['','All'],['yes','Confirmed'],['no','Unconfirmed']])
+    + _campOrderFilterSelect('paid', 'Paid', [['','All'],['paid','Paid'],['unpaid','Unpaid']])
+    + _campOrderFilterSelect('delivery', 'Delivery', [['','All']].concat(CAMP_ORDER_DELIVERY_METHODS.map(function(m){ return [m, m]; })))
+    + '<label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;">Due from'
+      + '<input type="date" value="' + esc(campOrdersFilter.dateFrom) + '" onchange="campOrdersSetFilter(\'dateFrom\', this.value)" style="display:block;margin-top:2px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-family:sans-serif;"/></label>'
+    + '<label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;">Due to'
+      + '<input type="date" value="' + esc(campOrdersFilter.dateTo) + '" onchange="campOrdersSetFilter(\'dateTo\', this.value)" style="display:block;margin-top:2px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-family:sans-serif;"/></label>'
+    + '<button class="btn btn-sm" onclick="campOrdersClearFilters()" style="font-size:11px;">Clear</button>'
+    + '<button class="btn btn-sm" onclick="campOrdersRefresh()" style="font-size:11px;">↻ Check for new</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;">'
+    + '<span>Showing <strong style="color:var(--text);">' + rows.length + '</strong> of ' + all.length + '</span>'
+    + (newCount ? '<span style="color:var(--warning);font-weight:700;">' + newCount + ' new website order' + (newCount === 1 ? '' : 's') + ' to review</span>' : '')
+    + '<a href="javascript:void(0)" onclick="campOrdersToggleShowDone()" style="color:var(--navy);text-decoration:underline;">'
+      + (campOrdersShowDone ? 'Hide delivered &amp; closed' : 'Show delivered &amp; closed') + '</a>'
+    + '<a href="javascript:void(0)" onclick="viewCampLeadsInTab(\'' + activeCampaignId + '\')" style="color:var(--navy);text-decoration:underline;">Open Leads tab</a>'
+    + '</div>';
+
+  if (!rows.length) {
+    tableEl.innerHTML = '<div class="empty">' + (all.length ? 'No orders match these filters.' : 'No orders or enquiries yet for this campaign.') + '</div>';
+  } else {
+    const th = 'text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);font-family:sans-serif;white-space:nowrap;';
+    tableEl.innerHTML = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table style="width:100%;border-collapse:collapse;min-width:900px;">'
+      + '<thead><tr>'
+      + ['Stage','Customer','Order','Confirmed','Paid','Delivery','Due','Address','Notes',''].map(function(h){ return '<th style="' + th + '">' + h + '</th>'; }).join('')
+      + '</tr></thead><tbody>'
+      + rows.map(_campOrderRowHtml).join('')
+      + '</tbody></table></div>';
+  }
+
+  const countEl = document.getElementById('camp-orders-count');
+  if (countEl) countEl.textContent = '(' + all.length + ')';
+}
+
+// ── Website order → Engagement ────────────────────────────────────────────
+// Reviewing a pending website order opens the ordinary "+ Add Engagement" form with the
+// website's data pre-filled. Saving it creates the engagement exactly as a hand-typed one
+// would, then stamps the logs row as reviewed (never deleted) so it drops off the list.
+let _pendingWebsiteOrderLogId = null;
+
+function reviewWebsiteOrder(logId) {
+  const logRow = websiteOrders.find(function(r){ return String(r.id) === String(logId); });
+  if (!logRow) { alert('That website order is no longer pending — try "Check for new".'); return; }
+  const w = _woNorm(logRow);
+
+  openEngForm();
+  _pendingWebsiteOrderLogId = logRow.id;
+
+  document.getElementById('eng-form-title').textContent = 'Confirm Website Order';
+  const nameEl = document.getElementById('ef-name');
+  if (nameEl) nameEl.value = w.name || '';
+  document.getElementById('ef-phone').value = w.phone || '';
+  document.getElementById('ef-email').value = w.email || '';
+
+  // Link to an existing customer when the email or name already matches one.
+  const match = (cfg.customers || []).find(function(c) {
+    if (!c) return false;
+    if (w.email && c.email && String(c.email).toLowerCase() === w.email.toLowerCase()) return true;
+    return !!(w.name && c.name && String(c.name).toLowerCase() === w.name.toLowerCase());
+  });
+  if (match) _engLinkedCustomerId = match.id;
+
+  // Collections ordered — from the website's line items when it sent them, otherwise one
+  // row for the box count with the paid amount spread across it.
+  let colRows = null;
+  if (w.items && w.items.length) {
+    colRows = w.items.map(function(it) {
+      const qty = parseInt(it.qty != null ? it.qty : it.quantity) || 1;
+      const price = it.unit_price != null ? parseFloat(it.unit_price) : (it.price != null ? parseFloat(it.price) : null);
+      return {
+        template_id: it.template_id != null ? parseInt(it.template_id) : null,
+        qty: qty,
+        box_type: it.box_type || w.boxType || 'Sold',
+        unit_price: isNaN(price) ? null : price
+      };
+    });
+  } else if (w.amount && w.boxes) {
+    colRows = [{ template_id: null, qty: w.boxes, box_type: w.boxType || 'Sold', unit_price: Math.round((w.amount / w.boxes) * 100) / 100 }];
+  }
+  initEngColRows(colRows, colRows ? null : w.boxes, w.boxType);
+
+  // Delivery — a courier row picks up the ship-by suggestion inside initEngDeliveryRows().
+  const isCollect = w.method === 'Collect' || !w.method;
+  initEngDeliveryRows([{
+    type: w.method || 'Collect',
+    date: w.dueDate || '',
+    boxes: w.boxes || '',
+    use_cust_addr: false,
+    address: isCollect ? '' : (w.address || ''),
+    courier_name: '',
+    tracking: '',
+    courier_actual: null,
+    courier_charged: null,
+    courier_service: w.method === 'Courier' ? (w.courierService || 'Overnight') : '',
+    ship_by: ''
+  }], null, null, null, null, null);
+
+  // Payment — website orders arrive already paid unless the payload says otherwise.
+  document.getElementById('ef-pay-method').value = 'Website';
+  document.getElementById('ef-pay-status').value = w.paid ? 'Paid' : 'Unpaid';
+  const paidOn = String(w.orderedAt || '').slice(0, 10);
+  initEngPaymentRows(w.paid && w.amount ? [{ date: paidOn || today(), amount: w.amount }] : null);
+  engTogglePaymentRows();
+
+  // Notes — the gift card message goes first so it cannot be missed.
+  const noteParts = [];
+  if (w.cardMessage) noteParts.push('Card message: "' + w.cardMessage + '"');
+  if (w.recipientName) noteParts.push('Deliver to: ' + w.recipientName);
+  if (w.notes) noteParts.push(w.notes);
+  noteParts.push('Website order' + (w.orderRef ? ' ' + w.orderRef : '') + (paidOn ? ' — ' + fmtDate(paidOn) : ''));
+  document.getElementById('ef-notes').value = noteParts.join('\n');
+
+  const banner = document.getElementById('ef-website-banner');
+  if (banner) {
+    banner.style.display = 'block';
+    banner.innerHTML = '<strong>Pre-filled from website order' + (w.orderRef ? ' ' + esc(w.orderRef) : '') + '.</strong>'
+      + ' Check the details and save to confirm it as a real engagement.'
+      + (w.cardMessage ? '<div style="margin-top:6px;padding:6px 8px;background:var(--white);border-radius:var(--radius);">🎁 <strong>Card message:</strong> ' + esc(w.cardMessage) + '</div>' : '')
+      + (w.amount ? '<div style="margin-top:4px;color:var(--text-muted);">Paid online: $' + w.amount.toFixed(2) + '</div>' : '');
+  }
+}
+
+// Called after the engagement insert succeeds. Marks the source logs row reviewed —
+// the row is kept, only stamped and moved out of the pending log_type.
+async function finalizeWebsiteOrder(engagementId) {
+  const logId = _pendingWebsiteOrderLogId;
+  _pendingWebsiteOrderLogId = null;
+  if (!logId) return;
+  const logRow = websiteOrders.find(function(r){ return String(r.id) === String(logId); });
+  if (!logRow) return;
+  const data = Object.assign({}, logRow.data || {}, {
+    reviewed: true,
+    reviewed_at: new Date().toISOString(),
+    engagement_id: engagementId
+  });
+  const { error } = await db.from('logs')
+    .update({ log_type: 'website_order_reviewed', data: data })
+    .eq('id', logId);
+  if (error) {
+    console.error('finalizeWebsiteOrder error', error);
+    showSaveError('The engagement saved, but the website order could not be marked as reviewed — it will still show as new.');
+    return;
+  }
+  websiteOrders = websiteOrders.filter(function(r){ return String(r.id) !== String(logId); });
+  // Clear the "new website order" notification the website raised for this row, if there is one.
+  try {
+    const notif = _notifications.find(function(n) {
+      return n.status === 'active' && n.reference_id != null && String(n.reference_id) === String(logId);
+    });
+    if (notif) await notifDismiss(notif.id);
+  } catch (e) {
+    console.warn('Could not clear website order notification', e);
+  }
+}
+
+// Card markup, shared by the campaign detail and edit screens.
+function campOrdersCardHtml(c) {
+  const n = campOrderRows(c.id).length;
+  return `<div class="card" style="margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleCampSection('camp-orders-body','camp-orders-toggle')">
+      <div class="card-title" style="margin:0;">Orders <span id="camp-orders-count" style="font-size:12px;font-weight:400;color:var(--text-muted);">(${n})</span></div>
+      <span id="camp-orders-toggle" style="font-size:16px;color:var(--text-muted);">▲</span>
+    </div>
+    <div id="camp-orders-body" style="display:block;margin-top:10px;">
+      <div id="camp-orders-filters"></div>
+      <div id="camp-orders-table-wrap"></div>
+      <div style="margin-top:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleCampSection('camp-orders-enquiry-body','camp-orders-enquiry-toggle')">
+          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;">+ Add enquiry</div>
+          <span id="camp-orders-enquiry-toggle" style="font-size:16px;color:var(--text-muted);">▼</span>
+        </div>
+        <div id="camp-orders-enquiry-body" style="display:none;background:var(--gray-light);border-radius:var(--radius);padding:10px;margin-top:8px;">
+          <div class="r2">
+            <div class="field"><label>Name <span style="color:var(--danger);">*</span></label><input id="camp-lead-qa-name" placeholder="Name" class="search-input" style="margin:0;"/></div>
+            <div class="field"><label>Phone</label><input id="camp-lead-qa-phone" type="tel" placeholder="Phone" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+          </div>
+          <div class="r2">
+            <div class="field"><label>Email</label><input id="camp-lead-qa-email" type="email" placeholder="Email" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
+            <div class="field"><label>Source</label>
+              <select id="camp-lead-qa-source" onchange="toggleOtherField('camp-lead-qa-source','camp-lead-qa-source-other')" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"></select>
+              <input id="camp-lead-qa-source-other" placeholder="Enter source" style="display:none;margin-top:6px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" style="margin-top:2px;" onclick="addCampLeadQuick()">+ Add enquiry</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
 
 // ═══════════════════════════════════════════════════════
 // LEADS — Convert to Customer (engagement / order)
@@ -28718,7 +29263,6 @@ function openCampBoxAssign(engId) {
 
 function renderCampDetailView(el, c) {
   const engs = campEngagements.filter(e=>e.campaign_id===c.id);
-  const campLeadsForCamp = (leads||[]).filter(l => String(l.campaign_id) === String(c.id));
   const soldBoxes = engs.filter(e=>e.box_type==='Sold').reduce((s,e)=>s+(e.boxes||0),0);
   const giftedBoxes = engs.filter(e=>e.box_type==='Gifted').reduce((s,e)=>s+(e.boxes||0),0);
   const disposedBoxes = engs.filter(e=>e.box_type==='Disposed').reduce((s,e)=>s+(e.boxes||0),0);
@@ -28857,33 +29401,8 @@ function renderCampDetailView(el, c) {
       </div>`).join('')}
     </div>`:''}
 
-    <!-- Leads (collapsible) -->
-    <div class="card" style="margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleCampSection('camp-leads-body','camp-leads-toggle')">
-        <div class="card-title" style="margin:0;">Leads <span id="camp-leads-count" style="font-size:12px;font-weight:400;color:var(--text-muted);">(${campLeadsForCamp.length})</span></div>
-        <span id="camp-leads-toggle" style="font-size:16px;color:var(--text-muted);">▲</span>
-      </div>
-      <div id="camp-leads-body" style="display:block;margin-top:10px;">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-          <button class="btn btn-sm" onclick="viewCampLeadsInTab('${c.id}')" style="font-size:11px;">View all in Leads tab →</button>
-        </div>
-        <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px;margin-bottom:10px;">
-          <div class="r2">
-            <div class="field"><label>Name <span style="color:var(--danger);">*</span></label><input id="camp-lead-qa-name" placeholder="Name" class="search-input" style="margin:0;"/></div>
-            <div class="field"><label>Phone</label><input id="camp-lead-qa-phone" type="tel" placeholder="Phone" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
-          </div>
-          <div class="r2">
-            <div class="field"><label>Email</label><input id="camp-lead-qa-email" type="email" placeholder="Email" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
-            <div class="field"><label>Source</label>
-              <select id="camp-lead-qa-source" onchange="toggleOtherField('camp-lead-qa-source','camp-lead-qa-source-other')" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"></select>
-              <input id="camp-lead-qa-source-other" placeholder="Enter source" style="display:none;margin-top:6px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/>
-            </div>
-          </div>
-          <button class="btn btn-sm btn-primary" style="margin-top:2px;" onclick="addCampLeadQuick()">+ Add lead</button>
-        </div>
-        <div id="camp-leads-card-body"></div>
-      </div>
-    </div>
+    <!-- Orders — website orders, enquiries and engagements for this campaign -->
+    ${campOrdersCardHtml(c)}
 
     <!-- Engagements (collapsible) -->
     <div class="card" style="margin-bottom:10px;">
@@ -29122,7 +29641,7 @@ function renderCampDetailView(el, c) {
     <button class="btn btn-sm" onclick="goCamp('camp-list');renderCampList();" style="margin-bottom:10px;">← Back to campaigns</button>
   `;
   popCampLeadQuickAddSource();
-  renderCampLeadsCard();
+  renderCampOrders();
 }
 
 function toggleCampSection(bodyId, toggleId) {
@@ -29213,33 +29732,8 @@ function renderCampDetailEdit(el, c) {
       <div class="field"><label>Promotion plan</label><textarea id="cf-promo">${esc(c.promotion_plan||'')}</textarea></div>
     </div>
 
-    <!-- Leads (collapsible) -->
-    <div class="card" style="margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleCampSection('camp-leads-body','camp-leads-toggle')">
-        <div class="card-title" style="margin:0;">Leads <span id="camp-leads-count" style="font-size:12px;font-weight:400;color:var(--text-muted);">(${(leads||[]).filter(l => String(l.campaign_id) === String(c.id)).length})</span></div>
-        <span id="camp-leads-toggle" style="font-size:16px;color:var(--text-muted);">▲</span>
-      </div>
-      <div id="camp-leads-body" style="display:block;margin-top:10px;">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-          <button class="btn btn-sm" onclick="viewCampLeadsInTab('${c.id}')" style="font-size:11px;">View all in Leads tab →</button>
-        </div>
-        <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px;margin-bottom:10px;">
-          <div class="r2">
-            <div class="field"><label>Name <span style="color:var(--danger);">*</span></label><input id="camp-lead-qa-name" placeholder="Name" class="search-input" style="margin:0;"/></div>
-            <div class="field"><label>Phone</label><input id="camp-lead-qa-phone" type="tel" placeholder="Phone" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
-          </div>
-          <div class="r2">
-            <div class="field"><label>Email</label><input id="camp-lead-qa-email" type="email" placeholder="Email" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>
-            <div class="field"><label>Source</label>
-              <select id="camp-lead-qa-source" onchange="toggleOtherField('camp-lead-qa-source','camp-lead-qa-source-other')" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"></select>
-              <input id="camp-lead-qa-source-other" placeholder="Enter source" style="display:none;margin-top:6px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/>
-            </div>
-          </div>
-          <button class="btn btn-sm btn-primary" style="margin-top:2px;" onclick="addCampLeadQuick()">+ Add lead</button>
-        </div>
-        <div id="camp-leads-card-body"></div>
-      </div>
-    </div>
+    <!-- Orders — website orders, enquiries and engagements for this campaign -->
+    ${campOrdersCardHtml(c)}
 
     <!-- Engagements -->
     <div class="card" style="margin-bottom:10px;">
@@ -29387,7 +29881,7 @@ function renderCampDetailEdit(el, c) {
   document.getElementById('camp-detail-planning-imgs')?.remove();
   document.getElementById('camp-detail-conclusion-imgs')?.remove();
   popCampLeadQuickAddSource();
-  renderCampLeadsCard();
+  renderCampOrders();
 }
 
 function openBakeForCampaign(campId) {
@@ -29617,6 +30111,9 @@ function openEngForm(id, returnMode) {
   _engFormReturnMode = returnMode || (_campEditMode ? 'edit' : 'view');
   editEngagementId = id || null;
   _engLinkedCustomerId = null;
+  _pendingWebsiteOrderLogId = null;
+  const _efBanner = document.getElementById('ef-website-banner');
+  if (_efBanner) { _efBanner.style.display = 'none'; _efBanner.innerHTML = ''; }
   const e = id ? campEngagements.find(x=>x.id===id) : null;
   document.getElementById('eng-form-title').textContent = e ? 'Edit Engagement' : 'Add Engagement';
   document.getElementById('ef-phone').value = e?.phone||'';
@@ -29687,6 +30184,7 @@ function openEngForm(id, returnMode) {
 
 function closeEngForm() {
   window._pendingLeadConversion = null;
+  _pendingWebsiteOrderLogId = null;
   editEngagementId = null;
   _engLinkedCustomerId = null;
   if (_engFormReturnMode === 'edit') {
@@ -29741,6 +30239,73 @@ function recalcEngTotals() {
   recalcEngPaymentTotals();
 }
 
+// ── Courier ship-by suggestion ────────────────────────────────────────────
+// Counts transit days back from the campaign close date. NZ Post delivers on Saturdays
+// but not Sundays, so Sundays are the only day skipped. The result is always a
+// suggestion — it pre-fills the field and is never locked.
+const COURIER_SERVICES = ['Overnight', 'Economy'];
+const COURIER_TRANSIT_DAYS = { 'Overnight': 1, 'Economy': 3 };
+
+function suggestShipByDate(closeDate, service) {
+  if (!closeDate) return '';
+  var transit = COURIER_TRANSIT_DAYS[service];
+  if (!transit) return '';
+  var d = new Date(String(closeDate).slice(0,10) + 'T00:00:00');
+  if (isNaN(d.getTime())) return '';
+  var counted = 0, guard = 0;
+  while (counted < transit && guard < 60) {
+    d.setDate(d.getDate() - 1);
+    guard++;
+    if (d.getDay() !== 0) counted++; // Sunday is not a delivery day
+  }
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+// Campaign close date for whichever campaign the engagement form is open against.
+function _engCampaignCloseDate() {
+  var c = (campaigns||[]).find(function(x){ return String(x.id) === String(activeCampaignId); });
+  return c ? (c.campaign_close_date || '') : '';
+}
+
+// Pre-fills the suggested ship-by date on a courier row. An existing date is left alone
+// unless the caller explicitly asks for a re-suggest.
+function engApplyShipBySuggestion(i, force) {
+  var row = _engDeliveryRows[i];
+  if (!row || row.type !== 'Courier') return;
+  if (row.ship_by && !force) return;
+  var suggested = suggestShipByDate(_engCampaignCloseDate(), row.courier_service);
+  if (!suggested) return;
+  row.ship_by = suggested;
+  row.ship_by_suggested = suggested;
+}
+
+function engSetDeliveryType(i, val) {
+  var row = _engDeliveryRows[i];
+  if (!row) return;
+  row.type = val;
+  if (val === 'Courier') {
+    if (!row.courier_service) row.courier_service = 'Overnight';
+    engApplyShipBySuggestion(i, false);
+  }
+  renderEngDeliveryRows();
+}
+
+function engSetCourierService(i, val) {
+  var row = _engDeliveryRows[i];
+  if (!row) return;
+  row.courier_service = val || '';
+  // Re-suggest only while the date is still whatever we suggested (or empty) —
+  // a hand-typed date is never overwritten.
+  var untouched = !row.ship_by || (row.ship_by_suggested && row.ship_by === row.ship_by_suggested);
+  engApplyShipBySuggestion(i, untouched);
+  renderEngDeliveryRows();
+}
+
+function engUseShipBySuggestion(i) {
+  engApplyShipBySuggestion(i, true);
+  renderEngDeliveryRows();
+}
+
 // ── Delivery rows (Spec E + J) ────────────────────────────────────────────
 var _engDeliveryRows = [];
 
@@ -29757,9 +30322,16 @@ function initEngDeliveryRows(deliveries, legacyFulfilType, legacyDate, legacyAdd
       address: legacyAddr || '',
       courier_name: legacyCourierName || '',
       courier_actual: '',
-      courier_charged: legacyCourierCost || ''
+      courier_charged: legacyCourierCost || '',
+      courier_service: '',
+      ship_by: ''
     }];
   }
+  // Courier rows opened without a ship-by date get the suggestion pre-filled (never locked).
+  _engDeliveryRows.forEach(function(r, i) {
+    if (r.type === 'Courier' && !r.courier_service) r.courier_service = 'Overnight';
+    engApplyShipBySuggestion(i, false);
+  });
   renderEngDeliveryRows();
 }
 
@@ -29780,6 +30352,20 @@ function renderEngDeliveryRows() {
     var removeBtn = _engDeliveryRows.length > 1
       ? '<button type="button" onclick="removeEngDeliveryRow('+i+')" style="border:none;background:none;color:var(--text-muted);font-size:16px;cursor:pointer;padding:0 4px;line-height:1;flex-shrink:0;">✕</button>'
       : '';
+    var shipBySuggested = isCourier ? suggestShipByDate(_engCampaignCloseDate(), row.courier_service) : '';
+    var shipByHint = '';
+    if (isCourier) {
+      if (shipBySuggested) {
+        var transitDays = COURIER_TRANSIT_DAYS[row.courier_service];
+        shipByHint = '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;">Suggested <strong>' + fmtDate(shipBySuggested) + '</strong> — campaign closes ' + fmtDate(_engCampaignCloseDate()) + ' less ' + transitDays + ' day' + (transitDays===1?'':'s') + ', Sundays skipped. Editable.'
+          + (row.ship_by !== shipBySuggested ? ' <a href="javascript:void(0)" onclick="engUseShipBySuggestion(' + i + ')" style="color:var(--navy);text-decoration:underline;">Use suggestion</a>' : '')
+          + '</div>';
+      } else if (!_engCampaignCloseDate()) {
+        shipByHint = '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;">No campaign close date set, so there is no ship-by suggestion.</div>';
+      } else if (!row.courier_service) {
+        shipByHint = '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;">Pick a courier service for a suggested ship-by date.</div>';
+      }
+    }
     var courierSection = isCourier ? `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
         <div><label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;margin-bottom:3px;">Courier used</label>
@@ -29793,7 +30379,17 @@ function renderEngDeliveryRows() {
         <div><label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;margin-bottom:3px;">Charged to customer ($)</label>
           <input type="number" min="0" step="0.01" placeholder="0.00" value="${row.courier_charged||''}" oninput="_engDeliveryRows[${i}].courier_charged=parseFloat(this.value)||null;recalcEngCourierMargin()" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"/></div>
       </div>
-      <div id="ef-courier-margin-${i}" style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;text-align:right;"></div>` : '';
+      <div id="ef-courier-margin-${i}" style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;text-align:right;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+        <div><label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;margin-bottom:3px;">Courier service</label>
+          <select onchange="engSetCourierService(${i}, this.value)" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;">
+            <option value=""${!row.courier_service?' selected':''}>Not set</option>
+            ${COURIER_SERVICES.map(function(sv){ return '<option value="'+sv+'"'+(row.courier_service===sv?' selected':'')+'>'+sv+'</option>'; }).join('')}
+          </select></div>
+        <div><label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;margin-bottom:3px;">Must ship by</label>
+          <input type="date" value="${esc(row.ship_by||'')}" oninput="_engDeliveryRows[${i}].ship_by=this.value" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"/></div>
+      </div>
+      ${shipByHint}` : '';
     var addrSection = showAddr ? `
       <div style="margin-top:6px;">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-family:sans-serif;cursor:pointer;margin-bottom:4px;">
@@ -29808,7 +30404,7 @@ function renderEngDeliveryRows() {
       </div>` : '';
     return `<div style="background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-        <select onchange="_engDeliveryRows[${i}].type=this.value;renderEngDeliveryRows()" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;">
+        <select onchange="engSetDeliveryType(${i}, this.value)" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;">
           ${['Collect','Courier','Delivered by us','Delivered by other'].map(function(t){ return '<option value="'+t+'"'+(row.type===t?' selected':'')+'>'+t+'</option>'; }).join('')}
         </select>
         <input type="date" value="${esc(row.date||'')}" oninput="_engDeliveryRows[${i}].date=this.value" style="padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;"/>
@@ -29822,7 +30418,7 @@ function renderEngDeliveryRows() {
 }
 
 function addEngDeliveryRow() {
-  _engDeliveryRows.push({ type:'Collect', date:'', boxes:'', use_cust_addr:false, address:'', courier_name:'', tracking:'', courier_actual:null, courier_charged:null });
+  _engDeliveryRows.push({ type:'Collect', date:'', boxes:'', use_cust_addr:false, address:'', courier_name:'', tracking:'', courier_actual:null, courier_charged:null, courier_service:'', ship_by:'' });
   renderEngDeliveryRows();
 }
 
@@ -30200,6 +30796,11 @@ async function saveEngagement() {
     var _engDelDate = _engDelRowsForValidation[_engDri].date;
     var _engDateErr = validateDate(_engDelDate, 'Fulfilment date (row ' + (_engDri + 1) + ')');
     if (_engDateErr) { showMsg('ef-msg', _engDateErr, 'error'); return; }
+    var _engShipBy = _engDelRowsForValidation[_engDri].ship_by;
+    if (_engShipBy) {
+      var _engShipErr = validateDate(_engShipBy, 'Must ship by (row ' + (_engDri + 1) + ')');
+      if (_engShipErr) { showMsg('ef-msg', _engShipErr, 'error'); return; }
+    }
   }
 
   // Auto-create customer record if no match found
@@ -30352,6 +30953,7 @@ async function _doSaveEngagement(f) {
   if (result) {
     // Only a fresh insert (not an edit) can be the record a pending lead conversion is waiting on
     if (!editEngagementId) await finalizeLeadConversion(result.id, 'engagement');
+    if (!editEngagementId) await finalizeWebsiteOrder(result.id);
     // Tag campaign on customer record
     if (_engLinkedCustomerId && cfg.customers) {
       const cust = cfg.customers.find(x=>x.id===_engLinkedCustomerId);
@@ -30836,7 +31438,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v54.0',
+    app_version: 'v55.0',
     tables: {}
   };
 

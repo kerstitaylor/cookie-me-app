@@ -24,6 +24,57 @@ The printed report (`_prBuildCustomers`) does include a `collection_instance_id 
 
 If a campaign customer appears to be missing allocations in their detail view, this exclusion is the reason. The fix path is known: add the collection_instance_id → engagement → customer_id tier to Source 3, but only after confirming whether the engagement is already displayed there, to avoid double-counting.
 
+### Website orders arrive as logs rows, not engagements
+
+The public website (separate repo) writes each paid gift box order as a `logs` row with
+`log_type: 'website_order_pending'`, plus a `notifications` row flagged as new. The kitchen app
+only reads them — it never creates them. `loadWebsiteOrders()` pulls the pending ones into the
+`websiteOrders` global on boot.
+
+The payload lives in `logs.data`. The documented shape is:
+
+```json
+{ "campaign_id": "<uuid>", "order_ref": "WEB-1234", "ordered_at": "<iso>",
+  "customer": { "name": "", "email": "", "phone": "", "address": "" },
+  "items": [{ "template_id": null, "qty": 2, "unit_price": 45 }],
+  "boxes": 2, "box_type": "Sold",
+  "amount_paid": 90, "payment_status": "paid", "payment_method": "Website (Stripe)",
+  "delivery": { "method": "Courier", "service": "Overnight", "date": "<yyyy-mm-dd>",
+                "address": "", "recipient_name": "" },
+  "card_message": "", "notes": "" }
+```
+
+`_woNorm()` reads it and also accepts flat aliases (`name`, `email`, `delivery_method`,
+`gift_message`, …) so a drift in the website's field names degrades rather than breaks.
+`campaign_id` is the only field that must match exactly — a row whose `campaign_id` matches no
+campaign simply never appears.
+
+Confirming an order opens the ordinary engagement form pre-filled and saves it through the same
+`saveEngagement()` path as a hand-typed one. On a successful insert, `finalizeWebsiteOrder()`
+stamps the source row (`data.reviewed`, `data.reviewed_at`, `data.engagement_id`) and moves its
+`log_type` to `'website_order_reviewed'`. **The logs row is never deleted** — that stamp is the
+only thing that takes it off the pending list, and `loadWebsiteOrders()` filters on both the
+log_type and `data.reviewed` so either alone is enough.
+
+### The campaign Orders table replaced the embedded Leads box
+
+`campOrdersCardHtml()` / `renderCampOrders()` render one table per campaign from three sources:
+pending website orders ("New, needs review"), unconverted leads ("Enquiry"), and engagements
+(`fulfilment_stage`). It is rendered by both `renderCampDetailView()` and `renderCampDetailEdit()`.
+
+The old Leads-box helpers (`renderCampLeadsCard`, `_campLeadRowHtml`, `campOnLeadStatusChange`,
+`toggleCampLeadsShowAll`) are still defined but no longer reachable from the campaign page —
+`renderCampLeadsCard()` early-returns because `#camp-leads-card-body` no longer exists. They were
+left in place rather than deleted because the Leads tab shares parts of that code path.
+
+### Courier ship-by dates are suggestions, never constraints
+
+`suggestShipByDate(closeDate, service)` counts transit days back from `campaign_close_date` —
+1 for Overnight, 3 for Economy — skipping Sundays only, because NZ Post delivers Saturdays. The
+result pre-fills `ship_by` on a courier delivery row and is stored alongside it as
+`ship_by_suggested`. A date is only re-suggested while it still equals `ship_by_suggested`, so a
+hand-typed date is never overwritten. The field is a plain date input — never disabled or locked.
+
 ### Campaign allocs with eng: notes tags are left as plain strings
 
 Allocations that have an `eng:ID` notes tag are matched to customers via the engagement path (notes → engagement ID → `customer_id`) and do not need a `customerId` written into the recipient field. The backfill (`backfillAllocCustomerIds`) intentionally skips these records. They will display correctly in both the detail view and the printed report without being touched.
