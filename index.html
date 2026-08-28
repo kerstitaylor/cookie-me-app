@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v55.0</title>
+<title>Cookie & Me — Kitchen Manager v55.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -27332,6 +27332,76 @@ function campOrdersRefresh() {
   loadWebsiteOrders().then(function(){ renderCampOrders(); });
 }
 
+// ── Unassigned website orders ─────────────────────────────────────────────
+// Every row in the Orders table belongs to exactly one campaign, so an order whose
+// campaign_id is null — or points at a campaign that does not exist — would match no
+// campaign page and never be seen. The website is expected to send campaign_id null
+// rather than guess, so this is a normal case, not an error case. These orders are
+// surfaced in their own panel shown on every campaign's Orders card, and can be filed
+// against the campaign being viewed or confirmed straight into it.
+function unassignedWebsiteOrders() {
+  return websiteOrders.filter(function(logRow) {
+    const w = _woNorm(logRow);
+    if (!w.campaignId) return true;
+    return !(campaigns || []).some(function(c){ return String(c.id) === String(w.campaignId); });
+  });
+}
+
+async function assignWebsiteOrderToCampaign(logId) {
+  const logRow = websiteOrders.find(function(r){ return String(r.id) === String(logId); });
+  if (!logRow) { alert('That website order is no longer pending — try "Check for new".'); return; }
+  const camp = (campaigns || []).find(function(c){ return String(c.id) === String(activeCampaignId); });
+  if (!camp) { alert('Open a campaign first, then file the order against it.'); return; }
+  const w = _woNorm(logRow);
+  if (!confirm('File website order ' + (w.orderRef || '') + ' from ' + (w.name || '—') + ' under "' + camp.name + '"?')) return;
+  const data = Object.assign({}, logRow.data || {}, {
+    campaign_id: camp.id,
+    campaign_assigned_at: new Date().toISOString()
+  });
+  const { error } = await db.from('logs').update({ data: data }).eq('id', logId);
+  if (error) {
+    console.error('assignWebsiteOrderToCampaign error', error);
+    showSaveError('Could not file that order against this campaign.');
+    return;
+  }
+  logRow.data = data;
+  renderCampOrders();
+}
+
+function _campOrderUnassignedPanelHtml() {
+  const orphans = unassignedWebsiteOrders();
+  if (!orphans.length) return '';
+  const camp = (campaigns || []).find(function(c){ return String(c.id) === String(activeCampaignId); });
+  const campName = camp ? camp.name : 'this campaign';
+  const items = orphans.map(function(logRow) {
+    const w = _woNorm(logRow);
+    const reason = w.campaignId ? 'campaign not found' : 'no campaign chosen';
+    const bits = [
+      w.boxes + ' box' + (w.boxes === 1 ? '' : 'es'),
+      w.method || 'delivery not set',
+      w.dueDate ? 'due ' + fmtDate(w.dueDate) : 'no date',
+      w.paid ? 'Paid' : 'Unpaid'
+    ];
+    return '<div style="border-top:1px solid var(--border);padding:8px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+      + '<div style="flex:1;min-width:150px;">'
+      + '<div style="font-weight:700;font-family:sans-serif;font-size:13px;">' + esc(w.name || '—')
+      + (w.orderRef ? ' <span style="font-weight:400;color:var(--text-muted);font-size:11px;">· ' + esc(w.orderRef) + '</span>' : '') + '</div>'
+      + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">' + esc(bits.join(' · ')) + ' · <em>' + reason + '</em></div>'
+      + (w.cardMessage ? '<div style="font-size:11px;font-family:sans-serif;margin-top:2px;">🎁 Card message: ' + esc(w.cardMessage) + '</div>' : '')
+      + '</div>'
+      + '<button class="btn btn-sm" onclick="assignWebsiteOrderToCampaign(' + logRow.id + ')" style="font-size:10px;white-space:nowrap;">File under ' + esc(campName) + '</button>'
+      + '<button class="btn btn-sm btn-primary" onclick="reviewWebsiteOrder(' + logRow.id + ')" style="font-size:10px;white-space:nowrap;">Review &amp; confirm</button>'
+      + '</div>';
+  }).join('');
+  return '<div style="background:var(--warning-bg);border-left:3px solid var(--warning);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">'
+    + '<div style="font-weight:700;color:var(--warning);font-family:sans-serif;font-size:12px;">'
+    + '⚠️ ' + orphans.length + ' website order' + (orphans.length === 1 ? '' : 's') + ' not linked to a campaign</div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:2px;">'
+    + 'These are shown on every campaign page so they cannot be missed. Filing or confirming one here puts it under <strong>' + esc(campName) + '</strong>.</div>'
+    + items
+    + '</div>';
+}
+
 // ── Render ────────────────────────────────────────────────────────────────
 function _campOrderFilterSelect(key, label, opts) {
   const cur = campOrdersFilter[key] || '';
@@ -27403,6 +27473,9 @@ function renderCampOrders() {
   const all = campOrderRows(activeCampaignId);
   const rows = all.filter(_campOrderPassesFilters);
   const newCount = all.filter(function(r){ return r.kind === 'website'; }).length;
+
+  const unassignedEl = document.getElementById('camp-orders-unassigned');
+  if (unassignedEl) unassignedEl.innerHTML = _campOrderUnassignedPanelHtml();
 
   filtersEl.innerHTML =
     '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px;">'
@@ -27511,18 +27584,22 @@ function reviewWebsiteOrder(logId) {
   engTogglePaymentRows();
 
   // Notes — the gift card message goes first so it cannot be missed.
+  const _woHasKnownCampaign = !!(w.campaignId && (campaigns || []).some(function(c){ return String(c.id) === String(w.campaignId); }));
   const noteParts = [];
   if (w.cardMessage) noteParts.push('Card message: "' + w.cardMessage + '"');
   if (w.recipientName) noteParts.push('Deliver to: ' + w.recipientName);
   if (w.notes) noteParts.push(w.notes);
-  noteParts.push('Website order' + (w.orderRef ? ' ' + w.orderRef : '') + (paidOn ? ' — ' + fmtDate(paidOn) : ''));
+  noteParts.push('Website order' + (w.orderRef ? ' ' + w.orderRef : '') + (paidOn ? ' — ' + fmtDate(paidOn) : '')
+    + (_woHasKnownCampaign ? '' : ' (arrived without a campaign)'));
   document.getElementById('ef-notes').value = noteParts.join('\n');
 
   const banner = document.getElementById('ef-website-banner');
   if (banner) {
+    const _woCamp = (campaigns || []).find(function(c){ return String(c.id) === String(activeCampaignId); });
     banner.style.display = 'block';
     banner.innerHTML = '<strong>Pre-filled from website order' + (w.orderRef ? ' ' + esc(w.orderRef) : '') + '.</strong>'
       + ' Check the details and save to confirm it as a real engagement.'
+      + (_woHasKnownCampaign ? '' : '<div style="margin-top:6px;padding:6px 8px;background:var(--white);border-radius:var(--radius);">⚠️ This order arrived <strong>without a campaign</strong>' + (w.campaignId ? ' we recognise' : '') + '. Saving files it under <strong>' + esc(_woCamp ? _woCamp.name : 'the open campaign') + '</strong>.</div>')
       + (w.cardMessage ? '<div style="margin-top:6px;padding:6px 8px;background:var(--white);border-radius:var(--radius);">🎁 <strong>Card message:</strong> ' + esc(w.cardMessage) + '</div>' : '')
       + (w.amount ? '<div style="margin-top:4px;color:var(--text-muted);">Paid online: $' + w.amount.toFixed(2) + '</div>' : '');
   }
@@ -27570,6 +27647,7 @@ function campOrdersCardHtml(c) {
       <span id="camp-orders-toggle" style="font-size:16px;color:var(--text-muted);">▲</span>
     </div>
     <div id="camp-orders-body" style="display:block;margin-top:10px;">
+      <div id="camp-orders-unassigned"></div>
       <div id="camp-orders-filters"></div>
       <div id="camp-orders-table-wrap"></div>
       <div style="margin-top:10px;">
@@ -31438,7 +31516,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v55.0',
+    app_version: 'v55.1',
     tables: {}
   };
 

@@ -46,8 +46,20 @@ The payload lives in `logs.data`. The documented shape is:
 
 `_woNorm()` reads it and also accepts flat aliases (`name`, `email`, `delivery_method`,
 `gift_message`, …) so a drift in the website's field names degrades rather than breaks.
-`campaign_id` is the only field that must match exactly — a row whose `campaign_id` matches no
-campaign simply never appears.
+
+`campaign_id` may be **null** — the website is expected to send null rather than guess when
+there is no reliable single active campaign. Because every row in the Orders table belongs to
+exactly one campaign, such an order would match no campaign page and be silently dropped, so
+`unassignedWebsiteOrders()` catches both the null case *and* the case where `campaign_id` points
+at a campaign that no longer exists, and `_campOrderUnassignedPanelHtml()` renders them in a
+warning panel at the top of **every** campaign's Orders card. From there they can be filed
+against the open campaign (`assignWebsiteOrderToCampaign()`, which writes `campaign_id` and
+`campaign_assigned_at` back into `logs.data`) or confirmed straight into it. Confirming an
+unassigned order warns in the form banner which campaign it will land under, and appends
+"(arrived without a campaign)" to the engagement notes so the trail survives.
+
+If you add another way for an order to reach the app, keep this invariant: **no pending order may
+be reachable by zero screens.**
 
 Confirming an order opens the ordinary engagement form pre-filled and saves it through the same
 `saveEngagement()` path as a hand-typed one. On a successful insert, `finalizeWebsiteOrder()`
