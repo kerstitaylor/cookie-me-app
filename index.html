@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v55.1</title>
+<title>Cookie & Me — Kitchen Manager v55.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -5334,6 +5334,9 @@ let leadSearchQuery = ''; // client-side name/company/phone/email search
 let leadCampaignFilter = ''; // '' = all leads, 'unassigned' = no campaign_id, or a campaign id
 let leadLogExpanded = {}; // lead id -> bool, which message log panels are expanded
 let websiteOrders = []; // pending website gift box orders (logs rows, log_type 'website_order_pending')
+let deletedEngagements = []; // soft-deleted engagements — kept out of every normal view
+let deletedAllocs = []; // allocation records hidden alongside a soft-deleted engagement
+let campOrdersShowDeleted = false; // reveal the soft-deleted rows for this campaign
 let campOrdersFilter = { confirmed:'', paid:'', delivery:'', dateFrom:'', dateTo:'' }; // Campaign Orders table filters
 let campOrdersShowDone = false; // include Delivered engagements and Converted/Lost enquiries
 let recentSetupSessions = []; // last 10 setup checklist records for date pickers
@@ -7116,9 +7119,14 @@ async function loadBatches() {
   }
 }
 
+// Same split as campEngagements. An allocation hidden with its engagement must stop counting
+// against batch yield and collection stock, which every consumer gets for free by reading `allocs`.
 async function loadAllocs() {
   const { data } = await db.from('allocations').select('*').order('id');
-  if (data) allocs = data;
+  if (data) {
+    allocs        = data.filter(function(a){ return !a.deleted_at; });
+    deletedAllocs = data.filter(function(a){ return  a.deleted_at; });
+  }
 }
 
 async function loadFridgeLogs() {
@@ -26367,9 +26375,16 @@ async function loadCampaigns() {
   if (!error && data) campaigns = data;
 }
 
+// Soft-deleted rows are split off here rather than at each call site. campEngagements is read
+// in ~40 places (campaign views, customer detail, printed reports, financials, box fulfilment,
+// customer sync); filtering once at the loader means every one of them excludes deleted rows
+// without having to be found and changed.
 async function loadCampEngagements() {
   const { data, error } = await db.from('campaign_engagements').select('*').order('created_at', { ascending: true });
-  if (!error && data) campEngagements = data;
+  if (!error && data) {
+    campEngagements    = data.filter(function(e){ return !e.deleted_at; });
+    deletedEngagements = data.filter(function(e){ return  e.deleted_at; });
+  }
 }
 
 async function loadLeads() {
@@ -26455,10 +26470,14 @@ async function deleteCampaignRecord(id) {
   setSyncStatus('err','Sync error'); return false;
 }
 
+let _lastEngagementInsertError = null;
+
 async function insertEngagement(e) {
   setSyncStatus('syncing','Saving...');
+  _lastEngagementInsertError = null;
   const { data, error } = await db.from('campaign_engagements').insert([e]).select();
   if (!error && data) { campEngagements.push(data[0]); setSyncStatus('ok','Saved ✓'); return data[0]; }
+  _lastEngagementInsertError = error || null;
   setSyncStatus('err','Sync error'); return null;
 }
 
@@ -27117,35 +27136,83 @@ function _woCourierService(raw) {
 
 function _woNorm(logRow) {
   const d = (logRow && logRow.data) || {};
+  // The website sends a flat camelCase payload. The nested customer/delivery shape is kept
+  // as a fallback so either form is read correctly.
   const cust = d.customer || d.buyer || {};
   const del = d.delivery || d.shipping || {};
-  const items = Array.isArray(d.items) ? d.items : (Array.isArray(d.line_items) ? d.line_items : []);
-  const itemBoxes = items.reduce(function(s, it){ return s + (parseInt(it.qty != null ? it.qty : it.quantity) || 0); }, 0);
-  const boxes = parseInt(d.boxes != null ? d.boxes : itemBoxes) || itemBoxes || 1;
+
+  // Box count: boxCount is authoritative; packs is the per-pack breakdown; items may be
+  // either an array of line items or a plain description string.
+  const packs = Array.isArray(d.packs) ? d.packs : [];
+  const lineItems = Array.isArray(d.items) ? d.items : (Array.isArray(d.line_items) ? d.line_items : []);
+  const packBoxes = packs.reduce(function(s, p){ return s + (parseInt(p.qty != null ? p.qty : p.quantity) || 0); }, 0);
+  const itemBoxes = lineItems.reduce(function(s, it){ return s + (parseInt(it.qty != null ? it.qty : it.quantity) || 0); }, 0);
+  const boxes = parseInt(d.boxCount != null ? d.boxCount : d.boxes) || packBoxes || itemBoxes || 1;
+
+  // "1 × 6 Pack" style description, taken as sent or rebuilt from packs.
+  const itemsText = (typeof d.items === 'string' && d.items) ? d.items
+    : (packs.length ? packs.map(function(p){ return (p.qty || 1) + ' × ' + (p.packSize ? p.packSize + ' Pack' : 'Pack'); }).join(', ') : '');
+
+  // paid is a boolean on the real payload; fall back to parsing a status string.
   const payStatusRaw = String(d.payment_status || d.status || '').toLowerCase();
-  const paid = payStatusRaw ? (payStatusRaw.indexOf('paid') > -1 && payStatusRaw.indexOf('unpaid') === -1) : true;
+  const paid = (typeof d.paid === 'boolean')
+    ? d.paid
+    : (payStatusRaw ? (payStatusRaw.indexOf('paid') > -1 && payStatusRaw.indexOf('unpaid') === -1) : true);
+
+  // Collection point beats any delivery wording.
+  const method = (d.toCollectionPoint === true)
+    ? 'Collect'
+    : _woDeliveryMethod(d.deliveryMethod || d.delivery_method || del.method || del.type || d.fulfilment_type || d.deliveryLabel || '');
+
+  // The one thing that identifies this individual checkout — never the customer.
+  const sessionId = d.stripeSessionId || d.stripe_session_id || d.paymentIntentId || d.payment_intent_id || '';
+
   return {
     logId:          logRow.id,
-    campaignId:     d.campaign_id || d.campaignId || null,
-    orderRef:       d.order_ref || d.order_number || d.reference || '',
-    orderedAt:      d.ordered_at || logRow.saved_at || logRow.created_at || '',
-    name:           d.customer_name || cust.name || d.name || '',
-    phone:          cust.phone || d.phone || '',
-    email:          cust.email || d.email || '',
+    campaignId:     d.campaignId || d.campaign_id || null,
+    orderRef:       d.orderRef || d.order_ref || d.order_number || d.reference || '',
+    orderedAt:      d.orderedAt || d.ordered_at || logRow.saved_at || logRow.created_at || '',
+    name:           d.name || cust.name || d.customer_name || '',
+    phone:          d.phone || cust.phone || '',
+    email:          d.email || cust.email || '',
     boxes:          boxes,
     boxType:        d.box_type || 'Sold',
-    items:          items,
-    amount:         parseFloat(d.amount_paid != null ? d.amount_paid : (d.total != null ? d.total : d.amount)) || null,
+    packs:          packs,
+    items:          lineItems,
+    itemsText:      itemsText,
+    occasion:       d.occasion || d.theme || '',
+    amount:         parseFloat(d.amountPaid != null ? d.amountPaid : (d.amount_paid != null ? d.amount_paid : (d.total != null ? d.total : d.amount))) || null,
+    shippingFee:    parseFloat(d.shippingFee != null ? d.shippingFee : d.shipping_fee) || null,
     paid:           paid,
     paymentMethod:  d.payment_method || 'Website',
-    method:         _woDeliveryMethod(del.method || del.type || d.delivery_method || d.fulfilment_type || ''),
-    courierService: _woCourierService(del.service || del.courier_service || d.courier_service || ''),
-    dueDate:        (del.date || del.delivery_date || d.delivery_date || d.fulfilment_date || '') || '',
-    address:        del.address || cust.address || d.address || '',
-    recipientName:  del.recipient_name || d.recipient_name || '',
-    cardMessage:    d.card_message || d.gift_message || d.message || '',
-    notes:          d.notes || ''
+    method:         method,
+    deliveryLabel:  d.deliveryLabel || '',
+    courierService: _woCourierService(d.courierService || d.courier_service || del.service || del.courier_service || ''),
+    dueDate:        (d.deliveryDate || d.delivery_date || del.date || del.delivery_date || d.fulfilment_date || '') || '',
+    address:        d.address || del.address || cust.address || '',
+    recipientName:  d.recipientName || d.recipient_name || del.recipient_name || '',
+    cardMessage:    d.cardMessage || d.card_message || d.gift_message || d.message || '',
+    notes:          d.notes || '',
+    sessionId:      sessionId,
+    // Identity of this one checkout, used to refuse confirming the same order twice.
+    // Falls back to the logs row id, which is still per-order, never per-customer.
+    orderKey:       sessionId ? ('stripe:' + sessionId) : ('log:' + logRow.id)
   };
+}
+
+// Has this exact checkout already become a live engagement? Keyed strictly on the single
+// order — two different checkouts from the same person are always independent.
+function websiteOrderIsConfirmed(logRow) {
+  const key = _woNorm(logRow).orderKey;
+  if (!key) return false;
+  return campEngagements.some(function(e){ return e.source_order_key && e.source_order_key === key; });
+}
+
+// Pending orders still needing review. An order whose engagement already exists is dropped
+// here rather than relying on the logs row having been stamped — that stamp is a second
+// write that can fail, and when it did the order came back and was confirmed a second time.
+function pendingWebsiteOrders() {
+  return websiteOrders.filter(function(r){ return !websiteOrderIsConfirmed(r); });
 }
 
 // ── Row building ──────────────────────────────────────────────────────────
@@ -27233,7 +27300,7 @@ function _campOrderWebsiteRow(logRow) {
     id:        w.logId,
     stage:     'New, needs review',
     name:      w.name || '—',
-    orderText: w.boxes + ' box' + (w.boxes === 1 ? '' : 'es') + (w.boxType && w.boxType !== 'Sold' ? ' (' + w.boxType + ')' : '') + (w.orderRef ? ' · ' + w.orderRef : ''),
+    orderText: (w.itemsText || (w.boxes + ' box' + (w.boxes === 1 ? '' : 'es'))) + (w.boxType && w.boxType !== 'Sold' ? ' (' + w.boxType + ')' : '') + (w.orderRef ? ' · ' + w.orderRef : ''),
     confirmed: false,
     paid:      w.paid ? 'Paid' : 'Unpaid',
     methods:   w.method ? [w.method] : [],
@@ -27251,7 +27318,7 @@ function _campOrderWebsiteRow(logRow) {
 // Every row for one campaign, sorted by stage then due date.
 function campOrderRows(campId) {
   const rows = [];
-  websiteOrders.forEach(function(logRow) {
+  pendingWebsiteOrders().forEach(function(logRow) {
     const w = _woNorm(logRow);
     if (String(w.campaignId) !== String(campId)) return;
     rows.push(_campOrderWebsiteRow(logRow));
@@ -27340,7 +27407,7 @@ function campOrdersRefresh() {
 // surfaced in their own panel shown on every campaign's Orders card, and can be filed
 // against the campaign being viewed or confirmed straight into it.
 function unassignedWebsiteOrders() {
-  return websiteOrders.filter(function(logRow) {
+  return pendingWebsiteOrders().filter(function(logRow) {
     const w = _woNorm(logRow);
     if (!w.campaignId) return true;
     return !(campaigns || []).some(function(c){ return String(c.id) === String(w.campaignId); });
@@ -27430,7 +27497,8 @@ function _campOrderActionsCell(r) {
       ? '<button class="btn btn-sm" onclick="openCustomer(\'' + r.customerId + '\')" style="font-size:10px;white-space:nowrap;">Customer</button>'
       : '<button class="btn btn-sm btn-primary" onclick="convertLead(\'' + r.id + '\')" style="font-size:10px;white-space:nowrap;">Convert</button>';
   }
-  return '<button class="btn btn-sm" onclick="openEngForm(\'' + r.id + '\')" style="font-size:10px;white-space:nowrap;">Edit</button>';
+  return '<button class="btn btn-sm" onclick="openEngForm(\'' + r.id + '\')" style="font-size:10px;white-space:nowrap;">Edit</button>'
+    + ' <button class="btn btn-sm" onclick="softDeleteEngagement(\'' + r.id + '\')" style="font-size:10px;white-space:nowrap;color:var(--danger);border-color:var(--danger);">Delete</button>';
 }
 
 function _campOrderRowHtml(r) {
@@ -27509,6 +27577,8 @@ function renderCampOrders() {
       + '</tbody></table></div>';
   }
 
+  tableEl.innerHTML += _campOrderDeletedPanelHtml();
+
   const countEl = document.getElementById('camp-orders-count');
   if (countEl) countEl.textContent = '(' + all.length + ')';
 }
@@ -27518,14 +27588,25 @@ function renderCampOrders() {
 // website's data pre-filled. Saving it creates the engagement exactly as a hand-typed one
 // would, then stamps the logs row as reviewed (never deleted) so it drops off the list.
 let _pendingWebsiteOrderLogId = null;
+let _pendingWebsiteOrderKey = null;
 
 function reviewWebsiteOrder(logId) {
   const logRow = websiteOrders.find(function(r){ return String(r.id) === String(logId); });
   if (!logRow) { alert('That website order is no longer pending — try "Check for new".'); return; }
   const w = _woNorm(logRow);
 
+  // One checkout, one order. If this exact Stripe session already has a live engagement,
+  // confirming again would duplicate it.
+  const already = campEngagements.find(function(e){ return e.source_order_key && e.source_order_key === w.orderKey; });
+  if (already) {
+    alert('This website order has already been confirmed as an order for ' + (already.name || 'a customer')
+      + '. Delete that order first if you need to redo it.');
+    return;
+  }
+
   openEngForm();
   _pendingWebsiteOrderLogId = logRow.id;
+  _pendingWebsiteOrderKey = w.orderKey;
 
   document.getElementById('eng-form-title').textContent = 'Confirm Website Order';
   const nameEl = document.getElementById('ef-name');
@@ -27612,7 +27693,12 @@ async function finalizeWebsiteOrder(engagementId) {
   _pendingWebsiteOrderLogId = null;
   if (!logId) return;
   const logRow = websiteOrders.find(function(r){ return String(r.id) === String(logId); });
-  if (!logRow) return;
+  if (!logRow) {
+    // The engagement itself carries source_order_key, so the order will not reappear as
+    // pending; the logs row just misses its stamp.
+    console.warn('finalizeWebsiteOrder: logs row', logId, 'was no longer in memory — stamp skipped');
+    return;
+  }
   const data = Object.assign({}, logRow.data || {}, {
     reviewed: true,
     reviewed_at: new Date().toISOString(),
@@ -27636,6 +27722,215 @@ async function finalizeWebsiteOrder(engagementId) {
   } catch (e) {
     console.warn('Could not clear website order notification', e);
   }
+}
+
+// ═══════════════════════════════════════════════════════
+// ENGAGEMENT SOFT DELETE — the standing pattern for removing an order
+// ═══════════════════════════════════════════════════════
+// Always: confirm → soft delete → undo toast, in that order, every time.
+//
+// Engagements use a `deleted_at` flag on the row rather than the app's snapshot trash
+// (softDelete()/deleted_records) on purpose. Three things reference an engagement by its
+// id — allocation records tagged `eng:<id>` in notes, `logs.data.engagement_id` on a
+// confirmed website order, and `leads.engagement_id` — and deleted_records.record_id is a
+// bigint that cannot even hold an engagement's uuid. Snapshot-and-reinsert would restore
+// the row under a new id and leave all three pointing at nothing: visually back, actually
+// broken. Flagging the row keeps the id, so a restore is genuinely the state it was in.
+
+// Allocation records belonging to one engagement, using the same precedence as the
+// save path in saveCampBoxAllocs(): the `eng:<id>` notes tag wins outright, and legacy
+// untagged records only count on one of this engagement's own collection instances.
+function allocsForEngagement(eng, pool) {
+  if (!eng) return [];
+  const engNoteTag = 'eng:' + String(eng.id);
+  const instIds = (eng.box_allocations || []).map(function(a){ return a.instance_id; });
+  if (eng.collection_instance_id != null && instIds.indexOf(eng.collection_instance_id) === -1) {
+    instIds.push(eng.collection_instance_id);
+  }
+  const engNameLc = (eng.name || '').toLowerCase().trim();
+  return (pool || []).filter(function(a) {
+    if (a.notes && String(a.notes).indexOf('eng:') === 0) return a.notes === engNoteTag;
+    if (a.collection_instance_id == null) return false;
+    if (instIds.indexOf(a.collection_instance_id) === -1) return false;
+    if (a.recipient && typeof a.recipient === 'object' && a.recipient.customerId != null && eng.customer_id != null) {
+      return String(a.recipient.customerId) === String(eng.customer_id);
+    }
+    const rName = typeof a.recipient === 'string' ? a.recipient : ((a.recipient && a.recipient.name) || '');
+    return !!engNameLc && rName.toLowerCase().trim() === engNameLc;
+  });
+}
+
+function _engDeleteLabel(eng) {
+  const liveCust = eng.customer_id ? (cfg.customers || []).find(function(c){ return c && String(c.id) === String(eng.customer_id); }) : null;
+  return (liveCust ? custDisplayName(liveCust) : eng.name) || 'this customer';
+}
+
+function _refreshAfterEngagementChange() {
+  if (activeCampaignId && document.getElementById('camp-detail-inner')) renderCampDetail();
+  else if (document.getElementById('camp-orders-table-wrap')) renderCampOrders();
+}
+
+function _deleteToastUndoBtn() {
+  const t = document.getElementById('delete-toast');
+  return t ? t.querySelector('button[onclick="undoDelete()"]') : null;
+}
+
+// A toast with no undo — used to confirm a restore landed.
+function _showToastNoUndo(msg) {
+  showDeleteToast(msg, null);
+  const btn = _deleteToastUndoBtn();
+  if (btn) btn.style.display = 'none';
+}
+
+function softDeleteEngagement(engId) {
+  const eng = campEngagements.find(function(e){ return String(e.id) === String(engId); });
+  if (!eng) { alert('That order is no longer on this campaign — refresh and try again.'); return; }
+  const tied = allocsForEngagement(eng, allocs);
+  const extra = tied.length
+    ? ' Its ' + tied.length + ' box allocation record' + (tied.length === 1 ? '' : 's')
+      + ' will be hidden with it, and come back if you undo.'
+    : '';
+  showConfirm(
+    'Delete this order?',
+    'Delete the order for ' + _engDeleteLabel(eng) + '? This can be undone.' + extra,
+    'Delete',
+    function(){ _doSoftDeleteEngagement(engId); }
+  );
+}
+
+async function _doSoftDeleteEngagement(engId) {
+  const eng = campEngagements.find(function(e){ return String(e.id) === String(engId); });
+  if (!eng) return;
+  const tied = allocsForEngagement(eng, allocs);
+  const stamp = new Date().toISOString();
+
+  setSyncStatus('syncing', 'Saving...');
+  const engRes = await db.from('campaign_engagements').update({ deleted_at: stamp }).eq('id', eng.id);
+  if (engRes.error) {
+    setSyncStatus('err', 'Sync error');
+    console.error('softDeleteEngagement error', engRes.error);
+    showSaveError('Could not delete that order.');
+    return;
+  }
+
+  // Hide the tied allocations too. If any one fails, undo the whole thing rather than
+  // leave an order half-deleted with its stock still committed.
+  const hiddenAllocIds = [];
+  for (let i = 0; i < tied.length; i++) {
+    const r = await db.from('allocations').update({ deleted_at: stamp }).eq('id', tied[i].id);
+    if (r.error) {
+      console.error('softDeleteEngagement alloc error', r.error);
+      for (let j = 0; j < hiddenAllocIds.length; j++) {
+        await db.from('allocations').update({ deleted_at: null }).eq('id', hiddenAllocIds[j]);
+      }
+      await db.from('campaign_engagements').update({ deleted_at: null }).eq('id', eng.id);
+      setSyncStatus('err', 'Sync error');
+      showSaveError('Could not hide the box allocations for that order — nothing was deleted.');
+      return;
+    }
+    hiddenAllocIds.push(tied[i].id);
+  }
+  setSyncStatus('ok', 'Saved ✓');
+
+  // Every write landed — only now change what is on screen.
+  eng.deleted_at = stamp;
+  campEngagements = campEngagements.filter(function(e){ return String(e.id) !== String(eng.id); });
+  deletedEngagements.push(eng);
+  tied.forEach(function(a){ a.deleted_at = stamp; });
+  allocs = allocs.filter(function(a){ return hiddenAllocIds.indexOf(a.id) === -1; });
+  deletedAllocs = deletedAllocs.concat(tied);
+
+  _refreshAfterEngagementChange();
+  const btn = _deleteToastUndoBtn();
+  if (btn) btn.style.display = '';
+  showDeleteToast('Order for ' + _engDeleteLabel(eng) + ' deleted', function(){ return restoreEngagement(eng.id); });
+}
+
+async function restoreEngagement(engId) {
+  const eng = deletedEngagements.find(function(e){ return String(e.id) === String(engId); });
+  if (!eng) { alert('That order is not in the deleted list — reload and try again.'); return; }
+  // Restore exactly what this delete hid: allocations carrying the same timestamp that
+  // also belong to this engagement. An earlier delete's records are left alone.
+  const stamp = eng.deleted_at;
+  const tied = deletedAllocs.filter(function(a) {
+    return a.deleted_at === stamp && allocsForEngagement(eng, [a]).length > 0;
+  });
+
+  setSyncStatus('syncing', 'Saving...');
+  const res = await db.from('campaign_engagements').update({ deleted_at: null }).eq('id', eng.id);
+  if (res.error) {
+    setSyncStatus('err', 'Sync error');
+    console.error('restoreEngagement error', res.error);
+    if (String(res.error.code) === '23505') {
+      alert('Cannot restore this order: the website order it came from has since been confirmed again as a different order. Delete that one first if you want this one back.');
+    } else {
+      showSaveError('Could not restore that order.');
+    }
+    return;
+  }
+
+  const restoredAllocIds = [];
+  for (let i = 0; i < tied.length; i++) {
+    const r = await db.from('allocations').update({ deleted_at: null }).eq('id', tied[i].id);
+    if (r.error) {
+      console.error('restoreEngagement alloc error', r.error);
+      for (let j = 0; j < restoredAllocIds.length; j++) {
+        await db.from('allocations').update({ deleted_at: stamp }).eq('id', restoredAllocIds[j]);
+      }
+      await db.from('campaign_engagements').update({ deleted_at: stamp }).eq('id', eng.id);
+      setSyncStatus('err', 'Sync error');
+      showSaveError('Could not restore the box allocations for that order — it was left deleted.');
+      return;
+    }
+    restoredAllocIds.push(tied[i].id);
+  }
+  setSyncStatus('ok', 'Saved ✓');
+
+  eng.deleted_at = null;
+  deletedEngagements = deletedEngagements.filter(function(e){ return String(e.id) !== String(eng.id); });
+  campEngagements.push(eng);
+  campEngagements.sort(function(a, b){ return String(a.created_at || '').localeCompare(String(b.created_at || '')); });
+  tied.forEach(function(a){ a.deleted_at = null; });
+  deletedAllocs = deletedAllocs.filter(function(a){ return restoredAllocIds.indexOf(a.id) === -1; });
+  allocs = allocs.concat(tied).sort(function(a, b){ return (a.id || 0) - (b.id || 0); });
+
+  _refreshAfterEngagementChange();
+  _showToastNoUndo('Order for ' + _engDeleteLabel(eng) + ' restored ✓');
+}
+
+// Soft-deleted orders for the campaign on screen, listed under the table so a restore is
+// always one click away here rather than somewhere else in the app.
+function _campOrderDeletedPanelHtml() {
+  const mine = deletedEngagements.filter(function(e){ return String(e.campaign_id) === String(activeCampaignId); });
+  if (!mine.length) return '';
+  if (!campOrdersShowDeleted) {
+    return '<div style="margin-top:8px;font-size:11px;font-family:sans-serif;">'
+      + '<a href="javascript:void(0)" onclick="campOrdersToggleShowDeleted()" style="color:var(--text-muted);text-decoration:underline;">'
+      + 'Show ' + mine.length + ' deleted order' + (mine.length === 1 ? '' : 's') + '</a></div>';
+  }
+  const rows = mine.map(function(e) {
+    const when = e.deleted_at ? fmtDate(String(e.deleted_at).slice(0, 10)) : '';
+    const tied = deletedAllocs.filter(function(a){ return a.deleted_at === e.deleted_at && allocsForEngagement(e, [a]).length > 0; });
+    return '<div style="border-top:1px solid var(--border);padding:7px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+      + '<div style="flex:1;min-width:140px;">'
+      + '<span style="font-weight:600;font-family:sans-serif;font-size:12px;">' + esc(_engDeleteLabel(e)) + '</span>'
+      + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">'
+      + esc(_campOrderEngOrderText(e)) + (when ? ' · deleted ' + when : '')
+      + (tied.length ? ' · ' + tied.length + ' allocation' + (tied.length === 1 ? '' : 's') + ' hidden' : '')
+      + '</div></div>'
+      + '<button class="btn btn-sm" onclick="restoreEngagement(\'' + e.id + '\')" style="font-size:10px;white-space:nowrap;background:var(--success-bg);color:var(--success);border-color:var(--success);">♻ Restore</button>'
+      + '</div>';
+  }).join('');
+  return '<div style="margin-top:10px;background:var(--gray-light);border-radius:var(--radius);padding:8px 10px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;">'
+    + '<span style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;font-family:sans-serif;">Deleted (' + mine.length + ')</span>'
+    + '<a href="javascript:void(0)" onclick="campOrdersToggleShowDeleted()" style="font-size:11px;color:var(--navy);text-decoration:underline;font-family:sans-serif;">Hide</a>'
+    + '</div>' + rows + '</div>';
+}
+
+function campOrdersToggleShowDeleted() {
+  campOrdersShowDeleted = !campOrdersShowDeleted;
+  renderCampOrders();
 }
 
 // Card markup, shared by the campaign detail and edit screens.
@@ -30190,6 +30485,7 @@ function openEngForm(id, returnMode) {
   editEngagementId = id || null;
   _engLinkedCustomerId = null;
   _pendingWebsiteOrderLogId = null;
+  _pendingWebsiteOrderKey = null;
   const _efBanner = document.getElementById('ef-website-banner');
   if (_efBanner) { _efBanner.style.display = 'none'; _efBanner.innerHTML = ''; }
   const e = id ? campEngagements.find(x=>x.id===id) : null;
@@ -30263,6 +30559,7 @@ function openEngForm(id, returnMode) {
 function closeEngForm() {
   window._pendingLeadConversion = null;
   _pendingWebsiteOrderLogId = null;
+  _pendingWebsiteOrderKey = null;
   editEngagementId = null;
   _engLinkedCustomerId = null;
   if (_engFormReturnMode === 'edit') {
@@ -31020,6 +31317,10 @@ async function _doSaveEngagement(f) {
     contact_snapshot: { name:f.name, phone:f.phone||null, email:f.email||null, address:f.address||null, social_media:f.social_media||null, savedAt:new Date().toISOString() }
   };
 
+  // Written with the insert itself, so the link to the source checkout exists the moment
+  // the engagement does — it does not depend on the follow-up write to the logs row.
+  if (!editEngagementId && _pendingWebsiteOrderKey) fields.source_order_key = _pendingWebsiteOrderKey;
+
   let result;
   if (editEngagementId) {
     result = await updateEngagement(editEngagementId, fields);
@@ -31027,6 +31328,11 @@ async function _doSaveEngagement(f) {
   } else {
     result = await insertEngagement(fields);
     if(result) showMsg('ef-msg','Engagement saved \u2713','success');
+    // The database refuses a second live engagement for the same checkout.
+    else if (_lastEngagementInsertError && String(_lastEngagementInsertError.code) === '23505') {
+      showMsg('ef-msg','This website order has already been confirmed — it was not saved again.','error');
+      return;
+    }
   }
   if (result) {
     // Only a fresh insert (not an edit) can be the record a pending lead conversion is waiting on
@@ -31066,10 +31372,10 @@ async function _doSaveEngagement(f) {
   }
 }
 
-async function confirmDeleteEng(id) {
-  if (!confirm('Delete this engagement?')) return;
-  if (!(await deleteEngagement(id))) { showSaveError('Could not delete engagement.'); return; }
-  renderCampDetail();
+// Kept as an alias so any remaining call site goes through the soft delete. Deleting an
+// engagement from the UI is never permanent.
+function confirmDeleteEng(id) {
+  softDeleteEngagement(id);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -31516,7 +31822,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v55.1',
+    app_version: 'v55.2',
     tables: {}
   };
 

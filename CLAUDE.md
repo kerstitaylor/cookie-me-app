@@ -31,21 +31,26 @@ The public website (separate repo) writes each paid gift box order as a `logs` r
 only reads them — it never creates them. `loadWebsiteOrders()` pulls the pending ones into the
 `websiteOrders` global on boot.
 
-The payload lives in `logs.data`. The documented shape is:
+The payload lives in `logs.data`. The real shape, as observed on live orders, is flat and
+camelCase — **not** the nested `customer`/`delivery` shape this file used to describe:
 
 ```json
-{ "campaign_id": "<uuid>", "order_ref": "WEB-1234", "ordered_at": "<iso>",
-  "customer": { "name": "", "email": "", "phone": "", "address": "" },
-  "items": [{ "template_id": null, "qty": 2, "unit_price": 45 }],
-  "boxes": 2, "box_type": "Sold",
-  "amount_paid": 90, "payment_status": "paid", "payment_method": "Website (Stripe)",
-  "delivery": { "method": "Courier", "service": "Overnight", "date": "<yyyy-mm-dd>",
-                "address": "", "recipient_name": "" },
-  "card_message": "", "notes": "" }
+{ "name": "", "email": "", "phone": "", "address": "",
+  "boxCount": 1, "packs": [{ "qty": 1, "packSize": 6 }], "items": "1 × 6 Pack",
+  "amountPaid": 20, "shippingFee": 0, "paid": true,
+  "deliveryMethod": "delivery | huttDelivery | ...", "deliveryLabel": "",
+  "toCollectionPoint": false,
+  "occasion": "Father's Day", "theme": "Father's Day", "flavour": null,
+  "cardMessage": "", "orderedAt": "<iso>", "source": "website",
+  "campaignId": null, "campaign_id": null,
+  "stripeSessionId": "cs_live_..." }
 ```
 
-`_woNorm()` reads it and also accepts flat aliases (`name`, `email`, `delivery_method`,
-`gift_message`, …) so a drift in the website's field names degrades rather than breaks.
+`_woNorm()` reads this first and keeps the nested/snake_case aliases as fallbacks, so either
+form works. Getting this wrong is not loud: an unread key silently becomes a default, and for a
+while `cardMessage`, `amountPaid`, `deliveryMethod` and `address` were all being dropped — orders
+landed as "Collect", unpaid, with no gift message. If the website changes a key, check
+`_woNorm()` against a real `logs.data` row rather than trusting this block.
 
 `campaign_id` may be **null** — the website is expected to send null rather than guess when
 there is no reliable single active campaign. Because every row in the Orders table belongs to
@@ -54,11 +59,29 @@ exactly one campaign, such an order would match no campaign page and be silently
 at a campaign that no longer exists, and `_campOrderUnassignedPanelHtml()` renders them in a
 warning panel at the top of **every** campaign's Orders card. From there they can be filed
 against the open campaign (`assignWebsiteOrderToCampaign()`, which writes `campaign_id` and
-`campaign_assigned_at` back into `logs.data`) or confirmed straight into it. Confirming an
-unassigned order warns in the form banner which campaign it will land under, and appends
-"(arrived without a campaign)" to the engagement notes so the trail survives.
+`campaign_assigned_at` back into `logs.data`) or confirmed straight into it.
 
-If you add another way for an order to reach the app, keep this invariant: **no pending order may
+### One checkout, one engagement — `source_order_key`
+
+`campaign_engagements.source_order_key` holds `stripe:<session id>` (falling back to
+`log:<logs row id>`) and is written **in the same insert that creates the engagement**, so the
+link to the source checkout exists the moment the engagement does. A partial unique index,
+`campaign_engagements_source_order_key_live` (`where source_order_key is not null and
+deleted_at is null`), means the database itself refuses a second live engagement for the same
+checkout; `_doSaveEngagement()` catches the 23505 and explains it.
+
+This replaced a fragile arrangement where "already confirmed" was recorded only by stamping the
+logs row *after* the insert. That stamp is a second write, it failed once in production, and the
+order sat pending for 36 hours until it was confirmed a second time — producing duplicate
+engagements *and* duplicate customer records. `pendingWebsiteOrders()` now derives what is still
+outstanding from `source_order_key` on live engagements, so a missed stamp can no longer
+resurrect an order. The logs stamp is still written, but it is now best-effort belt-and-braces.
+
+**The key is always the individual checkout, never the customer.** Two genuine orders from the
+same person — same name, email, phone, identical contents, same day — must both come through.
+Never dedupe website orders on customer identity or order contents.
+
+If you add another way for an order to reach the appIf you add another way for an order to reach the app, keep this invariant: **no pending order may
 be reachable by zero screens.**
 
 Confirming an order opens the ordinary engagement form pre-filled and saves it through the same
@@ -78,6 +101,32 @@ The old Leads-box helpers (`renderCampLeadsCard`, `_campLeadRowHtml`, `campOnLea
 `toggleCampLeadsShowAll`) are still defined but no longer reachable from the campaign page —
 `renderCampLeadsCard()` early-returns because `#camp-leads-card-body` no longer exists. They were
 left in place rather than deleted because the Leads tab shares parts of that code path.
+
+### Deleting an order is always confirm → soft delete → undo
+
+`softDeleteEngagement()` is the standing pattern for removing an order, and the only delete
+reachable from the UI (`confirmDeleteEng()` is now just an alias for it — the old hard delete on
+the campaign edit screen is gone). It always: asks via `showConfirm()` saying the delete can be
+undone, stamps `deleted_at` rather than removing anything, and then offers `showDeleteToast()`
+with a live undo. Soft-deleted orders also stay restorable from the "Show N deleted orders"
+strip under the campaign Orders table, so an expired toast never loses them.
+
+Engagements use a `deleted_at` flag rather than the app's snapshot trash
+(`softDelete()` → `deleted_records`) deliberately. Three things reference an engagement by id —
+allocation records tagged `eng:<id>` in `notes`, `logs.data.engagement_id` on a confirmed website
+order, and `leads.engagement_id` — and `deleted_records.record_id` is a `bigint` that cannot even
+hold an engagement's uuid. Snapshot-and-reinsert would bring the row back under a *new* id and
+leave all three pointing at nothing: visually restored, actually broken.
+
+Allocations tied to the engagement are hidden with it (`allocations.deleted_at`) and restored
+with it, so a deleted order stops consuming batch yield and collection stock. Both writes are
+all-or-nothing: if any allocation fails to hide, the engagement is un-deleted rather than left
+half-deleted with its stock still committed.
+
+`campEngagements` and `allocs` are filtered at their **loaders**, not at each call site. Both are
+read in dozens of places (campaign views, customer detail, printed reports, financials, box
+fulfilment, customer sync); splitting `deletedEngagements` / `deletedAllocs` off once at load
+means every consumer excludes deleted rows without having to be found and changed.
 
 ### Courier ship-by dates are suggestions, never constraints
 
