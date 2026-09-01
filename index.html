@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v55.2</title>
+<title>Cookie & Me — Kitchen Manager v55.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -29864,6 +29864,7 @@ function renderCampDetailView(el, c) {
                   <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${payBg};color:${payColour};font-family:sans-serif;font-weight:600;">${payStatus}</span>
                   <span class="tag ${e.status==='Closed'?'tag-green':'tag-gray'}" style="font-size:10px;">${e.status}</span>
                   <button class="btn btn-sm" onclick="openEngForm('${e.id}','view')" style="font-size:11px;padding:2px 8px;">Edit</button>
+                  <button class="btn btn-sm" onclick="softDeleteEngagement('${e.id}')" style="font-size:11px;padding:2px 8px;color:var(--danger);border-color:var(--danger);">Delete</button>
                 </div>
               </div>
               <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:4px;">${e.boxes} box${e.boxes!==1?'es':''} · ${e.box_type}${delivLine?' · '+delivLine:''}${e.payment_method?' · '+e.payment_method:''}</div>
@@ -31822,7 +31823,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v55.2',
+    app_version: 'v55.3',
     tables: {}
   };
 
