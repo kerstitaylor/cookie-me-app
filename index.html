@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v55.3</title>
+<title>Cookie & Me — Kitchen Manager v55.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -27187,7 +27187,8 @@ function _woNorm(logRow) {
     paymentMethod:  d.payment_method || 'Website',
     method:         method,
     deliveryLabel:  d.deliveryLabel || '',
-    courierService: _woCourierService(d.courierService || d.courier_service || del.service || del.courier_service || ''),
+    courierService: _woCourierService(d.courierService || d.courier_service || del.service || del.courier_service
+                      || d.deliveryMethod || d.deliveryLabel || ''),
     dueDate:        (d.deliveryDate || d.delivery_date || del.date || del.delivery_date || d.fulfilment_date || '') || '',
     address:        d.address || del.address || cust.address || '',
     recipientName:  d.recipientName || d.recipient_name || del.recipient_name || '',
@@ -27637,7 +27638,8 @@ function reviewWebsiteOrder(logId) {
       };
     });
   } else if (w.amount && w.boxes) {
-    colRows = [{ template_id: null, qty: w.boxes, box_type: w.boxType || 'Sold', unit_price: Math.round((w.amount / w.boxes) * 100) / 100 }];
+    const boxRevenue = w.amount - (w.shippingFee || 0);
+    colRows = [{ template_id: null, qty: w.boxes, box_type: w.boxType || 'Sold', unit_price: Math.round((boxRevenue / w.boxes) * 100) / 100 }];
   }
   initEngColRows(colRows, colRows ? null : w.boxes, w.boxType);
 
@@ -27652,7 +27654,7 @@ function reviewWebsiteOrder(logId) {
     courier_name: '',
     tracking: '',
     courier_actual: null,
-    courier_charged: null,
+    courier_charged: (w.method === 'Courier' && w.shippingFee) ? w.shippingFee : null,
     courier_service: w.method === 'Courier' ? (w.courierService || 'Overnight') : '',
     ship_by: ''
   }], null, null, null, null, null);
@@ -31823,7 +31825,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v55.3',
+    app_version: 'v55.4',
     tables: {}
   };
 
