@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v55.4</title>
+<title>Cookie & Me — Kitchen Manager v56.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -122,6 +122,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 .tag-purple { background: #f0edfe; color: #5b3db5; }
 .tag-gray { background: var(--gray-light); color: var(--gray-dark); }
 .tag-orange { background: #fff0ea; color: #c94e00; }
+.tag-frozen { background: #e6f4fb; color: #10627f; }
 .tag-quickadd { background: #fffbe6; color: #7a5c00; border: 1px dashed #c8a600; }
 /* Customer picker widget */
 .cust-picker-wrap { position: relative; }
@@ -654,6 +655,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="sub-tab" data-sub="prod-icing" onclick="goProd('prod-icing')">🍬 Icing</button>
         <button class="sub-tab" data-sub="prod-collection" onclick="goProd('prod-collection')">📦 Collection</button>
         <button class="sub-tab" data-sub="prod-alloc" onclick="goProd('prod-alloc')">📬 Allocate</button>
+        <button class="sub-tab" data-sub="prod-frozen" onclick="goProd('prod-frozen')">❄️ Frozen</button>
         <button class="sub-tab" data-sub="prod-recipes" onclick="goProd('prod-recipes')">📋 Recipes</button>
       </div>
     </div>
@@ -1337,9 +1339,28 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <div id="al-form" style="display:none">
         <div class="card">
           <div class="card-title">Add allocation</div>
+          <div class="field" style="margin-bottom:10px;">
+            <label>Cookie source</label>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-family:sans-serif;font-size:13px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="al-source" id="al-source-fresh" value="fresh" checked onchange="updAllocSource()" style="accent-color:var(--orange)"/>
+                Fresh from batch
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="al-source" id="al-source-frozen" value="frozen" onchange="updAllocSource()" style="accent-color:var(--orange)"/>
+                From frozen stock
+              </label>
+            </div>
+            <div id="al-frozen-panel" style="display:none;margin-top:8px;background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;">
+              <label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;margin-bottom:3px;">Frozen lot (soonest use-by first)</label>
+              <select id="al-frozen-lot" onchange="onFrozenLotPick()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"></select>
+              <div id="al-frozen-info" style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:5px;"></div>
+            </div>
+          </div>
           <div class="r2">
             <div class="field"><label>Allocation type</label>
-              <select id="al-t" onchange="updAllocT()">
+              <select id="al-t" onchange="updAllocT();updAllocFrozenUseBy()">
+                <option value="frozen">Frozen</option>
                 <option value="sold">Sold</option>
                 <option value="consumed">Consumed</option>
                 <option value="donated">Donated</option>
@@ -1393,6 +1414,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
               <div class="field" style="margin-bottom:8px;"><label style="font-size:12px;">Orders</label><div id="al-order-picker"></div></div>
             </div>
           </div>
+          <div class="field" id="al-useby-wrap" style="display:none;"><label>Use by <span style="font-weight:400;color:var(--text-muted);font-size:11px">(frozen stock)</span></label><input id="al-useby" type="date"/></div>
           <div class="field"><label>Date</label><input id="al-dt" type="date"/></div>
           <button class="btn btn-primary" onclick="addAlloc()">Add allocation</button>
           <input type="hidden" id="al-icing-entry-id"/>
@@ -1410,6 +1432,16 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           <button class="btn btn-sm" style="font-size:11px" onclick="goHistSection('hist-allocs')">Full history →</button>
         </div>
         <div id="al-recent-batches"></div>
+      </div>
+    </div>
+
+    <div id="prod-frozen" class="section">
+      <div class="card">
+        <div class="card-title">❄️ Frozen stock</div>
+        <p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">
+          Cookies put aside in the freezer, soonest use-by first. Bake off straight from frozen — there is no thaw step.
+        </p>
+        <div id="frozen-list"></div>
       </div>
     </div>
 
@@ -5015,6 +5047,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="family" checked onchange="renderFinReport()"/> Family</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="friends" checked onchange="renderFinReport()"/> Friends</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="disposal" checked onchange="renderFinReport()"/> Thrown away</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="frozen" checked onchange="renderFinReport()"/> Frozen</label>
         </div>
         <!-- Allocation method -->
         <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Allocation method</div>
@@ -7121,6 +7154,453 @@ async function loadBatches() {
 
 // Same split as campEngagements. An allocation hidden with its engagement must stop counting
 // against batch yield and collection stock, which every consumer gets for free by reading `allocs`.
+// ═══════════════════════════════════════════════════════
+// FROZEN STOCK — freeze, bake off, write off
+// ═══════════════════════════════════════════════════════
+
+let frozenShowDepleted = false;
+
+// ── Freeze cookies (from a batch) ─────────────────────────────────────────
+function openFreezeForm(batchNum) {
+  const b = findBatchByNum(batchNum);
+  if (!b) { alert('Batch not found.'); return; }
+  if (!b.yield) { alert('This batch has no yield recorded — enter the batch yield before freezing any of it.'); return; }
+  const ba = allocs.filter(function(a){ return normBatchNum(a.batch_num) === normBatchNum(b.num); });
+  const remaining = (b.yield || 0) - sumConsumedQty(ba);
+  const freezeDate = today();
+  const body = ''
+    + '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">'
+      + 'Batch <strong style="color:var(--text)">' + esc(b.num) + '</strong>'
+      + (b.recipe ? ' · ' + esc(b.recipe) : '')
+      + ' · <strong style="color:var(--text)">' + remaining + '</strong> of ' + b.yield + ' cookies still unallocated.</div>'
+    + (remaining <= 0 ? '<div class="alert alert-danger" style="font-size:12px;">Every cookie in this batch is already allocated — there is nothing left to freeze.</div>' : '')
+    + '<div class="u-modal-field"><label>Cookies to freeze</label>'
+      + '<input id="fz-qty" type="number" min="1" max="' + remaining + '" value="' + (remaining > 0 ? remaining : '') + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
+    + '<div class="u-modal-field"><label>Date frozen</label>'
+      + '<input id="fz-date" type="date" value="' + freezeDate + '" onchange="fzSyncUseBy()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
+    + '<div class="u-modal-field"><label>Use by</label>'
+      + '<input id="fz-useby" type="date" value="' + frozenUseByDefault(freezeDate) + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/>'
+      + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:3px;">Defaults to ' + FROZEN_SHELF_LIFE_WEEKS + ' weeks from the freeze date — change it if this lot needs a different date.</div></div>'
+    + '<div class="u-modal-field"><label>Note <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label>'
+      + '<textarea id="fz-notes" placeholder="e.g. undecorated, for the Christmas run" style="width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"></textarea></div>';
+  const footer = (remaining > 0)
+    ? '<button class="btn btn-primary" style="flex:1" onclick="doFreezeCookies(\'' + esc(b.num) + '\')">❄ Freeze</button>'
+      + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>'
+    : '<button class="btn" style="flex:1" onclick="closeUModal()">Close</button>';
+  openUModal('Freeze cookies', body, footer);
+}
+
+// Keep the use-by suggestion in step while the freeze date is still being chosen,
+// unless it has already been hand-edited away from the suggestion.
+function fzSyncUseBy() {
+  const dEl = document.getElementById('fz-date');
+  const uEl = document.getElementById('fz-useby');
+  if (!dEl || !uEl) return;
+  uEl.value = frozenUseByDefault(dEl.value);
+}
+
+async function doFreezeCookies(batchNum) {
+  const b = findBatchByNum(batchNum);
+  if (!b) { alert('Batch not found.'); return; }
+  const qty = parseInt((document.getElementById('fz-qty') || {}).value) || 0;
+  const date = (document.getElementById('fz-date') || {}).value || today();
+  const useBy = (document.getElementById('fz-useby') || {}).value || null;
+  const notes = ((document.getElementById('fz-notes') || {}).value || '').trim() || null;
+
+  if (qty <= 0) { alert('Enter how many cookies to freeze.'); return; }
+  const dateErr = validateDate(date, 'Date frozen');
+  if (dateErr) { alert(dateErr); return; }
+  if (useBy) {
+    const useByErr = validateDate(useBy, 'Use by');
+    if (useByErr) { alert(useByErr); return; }
+    if (useBy < date) { alert('Use-by date is before the freeze date.'); return; }
+  }
+
+  // Same guard as any other allocation, against live data.
+  const live = await fetchLiveBatchAllocations(b.num);
+  if (live === null) { alert('Could not check how much of this batch is already allocated — check your connection and try again.'); return; }
+  const remaining = (b.yield || 0) - sumConsumedQty(live);
+  if (qty > remaining) {
+    alert('Cannot freeze ' + qty + ': batch ' + b.num + ' has only ' + remaining + ' cookie' + (remaining === 1 ? '' : 's') + ' left unallocated.');
+    return;
+  }
+
+  setSyncStatus('syncing', 'Saving...');
+  const { data, error } = await db.from('allocations').insert([{
+    batch_num: b.num,
+    batch_idx: batches.findIndex(function(x){ return x.id === b.id; }),
+    type: 'frozen',
+    qty: qty,
+    recipient: { type: 'frozen', name: 'Frozen stock' },
+    date: date,
+    frozen_use_by: useBy,
+    notes: notes
+  }]).select();
+  if (error || !data) {
+    setSyncStatus('err', 'Sync error');
+    console.error('doFreezeCookies error', error);
+    showSaveError('Could not freeze those cookies.');
+    return;
+  }
+  allocs.push(data[0]);
+  setSyncStatus('ok', 'Saved ✓');
+  closeUModal();
+  showSaveToast(qty + ' cookie' + (qty === 1 ? '' : 's') + ' frozen');
+  _refreshAfterFrozenChange();
+}
+
+// ── Write off frozen stock ────────────────────────────────────────────────
+function openFrozenWriteOff(lotId) {
+  const lot = frozenLotById(lotId);
+  if (!lot) { alert('That frozen lot no longer exists.'); return; }
+  if (lot.qty_remaining <= 0) { alert('That lot has nothing left to write off.'); return; }
+  const exp = frozenExpiryStyle(lot.frozen_use_by);
+  const body = ''
+    + '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">'
+      + 'Batch <strong style="color:var(--text)">' + esc(lot.batch_num) + '</strong> · frozen ' + fmtDate(lot.date_frozen)
+      + ' · use by ' + (lot.frozen_use_by ? fmtDate(lot.frozen_use_by) : '—') + ' (' + exp.label + ')'
+      + '<br><strong style="color:var(--text)">' + lot.qty_remaining + '</strong> cookie' + (lot.qty_remaining === 1 ? '' : 's') + ' left in this lot.</div>'
+    + '<div class="u-modal-field"><label>Cookies to write off</label>'
+      + '<input id="fwo-qty" type="number" min="1" max="' + lot.qty_remaining + '" value="' + lot.qty_remaining + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
+    + '<div class="u-modal-field"><label>Date</label>'
+      + '<input id="fwo-date" type="date" value="' + today() + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
+    + '<div class="u-modal-field"><label>Reason <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label>'
+      + '<textarea id="fwo-notes" placeholder="e.g. past use-by, freezer burn" style="width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"></textarea></div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Recorded as a disposal against this lot. The batch total is unchanged — these cookies were already counted when the lot was frozen.</div>';
+  openUModal('Write off frozen stock', body,
+    '<button class="btn btn-danger" style="flex:1" onclick="doFrozenWriteOff(' + lot.id + ')">Write off</button>'
+    + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>');
+}
+
+async function doFrozenWriteOff(lotId) {
+  const lot = frozenLotById(lotId);
+  if (!lot) { alert('That frozen lot no longer exists.'); return; }
+  const qty = parseInt((document.getElementById('fwo-qty') || {}).value) || 0;
+  const date = (document.getElementById('fwo-date') || {}).value || today();
+  const notes = ((document.getElementById('fwo-notes') || {}).value || '').trim() || null;
+  if (qty <= 0) { alert('Enter how many cookies to write off.'); return; }
+  const dateErr = validateDate(date, 'Date');
+  if (dateErr) { alert(dateErr); return; }
+  if (qty > lot.qty_remaining) {
+    alert('Cannot write off ' + qty + ': that lot has only ' + lot.qty_remaining + ' left.');
+    return;
+  }
+  setSyncStatus('syncing', 'Saving...');
+  const { data, error } = await db.from('allocations').insert([{
+    batch_num: lot.batch_num,
+    type: 'disposal',
+    qty: qty,
+    recipient: { type: 'disposal', name: 'Frozen stock written off' },
+    date: date,
+    notes: notes,
+    frozen_source_id: lot.id
+  }]).select();
+  if (error || !data) {
+    setSyncStatus('err', 'Sync error');
+    console.error('doFrozenWriteOff error', error);
+    showSaveError('Could not write off that frozen stock.');
+    return;
+  }
+  allocs.push(data[0]);
+  setSyncStatus('ok', 'Saved ✓');
+  closeUModal();
+  showSaveToast(qty + ' cookie' + (qty === 1 ? '' : 's') + ' written off');
+  _refreshAfterFrozenChange();
+}
+
+function _refreshAfterFrozenChange() {
+  if (document.getElementById('frozen-list')) renderFrozenStock();
+  if (selBI >= 0 && document.getElementById('al-list')) {
+    renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderUnallocBanner(); renderRecentAllocBatches();
+  }
+  if (document.getElementById('hist-list')) renderHist();
+  popFrozenLotPicker();
+}
+
+// ── Frozen Stock screen ───────────────────────────────────────────────────
+function toggleFrozenShowDepleted() {
+  frozenShowDepleted = !frozenShowDepleted;
+  renderFrozenStock();
+}
+
+function renderFrozenStock() {
+  const el = document.getElementById('frozen-list');
+  if (!el) return;
+  const all = frozenLots();
+  const depleted = all.filter(function(l){ return l.qty_remaining <= 0; });
+  const shown = frozenShowDepleted ? all : all.filter(function(l){ return l.qty_remaining > 0; });
+
+  const totalRemaining = all.reduce(function(s, l){ return s + Math.max(0, l.qty_remaining); }, 0);
+  const expiringSoon = all.filter(function(l) {
+    if (l.qty_remaining <= 0) return false;
+    const d = frozenDaysLeft(l.frozen_use_by);
+    return d !== null && d <= FROZEN_EXPIRY_WARN_DAYS;
+  }).length;
+
+  let head = '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;font-family:sans-serif;margin-bottom:10px;">'
+    + '<span><strong style="font-size:15px;color:var(--navy);">' + totalRemaining + '</strong> cookie' + (totalRemaining === 1 ? '' : 's') + ' in the freezer</span>'
+    + (expiringSoon ? '<span style="color:var(--warning);font-weight:700;">' + expiringSoon + ' lot' + (expiringSoon === 1 ? '' : 's') + ' to use within ' + FROZEN_EXPIRY_WARN_DAYS + ' days</span>' : '')
+    + (depleted.length ? '<a href="javascript:void(0)" onclick="toggleFrozenShowDepleted()" style="color:var(--navy);text-decoration:underline;">'
+        + (frozenShowDepleted ? 'Hide' : 'Show') + ' ' + depleted.length + ' fully used lot' + (depleted.length === 1 ? '' : 's') + '</a>' : '')
+    + '</div>';
+
+  if (!shown.length) {
+    el.innerHTML = head + '<div class="empty">' + (all.length ? 'No frozen stock left — every lot has been used.' : 'Nothing frozen yet. Use “Freeze cookies” on a batch to put some aside.') + '</div>';
+    return;
+  }
+
+  const th = 'text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);font-family:sans-serif;white-space:nowrap;';
+  const td = 'padding:7px 8px;border-bottom:1px solid var(--border);font-family:sans-serif;font-size:12px;vertical-align:top;';
+
+  const rows = shown.map(function(l) {
+    const exp = frozenExpiryStyle(l.frozen_use_by);
+    const days = frozenDaysLeft(l.frozen_use_by);
+    const urgent = l.qty_remaining > 0 && days !== null && days <= FROZEN_EXPIRY_WARN_DAYS;
+    const rowBg = l.qty_remaining <= 0 ? 'background:var(--gray-light);opacity:0.75;' : (urgent ? 'background:var(--warning-bg);' : '');
+    const b = findBatchByNum(l.batch_num);
+    const actions = l.qty_remaining > 0
+      ? '<button class="btn btn-sm" onclick="goFrozenBakeOff(' + l.id + ')" style="font-size:10px;white-space:nowrap;">Bake off</button>'
+        + ' <button class="btn btn-sm" onclick="openFrozenWriteOff(' + l.id + ')" style="font-size:10px;white-space:nowrap;color:var(--danger);border-color:var(--danger);">Write off</button>'
+      : '<span style="font-size:11px;color:var(--text-muted);">Fully used</span>';
+    return '<tr style="' + rowBg + '">'
+      + '<td style="' + td + 'font-weight:700;">' + esc(l.batch_num) + (b && b.recipe ? '<div style="font-weight:400;font-size:10px;color:var(--text-muted);">' + esc(b.recipe) + '</div>' : '') + '</td>'
+      + '<td style="' + td + 'white-space:nowrap;">' + fmtDate(l.date_frozen) + '</td>'
+      + '<td style="' + td + 'text-align:right;">' + l.qty_frozen + '</td>'
+      + '<td style="' + td + 'text-align:right;color:var(--text-muted);">' + l.qty_baked_off + '</td>'
+      + '<td style="' + td + 'text-align:right;font-weight:700;color:' + (l.qty_remaining > 0 ? 'var(--navy)' : 'var(--text-muted)') + ';">' + l.qty_remaining + '</td>'
+      + '<td style="' + td + 'white-space:nowrap;">' + (l.frozen_use_by ? fmtDate(l.frozen_use_by) : '—')
+        + '<div style="display:inline-block;margin-left:6px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;' + exp.style + '">' + exp.label + '</div></td>'
+      + '<td style="' + td + '">' + (l.notes ? esc(l.notes) : '<span style="color:var(--text-muted);">—</span>') + '</td>'
+      + '<td style="' + td + 'white-space:nowrap;">' + actions + '</td>'
+      + '</tr>';
+  }).join('');
+
+  el.innerHTML = head
+    + '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table style="width:100%;border-collapse:collapse;min-width:760px;">'
+    + '<thead><tr>'
+    + ['Batch', 'Frozen', 'Qty frozen', 'Used', 'Remaining', 'Use by', 'Note', ''].map(function(h){ return '<th style="' + th + '">' + h + '</th>'; }).join('')
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+// Jump to the Allocate tab with the frozen source preselected for this lot.
+function goFrozenBakeOff(lotId) {
+  const lot = frozenLotById(lotId);
+  if (!lot) { alert('That frozen lot no longer exists.'); return; }
+  const bi = batches.findIndex(function(b){ return normBatchNum(b.num) === normBatchNum(lot.batch_num); });
+  if (bi < 0) { alert('The batch this lot came from is no longer in the app.'); return; }
+  go('production');
+  goProd('prod-alloc');
+  setTimeout(function() {
+    const bSel = document.getElementById('al-b');
+    if (bSel) { bSel.value = String(bi); loadAllocBatch(); }
+    setTimeout(function() {
+      const src = document.getElementById('al-source-frozen');
+      if (src) { src.checked = true; updAllocSource(); }
+      const lotSel = document.getElementById('al-frozen-lot');
+      if (lotSel) { lotSel.value = String(lotId); onFrozenLotPick(); }
+    }, 120);
+  }, 120);
+}
+
+// ── Allocation form: fresh vs frozen source ───────────────────────────────
+function allocSourceIsFrozen() {
+  const el = document.getElementById('al-source-frozen');
+  return !!(el && el.checked);
+}
+
+function updAllocSource() {
+  const frozen = allocSourceIsFrozen();
+  const panel = document.getElementById('al-frozen-panel');
+  if (panel) panel.style.display = frozen ? 'block' : 'none';
+  const typeSel = document.getElementById('al-t');
+  // Freezing is its own action; you cannot freeze cookies that are already frozen.
+  if (typeSel) {
+    const frozenOpt = typeSel.querySelector('option[value="frozen"]');
+    if (frozenOpt) frozenOpt.disabled = frozen;
+    if (frozen && typeSel.value === 'frozen') { typeSel.value = 'sold'; updAllocT(); }
+  }
+  if (frozen) popFrozenLotPicker();
+  updAllocFrozenUseBy();
+  prefillRemainingQty();
+}
+
+// The use-by field only belongs on a row that is itself creating a frozen lot.
+function updAllocFrozenUseBy() {
+  const wrap = document.getElementById('al-useby-wrap');
+  if (!wrap) return;
+  const t = (document.getElementById('al-t') || {}).value;
+  const show = t === 'frozen' && !allocSourceIsFrozen();
+  wrap.style.display = show ? 'block' : 'none';
+  const inp = document.getElementById('al-useby');
+  if (show && inp && !inp.value) {
+    inp.value = frozenUseByDefault((document.getElementById('al-dt') || {}).value || today());
+  }
+}
+
+function popFrozenLotPicker() {
+  const sel = document.getElementById('al-frozen-lot');
+  if (!sel) return;
+  const prev = sel.value;
+  const lots = activeFrozenLots();
+  if (!lots.length) {
+    sel.innerHTML = '<option value="">— No frozen stock available —</option>';
+    onFrozenLotPick();
+    return;
+  }
+  sel.innerHTML = '<option value="">— Select a frozen lot —</option>' + lots.map(function(l) {
+    const exp = frozenDaysLeft(l.frozen_use_by);
+    const expTxt = l.frozen_use_by ? ('use by ' + fmtDate(l.frozen_use_by) + (exp !== null && exp < 0 ? ' (overdue)' : '')) : 'no use-by';
+    return '<option value="' + l.id + '">' + esc(l.batch_num) + ' · ' + expTxt + ' · ' + l.qty_remaining + ' left</option>';
+  }).join('');
+  if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
+  onFrozenLotPick();
+}
+
+function onFrozenLotPick() {
+  const sel = document.getElementById('al-frozen-lot');
+  const info = document.getElementById('al-frozen-info');
+  if (!sel || !info) return;
+  const lot = sel.value ? frozenLotById(sel.value) : null;
+  if (!lot) { info.textContent = ''; prefillRemainingQty(); return; }
+  const exp = frozenExpiryStyle(lot.frozen_use_by);
+  info.innerHTML = 'Batch <strong>' + esc(lot.batch_num) + '</strong> · frozen ' + fmtDate(lot.date_frozen)
+    + ' · <strong>' + lot.qty_remaining + '</strong> of ' + lot.qty_frozen + ' left'
+    + ' <span style="display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;' + exp.style + '">' + exp.label + '</span>';
+  const qtyEl = document.getElementById('al-q');
+  if (qtyEl) qtyEl.value = lot.qty_remaining;
+  const remEl = document.getElementById('al-remaining');
+  if (remEl) remEl.textContent = lot.qty_remaining + ' left in this frozen lot';
+}
+
+// ── Nested bake-off / write-off rows under a frozen lot ───────────────────
+function frozenChildRowsHtml(lotId) {
+  const children = frozenLotChildren(lotId).slice().sort(function(a, b){ return String(a.date || '').localeCompare(String(b.date || '')); });
+  const lot = frozenLotById(lotId);
+  const remaining = lot ? lot.qty_remaining : 0;
+  if (!children.length) {
+    return '<div style="margin-top:4px;padding:5px 0 2px 16px;border-left:2px solid var(--border);font-size:11px;color:var(--text-muted);font-family:sans-serif;">'
+      + 'Still in the freezer — nothing baked off yet.</div>';
+  }
+  const rows = children.map(function(c) {
+    const isDisposal = c.type === 'disposal';
+    const who = recipDisplayName(c.recipient) || (isDisposal ? 'Written off' : c.type);
+    const boxNote = c.collection_instance_id ? ' <span style="color:var(--text-muted);">(in a collection box)</span>' : '';
+    return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;font-family:sans-serif;">'
+      + '<span style="color:var(--text-muted);white-space:nowrap;">' + (c.date ? fmtDate(c.date) : '—') + '</span>'
+      + '<span class="tag ' + (isDisposal ? 'tag-red' : 'tag-blue') + '" style="font-size:9px;">' + esc(isDisposal ? 'Written off' : c.type) + '</span>'
+      + '<span style="flex:1;">' + esc(who) + boxNote + '</span>'
+      + '<span style="font-weight:700;">' + (c.qty || 0) + '</span>'
+      + '</div>';
+  }).join('');
+  return '<div style="margin-top:4px;padding:4px 0 2px 16px;border-left:2px solid var(--purple);">'
+    + '<div style="font-size:10px;font-weight:700;color:var(--purple);text-transform:uppercase;letter-spacing:0.05em;font-family:sans-serif;margin-bottom:2px;">Baked off from this lot</div>'
+    + rows
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;padding-top:3px;border-top:1px dashed var(--border);margin-top:3px;">'
+      + remaining + ' still in the freezer</div>'
+    + '</div>';
+}
+
+// ═══════════════════════════════════════════════════════
+// FROZEN STOCK — helpers
+// ═══════════════════════════════════════════════════════
+// Cookies leave a batch's baked yield exactly once. A fresh allocation consumes it
+// directly; freezing consumes it at the moment of freezing. The later bake-off or
+// write-off row carries frozen_source_id plus the same batch_num as its frozen parent
+// — the batch_num purely so batch-level traceability queries need no changes — but
+// those cookies were already counted when the lot was frozen. Counting them again
+// makes the batch read as over-allocated and blocks further allocation, so every
+// per-batch qty total goes through sumConsumedQty().
+const FROZEN_SHELF_LIFE_WEEKS = 12;
+const FROZEN_EXPIRY_WARN_DAYS = 3;
+
+function sumConsumedQty(rows) {
+  return (rows || []).reduce(function(s, a) {
+    if (a && a.frozen_source_id) return s;   // already counted when frozen
+    return s + (Number(a && a.qty) || 0);
+  }, 0);
+}
+
+// Live allocation rows for a batch, straight from the database, so two sessions
+// cannot both allocate the same remaining cookies. Soft-deleted rows are excluded —
+// a deleted allocation no longer consumes the batch. Returns null on error, which
+// callers must treat as "cannot verify" rather than "nothing allocated".
+async function fetchLiveBatchAllocations(batchNum) {
+  const { data, error } = await db.from('allocations')
+    .select('qty, frozen_source_id')
+    .eq('batch_num', (batchNum || '').trim())
+    .is('deleted_at', null);
+  if (error) { console.error('fetchLiveBatchAllocations error', error); return null; }
+  return data || [];
+}
+
+// Mirrors the frozen_lots view in JS. Computed from the in-memory allocs global —
+// which already excludes soft-deleted rows, matching the view's deleted_at filters —
+// so the screen stays in step with the rest of the app after an insert or edit
+// without a round trip.
+function frozenLotChildren(lotId) {
+  return (allocs || []).filter(function(a){ return a.frozen_source_id != null && String(a.frozen_source_id) === String(lotId); });
+}
+
+function frozenLots() {
+  return (allocs || [])
+    .filter(function(a){ return a.type === 'frozen'; })
+    .map(function(a) {
+      const children = frozenLotChildren(a.id);
+      const qtyFrozen = Number(a.qty) || 0;
+      const bakedOff = children.reduce(function(s, c){ return s + (Number(c.qty) || 0); }, 0);
+      return {
+        id: a.id,
+        batch_num: a.batch_num,
+        date_frozen: a.date || '',
+        qty_frozen: qtyFrozen,
+        qty_baked_off: bakedOff,
+        qty_remaining: qtyFrozen - bakedOff,
+        frozen_use_by: a.frozen_use_by || '',
+        notes: a.notes || '',
+        children: children,
+        alloc: a
+      };
+    })
+    .sort(function(x, y) {
+      return String(x.frozen_use_by || '9999-99-99').localeCompare(String(y.frozen_use_by || '9999-99-99'))
+          || String(x.batch_num || '').localeCompare(String(y.batch_num || ''));
+    });
+}
+
+function activeFrozenLots() {
+  return frozenLots().filter(function(l){ return l.qty_remaining > 0; });
+}
+
+function frozenLotById(lotId) {
+  return frozenLots().find(function(l){ return String(l.id) === String(lotId); }) || null;
+}
+
+// Default use-by: freeze date + 12 weeks. Editable on every freeze.
+function frozenUseByDefault(freezeDate) {
+  const d = new Date((freezeDate || today()) + 'T00:00:00');
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + FROZEN_SHELF_LIFE_WEEKS * 7);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Days until use-by; negative once past. null when no date is set.
+function frozenDaysLeft(useBy) {
+  if (!useBy) return null;
+  const d = new Date(String(useBy).slice(0, 10) + 'T00:00:00');
+  const t = new Date(today() + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  return Math.round((d - t) / 86400000);
+}
+
+// Shared colour treatment for a lot's use-by state.
+function frozenExpiryStyle(useBy) {
+  const days = frozenDaysLeft(useBy);
+  if (days === null) return { style: 'background:var(--gray-light);color:var(--text-muted);', label: 'No use-by' };
+  if (days < 0)   return { style: 'background:var(--danger-bg,#fdf0ef);color:var(--danger);', label: Math.abs(days) + 'd overdue' };
+  if (days <= FROZEN_EXPIRY_WARN_DAYS) return { style: 'background:var(--warning-bg);color:var(--warning);', label: days === 0 ? 'Today' : days + 'd left' };
+  return { style: 'background:var(--success-bg);color:var(--success);', label: days + 'd left' };
+}
+
 async function loadAllocs() {
   const { data } = await db.from('allocations').select('*').order('id');
   if (data) {
@@ -7418,7 +7898,9 @@ async function insertAlloc(a) {
     box_qty: a.boxQty || null,
     campaign_ids: (a.campaignIds && a.campaignIds.length) ? a.campaignIds : null,
     order_ids: (a.orderIds && a.orderIds.length) ? a.orderIds : null,
-    cost_to_make: a.costToMake || null
+    cost_to_make: a.costToMake || null,
+    frozen_use_by: a.frozenUseBy || null,
+    frozen_source_id: a.frozenSourceId || null
   }]).select();
   if (!error && data) { allocs.push(data[0]); setSyncStatus('ok','Saved ✓'); }
   else { setSyncStatus('err','Sync error'); console.error('insertAlloc error', error); }
@@ -7944,15 +8426,16 @@ function goProd(t) {
   if (sInv) sInv.classList.remove('active');
   const sShop = document.getElementById('s-shop');
   if (sShop && sShop.parentElement && sShop.parentElement.id === 's-inv') sShop.style.display = 'none';
-  const ts=['prod-bake','prod-icing','prod-collection','prod-alloc','prod-recipes'];
+  const ts=['prod-bake','prod-icing','prod-collection','prod-alloc','prod-frozen','prod-recipes'];
   document.querySelectorAll('#subnav-production .sub-tab').forEach(el=>el.classList.toggle('active',el.dataset.sub===t));
-  const allProdSecs=['prod-bake','prod-icing','prod-icing-history','prod-collection','prod-alloc','prod-recipes'];
+  const allProdSecs=['prod-bake','prod-icing','prod-icing-history','prod-collection','prod-alloc','prod-frozen','prod-recipes'];
   allProdSecs.forEach(s=>{const el=document.getElementById(s);if(el)el.classList.toggle('active',s===t);});
   if(t==='prod-bake') checkBatchSessionBanner();
   if(t==='prod-icing'){renderIcingTab();}
   if(t==='prod-icing-history'){renderIcingHistory();}
   if(t==='prod-collection'){renderColTemplateList();renderColInstanceList();}
   if(t==='prod-alloc')popAlloc();
+  if(t==='prod-frozen')renderFrozenStock();
   if(t==='prod-recipes'){document.getElementById('rec-viewer').style.display='none';const lv=document.getElementById('rec-list-view');if(lv)lv.style.display='block';renderRecipes();rfIngPopulateCats();}
 }
 function goHist(t) {
@@ -10550,7 +11033,7 @@ function _renderBakeReadonlyInfo(b) {
   const container = document.getElementById('bk-readonly-info');
   if (!container) return;
   const ba = allocs.filter(a => normBatchNum(a.batch_num) === normBatchNum(b.num));
-  const tot = ba.reduce((s, a) => s + (a.qty || 0), 0);
+  const tot = sumConsumedQty(ba);
   let html = '<div class="card" style="margin-top:10px">'
     + '<div class="card-title">Batch info (read-only)</div>'
     + uField('Total allocated', tot + ' cookies');
@@ -10650,7 +11133,7 @@ function prefillRemainingQty() {
   if (!b || !b.yield) { document.getElementById('al-remaining').textContent = ''; return; }
   // Use the same three-source formula as addAlloc() guard to avoid misleading pre-fill
   const ba = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
-  const usedDirect = ba.reduce((s,a)=>s+(a.qty||0),0);
+  const usedDirect = sumConsumedQty(ba);
   const batchIcingIds = new Set((b.icingEntries||[]).map(e=>String(e.id)));
   const usedOrders = (orders||[]).reduce((s,o)=>s+(o.cookie_allocations||[]).reduce((s2,a)=>s2+(batchIcingIds.has(String(a.icing_entry_id))?(a.qty||0):0),0),0);
   const used = usedDirect + usedOrders;
@@ -11041,6 +11524,9 @@ function loadAllocBatch() {
   info.textContent = `${b.recipe||'No recipe'} · ${b.date} · ${b.yield||'?'} cookies · made by ${b.made_by||'—'}`;
   // Clear all form fields when switching batch
   editingAllocId = null;
+  const alSrcFresh = document.getElementById('al-source-fresh');
+  if (alSrcFresh) { alSrcFresh.checked = true; updAllocSource(); }
+  const alUseBy = document.getElementById('al-useby'); if (alUseBy) alUseBy.value = '';
   const alPickerInput = document.querySelector('#al-cust-picker-wrap .cust-picker-input'); if (alPickerInput) alPickerInput.value = '';
   const alCustId = document.getElementById('al-cust-id'); if (alCustId) alCustId.value = '';
   ['al-notes','al-cost-to-make','al-addr-org','al-addr-contact','al-addr-phone','al-addr-street','al-addr-suburb','al-addr-city','al-addr-postcode','al-mk'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value=''; });
@@ -11050,6 +11536,16 @@ function loadAllocBatch() {
   const saveBtn = document.querySelector('[onclick="addAlloc()"]'); if (saveBtn) saveBtn.textContent = 'Add allocation';
   var _aiei = document.getElementById('al-icing-entry-id'); if (_aiei) _aiei.value = '';
   renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderAllocIcingInstances();
+}
+
+function _resetAllocFormAfterSave() {
+  const ids = ['al-q','al-notes','al-cost-to-make','al-addr-org','al-addr-contact','al-addr-phone','al-cust-id','al-icing-entry-id'];
+  ids.forEach(function(id){ const el = document.getElementById(id); if (el) el.value = ''; });
+  const pick = document.querySelector('#al-cust-picker-wrap .cust-picker-input'); if (pick) pick.value = '';
+  const panel = document.getElementById('al-links-panel'); if (panel) panel.style.display = 'none';
+  const toggle = document.getElementById('al-links-toggle'); if (toggle) toggle.textContent = '+ Link to campaign / order (optional)';
+  renderCampMultiPicker('al-camp-picker', []);
+  renderOrderMultiPicker('al-order-picker', []);
 }
 
 async function addAlloc() {
@@ -11078,7 +11574,7 @@ async function addAlloc() {
       customerId: c.id
     });
   } else if (pickerName) {
-    if (!['disposal', 'testing', 'consumed'].includes(type) &&
+    if (!['disposal', 'testing', 'consumed', 'frozen'].includes(type) &&
         !confirm('No customer selected — save "' + pickerName + '" as a name-only recipient? This won\'t link to a customer record.')) return;
     Object.assign(recipient, {
       name: pickerName,
@@ -11099,10 +11595,22 @@ async function addAlloc() {
   const allocOrderIds = getOrderMultiPickerIds('al-order-picker');
 
   if (editingAllocId !== null) {
-    const { error } = await db.from('allocations').update({ type, qty, recipient, dist, method, addr, market, date, notes, cost_to_make: costToMake, campaign_ids: allocCampIds.length ? allocCampIds : null, order_ids: allocOrderIds.length ? allocOrderIds : null }).eq('id', editingAllocId);
+    // A frozen lot cannot shrink below what has already come out of it.
+    const _editing = allocs.find(x => x.id === editingAllocId);
+    if (_editing && _editing.type === 'frozen') {
+      const _lot = frozenLotById(editingAllocId);
+      if (_lot && qty < _lot.qty_baked_off) {
+        alert('Cannot reduce this frozen lot to ' + qty + ': ' + _lot.qty_baked_off
+          + ' cookie' + (_lot.qty_baked_off === 1 ? '' : 's') + ' have already been baked off or written off from it.');
+        return;
+      }
+    }
+    const _editUseByEl = document.getElementById('al-useby');
+    const _editUseBy = (type === 'frozen' && _editUseByEl) ? (_editUseByEl.value || null) : null;
+    const { error } = await db.from('allocations').update({ type, qty, recipient, dist, method, addr, market, date, notes, cost_to_make: costToMake, frozen_use_by: _editUseBy, campaign_ids: allocCampIds.length ? allocCampIds : null, order_ids: allocOrderIds.length ? allocOrderIds : null }).eq('id', editingAllocId);
     if (!error) {
       const idx = allocs.findIndex(x=>x.id===editingAllocId);
-      if (idx>=0) allocs[idx] = {...allocs[idx], type, qty, recipient, dist, method, addr, market, date, notes, cost_to_make: costToMake, campaign_ids: allocCampIds.length ? allocCampIds : null, order_ids: allocOrderIds.length ? allocOrderIds : null};
+      if (idx>=0) allocs[idx] = {...allocs[idx], type, qty, recipient, dist, method, addr, market, date, notes, cost_to_make: costToMake, frozen_use_by: _editUseBy, campaign_ids: allocCampIds.length ? allocCampIds : null, order_ids: allocOrderIds.length ? allocOrderIds : null};
       setSyncStatus('ok','Saved ✓');
       showSaveToast('Allocation updated');
       cancelEditAlloc();
@@ -11111,10 +11619,37 @@ async function addAlloc() {
       alert('Save failed — your changes were NOT saved to the database. Check your connection and try again.');
     }
   } else {
+    // Bake-off from a frozen lot: the cookies left the batch when they were frozen,
+    // so the batch yield is not touched again. What is checked instead is that the lot
+    // still holds enough. batch_num is copied from the lot so batch-level traceability
+    // queries need no changes.
+    if (allocSourceIsFrozen()) {
+      const _lotId = (document.getElementById('al-frozen-lot') || {}).value;
+      if (!_lotId) { alert('Choose which frozen lot these cookies came out of.'); return; }
+      const _lot = frozenLotById(_lotId);
+      if (!_lot) { alert('That frozen lot no longer exists — reload and try again.'); return; }
+      if (qty > _lot.qty_remaining) {
+        alert('Cannot allocate ' + qty + ': that frozen lot has only ' + _lot.qty_remaining
+          + ' cookie' + (_lot.qty_remaining === 1 ? '' : 's') + ' left.');
+        return;
+      }
+      const _aieElF = document.getElementById('al-icing-entry-id');
+      await insertAlloc({ batchNum:_lot.batch_num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes,
+        campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake,
+        icingEntryId: _aieElF ? (_aieElF.value || null) : null, frozenSourceId: _lot.id });
+      showSaveToast('Allocated ' + qty + ' from frozen stock');
+      _resetAllocFormAfterSave();
+      renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner(); renderAllocIcingInstances();
+      popFrozenLotPicker();
+      if (document.getElementById('frozen-list')) renderFrozenStock();
+      return;
+    }
+
     // Calculate how many cookies from this batch are already allocated
     // Source 1: live DB query (avoids stale in-memory data from concurrent sessions)
-    const { data: _liveAllocs } = await db.from('allocations').select('qty').eq('batch_num', b.num);
-    var usedDirect = (_liveAllocs || []).reduce(function(s, a){ return s + (a.qty||0); }, 0);
+    const _liveAllocs = await fetchLiveBatchAllocations(b.num);
+    if (_liveAllocs === null) { alert('Could not check how much of this batch is already allocated \u2014 check your connection and try again.'); return; }
+    var usedDirect = sumConsumedQty(_liveAllocs);
     // Source 2: order-confirmed cookies (cookie_allocations on orders whose icing entries belong to this batch)
     var batchIcingIds = new Set((b.icingEntries||[]).map(function(e){ return String(e.id); }));
     var usedOrders = (orders||[]).reduce(function(s, o) {
@@ -11138,8 +11673,17 @@ async function addAlloc() {
     }
     const _aieEl = document.getElementById('al-icing-entry-id');
     const _aieId = _aieEl ? (_aieEl.value || null) : null;
-    await insertAlloc({ batchNum:b.num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes, campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake, icingEntryId: _aieId });
+    const _useByEl = document.getElementById('al-useby');
+    const _useBy = (type === 'frozen' && _useByEl) ? (_useByEl.value || null) : null;
+    if (_useBy) {
+      const _ubErr = validateDate(_useBy, 'Use by');
+      if (_ubErr) { alert(_ubErr); return; }
+      if (_useBy < date) { alert('Use-by date is before the allocation date.'); return; }
+    }
+    await insertAlloc({ batchNum:b.num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes, campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake, icingEntryId: _aieId, frozenUseBy: _useBy });
     showSaveToast('Allocation saved');
+    if (document.getElementById('frozen-list')) renderFrozenStock();
+    popFrozenLotPicker();
     document.getElementById('al-q').value = '';
     const alNotesEl = document.getElementById('al-notes'); if (alNotesEl) alNotesEl.value = '';
     const alCostEl = document.getElementById('al-cost-to-make'); if (alCostEl) alCostEl.value = '';
@@ -11179,7 +11723,7 @@ function renderAllocList() {
     });
   }
   if (!list.length) { el.innerHTML='<div class="empty">No allocations yet.</div>'; return; }
-  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold'};
+  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold'};
   const tagCls = {disposal:'tag-red',donated:'tag-green',family:'tag-green',gifted:'tag-purple',testing:'tag-gray',friends:'tag-amber',sold:'tag-blue',customer:'tag-blue'};
 
   // A3 FIX: group box allocs (same collection_instance_id) into one card per instance.
@@ -11187,7 +11731,12 @@ function renderAllocList() {
   // an instance triggers rendering of the whole group; subsequent same-instance allocs
   // return '' and are dropped by join('').
   const _renderedInstIds = new Set();
+  // Bake-off / write-off rows render nested under their frozen lot rather than as
+  // standalone cards, so the chain reads batch -> frozen -> what it became. Rows that
+  // are part of a collection box keep their box card and are cross-referenced instead.
+  const _nestedChildIds = new Set(list.filter(x => x.frozen_source_id && !x.collection_instance_id).map(x => x.id));
   const rows = list.map(a => {
+    if (_nestedChildIds.has(a.id)) return '';
     if (a.collection_instance_id) {
       if (_renderedInstIds.has(a.collection_instance_id)) return '';
       _renderedInstIds.add(a.collection_instance_id);
@@ -11255,10 +11804,16 @@ function renderAllocList() {
     const actionBtns = '<button class="btn-view" onclick="viewAlloc('+a.id+')">&#128065; View</button>'
       +'<button class="btn-edit" onclick="jumpToEditAlloc('+a.id+')">&#9998; Edit</button>'
       +'<button class="btn-del" onclick="confirmDeleteAlloc('+a.id+')">&#128465; Delete</button>';
+    const _srcTag = a.frozen_source_id
+      ? '<span style="font-size:10px;color:#10627f;font-family:sans-serif;font-weight:700;">&#10052; from frozen</span>' : '';
+    const _lotBlock = a.type === 'frozen' ? frozenChildRowsHtml(a.id) : '';
+    const _lotActions = a.type === 'frozen'
+      ? '<button class="btn btn-sm" onclick="openFrozenWriteOff('+a.id+')" style="font-size:11px;">Write off</button>' : '';
     return '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">'
-      + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'+typeBadge+namePart+phonePart+qtyPart+'</div>'
+      + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'+typeBadge+namePart+phonePart+_srcTag+qtyPart+'</div>'
       + '<div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">'+datePart+methodPart+addrPart+distPart+cookieDescPart+'</div>'
-      + '<div class="rec-actions" style="margin-top:6px;padding-top:6px;">'+actionBtns+'</div>'
+      + _lotBlock
+      + '<div class="rec-actions" style="margin-top:6px;padding-top:6px;">'+actionBtns+_lotActions+'</div>'
       + '</div>';
   }).join('');
 
@@ -11628,6 +12183,15 @@ function editAlloc(id) {
   editingAllocId = id;
   const r = a.recipient||{};
   document.getElementById('al-t').value = a.type||'sold';
+  const _edSrc = document.getElementById(a.frozen_source_id ? 'al-source-frozen' : 'al-source-fresh');
+  if (_edSrc) { _edSrc.checked = true; updAllocSource(); }
+  if (a.frozen_source_id) {
+    const _edLot = document.getElementById('al-frozen-lot');
+    if (_edLot) { _edLot.value = String(a.frozen_source_id); onFrozenLotPick(); }
+  }
+  const _edUseBy = document.getElementById('al-useby');
+  if (_edUseBy) _edUseBy.value = a.frozen_use_by || '';
+  updAllocFrozenUseBy();
   updAllocT();
   document.getElementById('al-q').value = a.qty||'';
   document.getElementById('al-dt').value = a.date||'';
@@ -11813,8 +12377,8 @@ function renderUnallocBanner() {
     var bYield = b.yield || 0;
     if (!bYield) return;
     var batchIcingIds = new Set((b.icingEntries||[]).map(function(e){ return String(e.id); }));
-    var directAlloc = allocs.filter(function(a){ return normBatchNum(a.batch_num)===normBatchNum(b.num) && a.type!=='disposal'; }).reduce(function(s,a){ return s+(a.qty||0); }, 0);
-    var disposed = allocs.filter(function(a){ return normBatchNum(a.batch_num)===normBatchNum(b.num) && a.type==='disposal'; }).reduce(function(s,a){ return s+(a.qty||0); }, 0);
+    var directAlloc = sumConsumedQty(allocs.filter(function(a){ return normBatchNum(a.batch_num)===normBatchNum(b.num) && a.type!=='disposal'; }));
+    var disposed = sumConsumedQty(allocs.filter(function(a){ return normBatchNum(a.batch_num)===normBatchNum(b.num) && a.type==='disposal'; }));
     var orderAlloc = (orders||[]).reduce(function(s,o){
       return s + (o.cookie_allocations||[]).reduce(function(s2,ca){
         return s2 + (batchIcingIds.has(String(ca.icing_entry_id)) ? (ca.qty||0) : 0);
@@ -11939,7 +12503,7 @@ function renderUnallocBanner() {
 }
 function renderRecentAllocBatches() {
   const el = document.getElementById('al-recent-batches'); if (!el) return;
-  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing'};
+  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing'};
   // Get batches that have at least one allocation, sorted newest first, capped at 10
   const batchesWithAllocs = [...batches]
     .filter(b => {
@@ -11952,8 +12516,8 @@ function renderRecentAllocBatches() {
   if (!batchesWithAllocs.length) { el.innerHTML='<div class="empty">No allocations recorded yet.</div>'; return; }
   el.innerHTML = batchesWithAllocs.map(b => {
     const ba = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
-    const disposed = ba.filter(a=>a.type==='disposal').reduce((s,a)=>s+(a.qty||0),0);
-    const directAllocated = ba.filter(a=>a.type!=='disposal').reduce((s,a)=>s+(a.qty||0),0);
+    const disposed = sumConsumedQty(ba.filter(a=>a.type==='disposal'));
+    const directAllocated = sumConsumedQty(ba.filter(a=>a.type!=='disposal'));
     // Also count cookies allocated via the order form (cookie_allocations JSONB)
     const batchIcingIds = new Set((b.icingEntries||[]).map(e=>String(e.id)));
     const orderAllocated = (orders||[]).reduce((s,o)=>s+(o.cookie_allocations||[]).reduce((s2,a)=>s2+(batchIcingIds.has(String(a.icing_entry_id))?(a.qty||0):0),0),0);
@@ -11963,7 +12527,7 @@ function renderRecentAllocBatches() {
     const detail = isExp ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-light)">
         ${ba.map(a=>{const r=a.recipient||{};const rName=recipDisplayName(a.recipient)||'—';return `<div class="row" style="padding:5px 0">
-          <span class="tag ${a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber'}" style="font-size:10px">${tl[a.type]||a.type}</span>
+          <span class="tag ${a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber'}" style="font-size:10px">${tl[a.type]||a.type}</span>
           <div style="flex:1;font-family:sans-serif;font-size:12px">${rName}${r.phone?' · <a href="tel:'+r.phone+'" style="color:var(--navy);text-decoration:none;">'+r.phone+'</a>':''}<br>
             <span style="font-size:11px;color:var(--text-muted)">${a.date} · ${a.method}${a.dist&&a.dist.length?' · '+a.dist.join(', '):''}</span>
           </div>
@@ -12052,10 +12616,10 @@ function renderAllocHistory() {
   var typeF = (document.getElementById('ha-type')||{value:''}).value;
   var from = (document.getElementById('ha-from')||{value:''}).value;
   var to = (document.getElementById('ha-to')||{value:''}).value;
-  var tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold',gift:'Gift',samples:'Samples',giveaway:'Giveaway',donation:'Donation'};
+  var tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold',gift:'Gift',samples:'Samples',giveaway:'Giveaway',donation:'Donation'};
 
   function typeTagClass(type) {
-    return type==='customer'||type==='sold'?'tag-blue':type==='disposal'?'tag-red':type==='donated'||type==='family'||type==='donation'?'tag-green':type==='gifted'||type==='gift'?'tag-purple':type==='testing'||type==='samples'?'tag-gray':type==='friends'||type==='giveaway'?'tag-amber':'tag-amber';
+    return type==='frozen'?'tag-frozen':type==='customer'||type==='sold'?'tag-blue':type==='disposal'?'tag-red':type==='donated'||type==='family'||type==='donation'?'tag-green':type==='gifted'||type==='gift'?'tag-purple':type==='testing'||type==='samples'?'tag-gray':type==='friends'||type==='giveaway'?'tag-amber':'tag-amber';
   }
 
   // Source 1: direct and campaign allocations
@@ -12144,8 +12708,8 @@ function renderAllocHistory() {
     var bYield = bObj.yield || 0;
     // Total allocated across ALL sources (not just filtered) for this batch
     var batchIcingIds = new Set((bObj.icingEntries||[]).map(function(e){ return String(e.id); }));
-    var campDirectAllocTot = allocs.filter(function(a){ return a.batch_num===bn && a.type!=='disposal'; }).reduce(function(s,a){ return s+(a.qty||0); }, 0);
-    var disposalTot = allocs.filter(function(a){ return a.batch_num===bn && a.type==='disposal'; }).reduce(function(s,a){ return s+(a.qty||0); }, 0);
+    var campDirectAllocTot = sumConsumedQty(allocs.filter(function(a){ return a.batch_num===bn && a.type!=='disposal'; }));
+    var disposalTot = sumConsumedQty(allocs.filter(function(a){ return a.batch_num===bn && a.type==='disposal'; }));
     var orderAllocTot = (orders||[]).reduce(function(s,o){
       return s + (o.cookie_allocations||[]).reduce(function(s2,ca){
         return s2 + (batchIcingIds.has(String(ca.icing_entry_id)) ? (ca.qty||0) : 0);
@@ -12407,8 +12971,8 @@ function updateAllocTally() {
   const b = batches[selBI];
   const total = b.yield||0;
   const ba = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
-  const disposed = ba.filter(a=>a.type==='disposal').reduce((s,a)=>s+(a.qty||0),0);
-  const allocated = ba.filter(a=>a.type!=='disposal').reduce((s,a)=>s+(a.qty||0),0);
+  const disposed = sumConsumedQty(ba.filter(a=>a.type==='disposal'));
+  const allocated = sumConsumedQty(ba.filter(a=>a.type!=='disposal'));
   const remaining = total - allocated - disposed;
   const dispNote = disposed > 0 ? ` · ${disposed} disposed` : '';
   document.getElementById('al-tally').textContent = `${allocated} allocated${dispNote} / ${total} baked · ${remaining>=0?remaining+' left':'over by '+Math.abs(remaining)}`;
@@ -15613,7 +16177,7 @@ function rclRenderRecipients() {
   }
   el.innerHTML = rclRecipients.map((r, i) => {
     const hasContact = r.phone || r.email;
-    const typeClass = r.type==='sold'?'tag-blue':r.type==='disposal'?'tag-red':r.type==='donated'||r.type==='consumed'?'tag-green':r.type==='gifted'||r.type==='giveaway'?'tag-purple':r.type==='samples'?'tag-orange':r.type==='testing'?'tag-gray':'tag-amber';
+    const typeClass = r.type==='frozen'?'tag-frozen':r.type==='sold'?'tag-blue':r.type==='disposal'?'tag-red':r.type==='donated'||r.type==='consumed'?'tag-green':r.type==='gifted'||r.type==='giveaway'?'tag-purple':r.type==='samples'?'tag-orange':r.type==='testing'?'tag-gray':'tag-amber';
     return `<div style="padding:8px 0;border-bottom:1px solid var(--gray-light)">
       <div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">
         <div style="flex:1;min-width:0">
@@ -16288,7 +16852,7 @@ function _prBuildBatches(rows) {
       });
     });
     var batchIcingIdsB = new Set((b.icingEntries||[]).map(function(e){ return String(e.id); }));
-    var directAllocsB = allocs.filter(function(a){ return normBatchNum(a.batch_num)===normBatchNum(b.num) && a.type!=='disposal'; }).reduce(function(s,a){ return s+(a.qty||0); },0);
+    var directAllocsB = sumConsumedQty(allocs.filter(function(a){ return normBatchNum(a.batch_num)===normBatchNum(b.num) && a.type!=='disposal'; }));
     var orderAllocsB = (orders||[]).reduce(function(s,o){
       return s + (o.cookie_allocations||[]).reduce(function(s2,a){
         return s2 + (batchIcingIdsB.has(String(a.icing_entry_id)) ? (a.qty||0) : 0);
@@ -16422,7 +16986,7 @@ function _prBuildBatches(rows) {
 
       // Disposals
       if (batchDisposalsP.length) {
-        var dispTotalP = batchDisposalsP.reduce(function(s,a){ return s+(a.qty||0); },0);
+        var dispTotalP = sumConsumedQty(batchDisposalsP);
         html += '<div style="display:flex;justify-content:space-between;align-items:baseline;font-family:sans-serif;font-size:12px;padding:3px 0;border-bottom:1px solid #e8e4de;color:#999;">'
           + '<span><em>Disposed</em></span>'
           + '<span style="font-weight:700;">' + dispTotalP + ' cookies</span>'
@@ -16539,8 +17103,8 @@ function _prBuildAllocs(rows) {
 
     // --- SUMMARY ---
     var yld = b.yield || 0;
-    var disposed = ba.filter(function(a){ return a.type==='disposal'; }).reduce(function(s,a){ return s+(a.qty||0); },0);
-    var directAlloc = ba.filter(function(a){ return a.type!=='disposal'; }).reduce(function(s,a){ return s+(a.qty||0); },0);
+    var disposed = sumConsumedQty(ba.filter(function(a){ return a.type==='disposal'; }));
+    var directAlloc = sumConsumedQty(ba.filter(function(a){ return a.type!=='disposal'; }));
     var orderAlloc = batchOrders.reduce(function(s,o){
       return s + (o.cookie_allocations||[]).reduce(function(s2,a){ return s2 + (batchIcingIds.has(String(a.icing_entry_id)) ? (a.qty||0) : 0); }, 0);
     }, 0);
@@ -18132,8 +18696,8 @@ async function printReconciliationReport() {
 
   function batchArith(b) {
     var ba = rAllocs.filter(function(a){ return a.batch_num === b.num; });
-    var directAlloc = ba.filter(function(a){ return a.type !== 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
-    var disposed    = ba.filter(function(a){ return a.type === 'disposal'; }).reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
+    var directAlloc = sumConsumedQty(ba.filter(function(a){ return a.type !== 'disposal'; }));
+    var disposed    = sumConsumedQty(ba.filter(function(a){ return a.type === 'disposal'; }));
     var batchIcingIds = new Set(getIcingEntries(b).map(function(e){ return String(e.id); }));
     var orderAlloc  = rOrders.reduce(function(s,o){ return s+(o.cookie_allocations||[]).reduce(function(s2,ca){ return s2+(batchIcingIds.has(String(ca.icing_entry_id))?(Number(ca.qty)||0):0); },0); },0);
     var allocated   = directAlloc + orderAlloc;
@@ -18802,10 +19366,11 @@ function recallExportPrint(mb, q, deliveryLogs, icingFilter) {
         _cr = _prca.find(c=>c&&(c.name||'').toLowerCase()===_rn.toLowerCase());
       }
       if (!_prrmap.has(key)) {
-        _prrmap.set(key,{_rn,_cr,type:a.type,qty:a.qty||0,method:a.method,date:a.date,_a:a});
+        _prrmap.set(key,{_rn,_cr,type:a.type,qty:a.qty||0,cq:(a.frozen_source_id?0:(a.qty||0)),method:a.method,date:a.date,_a:a});
       } else {
         const ex=_prrmap.get(key);
         ex.qty+=(a.qty||0);
+        ex.cq+=(a.frozen_source_id?0:(a.qty||0));
         if(!ex._cr&&_cr)ex._cr=_cr;
       }
     });
@@ -18838,11 +19403,11 @@ function recallExportPrint(mb, q, deliveryLogs, icingFilter) {
     const _prNotesRow = b.notes?'<tr><th>Notes</th><td colspan="3">'+esc(b.notes)+'</td></tr>':'';
     // Accountability box for print
     const _prBaAllocs = ba.filter(a=>a.type!=='disposal');
-    const _prBaDisposal = ba.filter(a=>a.type==='disposal').reduce((s,a)=>s+(a.qty||0),0);
-    const _prBaAllocQty = _prBaAllocs.reduce((s,a)=>s+(a.qty||0),0);
+    const _prBaDisposal = sumConsumedQty(ba.filter(a=>a.type==='disposal'));
+    const _prBaAllocQty = sumConsumedQty(_prBaAllocs);
     const _prBaOrderQty = _prORecips.reduce((s,o)=>{const bii=new Set((b.icingEntries||[]).map(e=>String(e.id)));return s+(o.cookie_allocations||[]).reduce((s2,a)=>s2+(bii.has(String(a.icing_entry_id))?(a.qty||0):0),0);},0);
     const _prDbTotal = _prBaAllocQty + _prBaOrderQty;
-    const _prListTotal = [..._prrmap.values()].filter(r=>r.type!=='disposal').reduce((s,r)=>s+r.qty,0)+_prBaOrderQty;
+    const _prListTotal = [..._prrmap.values()].filter(r=>r.type!=='disposal').reduce((s,r)=>s+r.cq,0)+_prBaOrderQty;
     const _prUnalloc = Math.max(0,(b.yield||0)-_prDbTotal-_prBaDisposal);
     const _prMismatch = _prListTotal !== _prDbTotal;
     const _prAcctHtml = '<div style="border:1.5px solid '+(_prMismatch?'#c0392b':'#27ae60')+';border-radius:4px;padding:8px 10px;margin-top:8px;background:'+(_prMismatch?'#fdf0ef':'#f0fff4')+'">'
@@ -20623,10 +21188,11 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
         }
       }
       if (!recipMap.has(key)) {
-        recipMap.set(key, {rName, custRec, type:a.type, qty:_allocQty, method:a.method, date:a.date, collection_instance_id:a.collection_instance_id, market:a.market, addr:a.addr, _a:a});
+        recipMap.set(key, {rName, custRec, type:a.type, qty:_allocQty, cq:(a.frozen_source_id?0:_allocQty), method:a.method, date:a.date, collection_instance_id:a.collection_instance_id, market:a.market, addr:a.addr, _a:a});
       } else {
         const ex = recipMap.get(key);
         ex.qty += _allocQty;
+        ex.cq += (a.frozen_source_id ? 0 : _allocQty);
         if (!ex.custRec && custRec) ex.custRec = custRec;
       }
     });
@@ -20642,7 +21208,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
         const phone = (custRec ? custRec.phone||'' : (typeof _r==='string'?'':(_r.phone||_r.contact||''))).trim();
         const email = (custRec ? custRec.email||'' : (typeof _r==='string'?'':(_r.email||''))).trim();
         const custId = custRec ? custRec.id : null;
-        const typeClass = type==='sold'?'tag-blue':type==='disposal'?'tag-red':type==='donated'||type==='consumed'?'tag-green':type==='gifted'||type==='giveaway'?'tag-purple':type==='samples'?'tag-orange':type==='testing'?'tag-gray':'tag-amber';
+        const typeClass = type==='frozen'?'tag-frozen':type==='sold'?'tag-blue':type==='disposal'?'tag-red':type==='donated'||type==='consumed'?'tag-green':type==='gifted'||type==='giveaway'?'tag-purple':type==='samples'?'tag-orange':type==='testing'?'tag-gray':'tag-amber';
         const _soc = custRec ? (custRec.social_media||{}) : {};
         const _socStr = ['instagram','facebook','messenger','whatsapp','linkedin'].map(k=>_soc[k]?k.charAt(0).toUpperCase()+k.slice(1)+': '+_soc[k]:'').filter(Boolean).join(' · ');
         const _hasContact = phone||email||_socStr;
@@ -20745,8 +21311,8 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
     const _dbAllocAllocs = _icingFilterActive
       ? ba.filter(a => _allocMatchesIcingFilter(a))
       : ba;
-    const _dbDisposalQty = _dbAllocAllocs.filter(a=>a.type==='disposal').reduce((s,a)=>s+(a.qty||0),0);
-    const _dbNonDisposalQty = _dbAllocAllocs.filter(a=>a.type!=='disposal').reduce((s,a)=>s+(a.qty||0),0);
+    const _dbDisposalQty = sumConsumedQty(_dbAllocAllocs.filter(a=>a.type==='disposal'));
+    const _dbNonDisposalQty = sumConsumedQty(_dbAllocAllocs.filter(a=>a.type!=='disposal'));
     // db order qty for in-scope icing entries
     const _dbOrderQty = orders.reduce((s,o)=>{
       return s + (o.cookie_allocations||[]).reduce((s2,a)=>{
@@ -20758,7 +21324,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
     const _dbTotalWithDisposal = _dbTotalAllocated + _dbDisposalQty;
     const _unallocated = Math.max(0, (_inScopeQty||0) - _dbTotalWithDisposal);
     // list total: sum of what's actually rendered on screen (exclude disposal — matches _dbTotalAllocated which also excludes disposal)
-    const _listQty = [...recipMap.values()].filter(r=>r.type!=='disposal').reduce((s,r)=>s+r.qty,0)
+    const _listQty = [...recipMap.values()].filter(r=>r.type!=='disposal').reduce((s,r)=>s+r.cq,0)
       + orderRecips.reduce((s,o)=>s+(o.cookie_allocations||[]).reduce((s2,a)=>s2+(batchIcingIds.has(String(a.icing_entry_id))?(a.qty||0):0),0),0);
     const _hasMismatch = _listQty !== _dbTotalAllocated;
     const _scopeLabel = _icingFilterActive ? 'Cookies with this ingredient' : 'Total batch yield';
@@ -20798,7 +21364,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
       + (_noContactCount ? '⚠ '+_noContactCount+' '+(mb.size>1?'people have':'person has')+' no contact details on record. ' : '')
       + 'Each person listed below received cookies affected by this recall. Check which cookies they need to return or dispose of.</div>';
     _masterArr.forEach(p => {
-      const _pTypeClass = p.type==='order'||p.type==='sold'?'tag-blue':p.type==='donated'||p.type==='consumed'?'tag-green':p.type==='gifted'||p.type==='giveaway'?'tag-purple':p.type==='samples'?'tag-orange':p.type==='testing'?'tag-gray':'tag-blue';
+      const _pTypeClass = p.type==='frozen'?'tag-frozen':p.type==='order'||p.type==='sold'?'tag-blue':p.type==='donated'||p.type==='consumed'?'tag-green':p.type==='gifted'||p.type==='giveaway'?'tag-purple':p.type==='samples'?'tag-orange':p.type==='testing'?'tag-gray':'tag-blue';
       const _pHasContact = !!(p.phone||p.email||p.socStr);
       const _pCallBtn = p.phone ? '<a href="tel:'+esc(p.phone)+'" style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:var(--success-bg);border:1.5px solid var(--success);border-radius:var(--radius);font-size:18px;text-decoration:none;flex-shrink:0">📞</a>' : '';
       const _pEmailBtn = p.email ? '<a href="mailto:'+esc(p.email)+'?subject=Important%20notice%20regarding%20your%20Cookie%20%26%20Me%20order" style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:#e8f0fb;border:1.5px solid #1a4fa0;border-radius:var(--radius);font-size:18px;text-decoration:none;flex-shrink:0">✉️</a>' : '';
@@ -20990,8 +21556,26 @@ function renderHist() {
 
   el.innerHTML = list.map(b => {
     const ba = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
-    const campDisposedTot = ba.filter(a=>a.type==='disposal').reduce((s,a)=>s+(a.qty||0),0);
-    const campDirectTot = ba.filter(a=>a.type!=='disposal').reduce((s,a)=>s+(a.qty||0),0);
+    const _batchLots = frozenLots().filter(l => normBatchNum(l.batch_num) === normBatchNum(b.num));
+    const _frozenBlock = _batchLots.length
+      ? '<div style="margin-top:10px;padding:8px 10px;background:#f3f0fb;border-radius:var(--radius);">'
+        + '<div style="font-size:11px;font-weight:700;color:var(--purple);text-transform:uppercase;letter-spacing:0.05em;font-family:sans-serif;margin-bottom:4px;">&#10052; Frozen from this batch</div>'
+        + _batchLots.map(function(l) {
+            const _e = frozenExpiryStyle(l.frozen_use_by);
+            return '<div style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">'
+              + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;font-family:sans-serif;">'
+              + '<span style="font-weight:700;">' + l.qty_frozen + ' frozen ' + fmtDate(l.date_frozen) + '</span>'
+              + '<span style="color:var(--text-muted);">use by ' + (l.frozen_use_by ? fmtDate(l.frozen_use_by) : '\u2014') + '</span>'
+              + '<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;' + _e.style + '">' + _e.label + '</span>'
+              + (l.notes ? '<span style="color:var(--text-muted);">\u00b7 ' + esc(l.notes) + '</span>' : '')
+              + '</div>'
+              + frozenChildRowsHtml(l.id)
+              + '</div>';
+          }).join('')
+        + '</div>'
+      : '';
+    const campDisposedTot = sumConsumedQty(ba.filter(a=>a.type==='disposal'));
+    const campDirectTot = sumConsumedQty(ba.filter(a=>a.type!=='disposal'));
     // Sum cookies allocated via the order form (cookie_allocations JSONB on orders table)
     // Match by checking each order's cookie_allocations entries against this batch's icing entry IDs
     const batchIcingIds = new Set((b.icingEntries||[]).map(function(e){return String(e.id);}));
@@ -21068,7 +21652,7 @@ function renderHist() {
       }).join('');
       const directAllocHtml = directAllocs.map(function(a){
         const rname=recipDisplayName(a.recipient)||'—';
-        const tagCol=a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber';
+        const tagCol=a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber';
         return '<div style="font-size:11px;font-family:sans-serif;padding:5px 0;border-bottom:1px solid var(--gray-light);display:flex;gap:8px;align-items:center;">'
           +'<span class="tag '+tagCol+'" style="font-size:10px">'+_bS(a.type)+'</span>'
           +'<strong style="flex:1">'+esc(rname)+'</strong>'
@@ -21147,8 +21731,10 @@ function renderHist() {
           return '<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Icing & decoration ingredients</div>'+lines.join('')+'</div>';
         })()}
         ${batchIntegrityHtml}
+        ${_frozenBlock}
         <div style="display:flex;gap:6px;margin-top:8px">
           <button class="btn-edit" onclick="event.stopPropagation();openBakeFormForEdit(${b.id},'history')">✏️ Edit</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();openFreezeForm('${b.num}')" style="font-size:11px;">❄ Freeze cookies</button>
           <button class="btn-del" onclick="event.stopPropagation();confirmDeleteBatch(${b.id},'${b.num}')">🗑 Delete</button>
         </div>
       </div>` : '';
@@ -29893,7 +30479,7 @@ function renderCampDetailView(el, c) {
       <div style="display:flex;flex-direction:column;gap:6px;">
         ${linkedBatches.slice(0,3).map(b=>{
           const ba = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
-          const tot = ba.reduce((s,a)=>s+(a.qty||0),0);
+          const tot = sumConsumedQty(ba);
           const remaining = (b.yield||0)-tot;
           const isExp = campBatchExpandedId===b.id;
           const ingList = (b.ingredients||[]).map(i=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif"><span>'+esc(i.category||'')+'</span><span style="color:var(--text-muted)">'+(i.amount||'')+(i.ingBatch?' · lot: '+i.ingBatch:'')+'</span></div>').join('');
@@ -29913,7 +30499,7 @@ function renderCampDetailView(el, c) {
             });
             return lines.join('');
           })();
-          const allocLines = ba.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
+          const allocLines = ba.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
           const detail = isExp ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-family:sans-serif;">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;font-size:12px;margin-bottom:10px;">
               <div><span style="color:var(--text-muted)">Recipe</span><br><strong>${b.recipe||'—'}${b.mult>1?' ×'+b.mult:''}</strong></div>
@@ -29945,7 +30531,7 @@ function renderCampDetailView(el, c) {
         <div id="batches-extra" style="display:none;display:flex;flex-direction:column;gap:6px;">
           ${linkedBatches.slice(3).map(b=>{
             const ba2 = allocs.filter(a=>normBatchNum(a.batch_num)===normBatchNum(b.num));
-            const tot2 = ba2.reduce((s,a)=>s+(a.qty||0),0);
+            const tot2 = sumConsumedQty(ba2);
             const remaining2 = (b.yield||0)-tot2;
             const isExp2 = campBatchExpandedId===b.id;
             const ingList2 = (b.ingredients||[]).map(i=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif"><span>'+esc(i.category||'')+'</span><span style="color:var(--text-muted)">'+(i.amount||'')+(i.ingBatch?' · lot: '+i.ingBatch:'')+'</span></div>').join('');
@@ -29965,7 +30551,7 @@ function renderCampDetailView(el, c) {
               });
               return lines2.join('');
             })();
-            const allocLines2 = ba2.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
+            const allocLines2 = ba2.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
             const detail2 = isExp2 ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-family:sans-serif;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;font-size:12px;margin-bottom:10px;">
                 <div><span style="color:var(--text-muted)">Recipe</span><br><strong>${b.recipe||'—'}${b.mult>1?' ×'+b.mult:''}</strong></div>
@@ -31825,7 +32411,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v55.4',
+    app_version: 'v56.0',
     tables: {}
   };
 
@@ -33385,7 +33971,7 @@ function viewAlloc(id) {
   const r = a.recipient||{};
   const liveCust = (typeof r === 'object' && r.customerId != null) ? (cfg.customers||[]).find(c => c && c.id == r.customerId) : null;
   const b = batches.find(x=>x.num===a.batch_num)||{};
-  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',donated:'Donated',gifted:'Gifted',testing:'Testing'};
+  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing'};
   const body = uField('Type', tl[a.type]||a.type)
     + uField('Recipient', liveCust ? custDisplayName(liveCust) : recipDisplayName(a.recipient))
     + uField('Phone', liveCust ? (liveCust.phone||'') : (r.phone||''))
@@ -33404,6 +33990,15 @@ function viewAlloc(id) {
 
 function confirmDeleteAlloc(id) {
   const a = allocs.find(x=>x.id===id); if (!a) return;
+  if (a.type === 'frozen') {
+    const lot = frozenLotById(id);
+    if (lot && lot.qty_baked_off > 0) {
+      alert('Cannot delete this frozen lot: ' + lot.qty_baked_off + ' cookie'
+        + (lot.qty_baked_off === 1 ? ' has' : 's have') + ' already been baked off or written off from it.\n\n'
+        + 'Delete those ' + lot.children.length + ' allocation' + (lot.children.length === 1 ? '' : 's') + ' first.');
+      return;
+    }
+  }
   showConfirm('Delete allocation', `Delete allocation of ${a.qty} cookies to ${recipDisplayName(a.recipient)||'—'}? It will move to Trash.`, 'Delete', () => doDeleteAlloc(id));
 }
 

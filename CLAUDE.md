@@ -16,6 +16,72 @@ Rules:
 
 ## Architectural decisions
 
+### A batch's yield is consumed once — `sumConsumedQty()`
+
+Cookies leave a batch's baked yield exactly once. A fresh allocation consumes it directly;
+freezing consumes it at the moment of freezing. The later bake-off or write-off row carries
+`frozen_source_id` **and the same `batch_num` as its frozen parent** — the batch_num purely so
+batch-level traceability queries need no changes — but those cookies were already counted when
+the lot was frozen.
+
+Counting them twice makes a batch read as over-allocated and blocks further allocation: freeze
+100 from a 120-cookie batch, bake off 40, and a naive sum reports 140 used of 120. Every
+per-batch qty total therefore goes through `sumConsumedQty(rows)`, which skips rows with
+`frozen_source_id` set. Roughly 24 sites were rerouted (the allocation guard, tally, remaining
+prefill, unallocated banner, batch history cards, campaign batch cards, stocktake, CSV, the
+printed batch report and the reconciliation report).
+
+**Listings are deliberately left alone.** A bake-off row is a real allocation and must stay
+visible everywhere allocations are listed — only the *totals* exclude it. The two accountability
+blocks (printed batch report and the expanded batch card) compare a rendered-list total against a
+database total to catch rendering bugs; both sides carry a parallel `cq` accumulator so the
+mismatch warning keeps working instead of firing on every frozen lot.
+
+One deliberate exception: the printed report's Section 4 disposal subtotal (`dispTotal`) is a
+plain sum of the rows it lists, not yield arithmetic, so it still includes frozen write-offs —
+otherwise the subtotal would not match the rows printed under it.
+
+`cost_to_make` needed no change and the opposite rule applies there. Every cost aggregation
+filters on `type in ('sold','customer')` plus `order_ids`/`campaign_ids`, so a `frozen` row is
+already excluded (no customer, no links) while its bake-off child is correctly counted — that
+child is the row representing cookies actually reaching a customer.
+
+`fetchLiveBatchAllocations(batchNum)` centralises the live guard query. It filters
+`deleted_at IS NULL` (a soft-deleted allocation used to keep consuming batch capacity — a real
+bug from the soft-delete work) and returns `null` on error, which callers must treat as "cannot
+verify" and refuse rather than as "nothing allocated".
+
+### Frozen stock
+
+`allocations.frozen_use_by` (date) is set only on `type='frozen'` rows; `frozen_source_id`
+(self-FK) is set on the bake-off or write-off rows drawn from that lot. The `frozen_lots` view
+rolls each lot up with `qty_baked_off` / `qty_remaining`.
+
+The Frozen Stock screen (Production → ❄️ Frozen) **does not query that view**. `frozenLots()`
+mirrors it in JS from the in-memory `allocs` global — which already excludes soft-deleted rows,
+matching the view's `deleted_at` filters — so the screen stays in step with the rest of the app
+after an insert or edit without a round trip. The view remains the reference definition; if you
+change one, change both. A test confirmed the two agree exactly (100 frozen / 50 used / 50 left).
+
+Three ways cookies move:
+- **Freeze** (`openFreezeForm`) from a batch's detail card, or `type='frozen'` in the allocation
+  form. Validated against remaining batch yield. Use-by defaults to freeze date + 12 weeks
+  (`FROZEN_SHELF_LIFE_WEEKS`), always editable.
+- **Bake off** — the allocation form's "From frozen stock" source toggle. Inserts an ordinary
+  order/campaign allocation plus `frozen_source_id`, with `batch_num` copied from the lot and
+  `date` as the bake-off date. Freezer to oven; there is no thaw step.
+- **Write off** (`openFrozenWriteOff`) for expired or spoiled stock — a `type='disposal'` child
+  of the lot, kept separate from the order flow rather than overloading it.
+
+Guards: a lot with any live children cannot be deleted, and its qty cannot be edited below
+`qty_baked_off`. Lots expiring within `FROZEN_EXPIRY_WARN_DAYS` (3) are highlighted; depleted
+lots are hidden behind a toggle and never deleted, for traceability.
+
+Bake-off and write-off rows render nested under their lot in the Allocate tab's list and in the
+expanded batch card, so the chain reads batch → frozen → what it became. Rows that are part of a
+collection box keep their own box card and are cross-referenced in the nested list instead of
+being moved, so box grouping is unaffected.
+
 ### Source 3 intentionally excludes collection_instance_id allocs
 
 The customer detail "All Purchases" view builds its allocation list from three sources. Source 3 (alloc records by recipient) has a blanket guard: `if (a.collection_instance_id) return false`. This is intentional — campaign box allocs are already represented via Source 1 engagements, and adding them to Source 3 as well would cause duplication in the timeline.
