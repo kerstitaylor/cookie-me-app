@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v58.2</title>
+<title>Cookie & Me — Kitchen Manager v59.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -3453,6 +3453,17 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <div style="display:flex;gap:6px;">
           <input id="new-lead-next-action" placeholder="New next action" class="search-input" style="margin:0;flex:1"/>
           <button class="btn btn-sm btn-primary" onclick="addLeadPicklistItem('leadNextActions','new-lead-next-action','cfg-lead-next-action-list')">Add</button>
+        </div>
+      </div>
+
+      <!-- COOKIE FLAVOURS MANAGER -->
+      <div class="card" style="margin-bottom:10px;">
+        <div class="card-title">Cookie flavours</div>
+        <p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">Options shown in the order form's "Cookie flavour" dropdown, in this order. Renaming or removing one here never changes an order that was already saved with it.</p>
+        <div id="cfg-cookie-flavour-list" style="margin-bottom:10px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input id="new-cookie-flavour" placeholder="New cookie flavour" class="search-input" style="margin:0;flex:1"/>
+          <button class="btn btn-sm btn-primary" onclick="addLeadPicklistItem('cookieFlavours','new-cookie-flavour','cfg-cookie-flavour-list')">Add</button>
         </div>
       </div>
 
@@ -7028,6 +7039,10 @@ async function loadCfg() {
   if (!cfg.leadNextActions) {
     cfg.leadNextActions = ['Send quote', 'Follow up', 'Confirm order', 'Send invoice'];
     await saveCfgKey('leadNextActions', cfg.leadNextActions);
+  }
+  if (!cfg.cookieFlavours) {
+    cfg.cookieFlavours = ['New Vanilla', 'Vegan', 'Vanilla', 'Salted Chocolate', 'Ginger', 'Spice'];
+    await saveCfgKey('cookieFlavours', cfg.cookieFlavours);
   }
 }
 
@@ -14052,6 +14067,7 @@ function renderConfigure() {
   selOpts('scat', cfg.categories, false, 'Select category...');
   renderLeadPicklist('leadSources', 'cfg-lead-source-list');
   renderLeadPicklist('leadNextActions', 'cfg-lead-next-action-list');
+  renderLeadPicklist('cookieFlavours', 'cfg-cookie-flavour-list');
 }
 
 function renderCfgTeam() {
@@ -22951,10 +22967,7 @@ function addOrfLine(prefill) {
       <div class="field">
         <label>Cookie flavour</label>
         <select id="orf-flavour-${id}">
-          <option value="Vanilla"${(prefill?.flavour||prefill?.cookie_type||'Vanilla').replace(' + Choc Chips','').trim()==='Vanilla'?' selected':''}>Vanilla</option>
-          <option value="Salted Chocolate"${(prefill?.flavour||prefill?.cookie_type||'').replace(' + Choc Chips','').trim()==='Salted Chocolate'?' selected':''}>Salted Chocolate</option>
-          <option value="Ginger"${(prefill?.flavour||prefill?.cookie_type||'').replace(' + Choc Chips','').trim()==='Ginger'?' selected':''}>Ginger</option>
-          <option value="Spice"${(prefill?.flavour||prefill?.cookie_type||'').replace(' + Choc Chips','').trim()==='Spice'?' selected':''}>Spice</option>
+          ${cookieFlavourOptions((prefill?.flavour||prefill?.cookie_type||'Vanilla').replace(' + Choc Chips','').trim())}
         </select>
         <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;font-weight:400;cursor:pointer;">
           <input type="checkbox" id="orf-chocchip-${id}" ${(prefill?.flavour||prefill?.cookie_type||'').includes('Choc Chips')?'checked':''} style="width:15px;height:15px;"/>
@@ -22970,6 +22983,24 @@ function addOrfLine(prefill) {
     <div class="field"><label>Embellishments</label><input id="orf-embel-${id}" placeholder="e.g. fondant flowers, metallic balls" value="${prefill?.embellishments||''}"/></div>
     <div class="field"><label>Notes</label><input id="orf-line-notes-${id}" placeholder="Any other details..." value="${prefill?.notes||''}"/></div>`;
   document.getElementById('orf-lines').appendChild(div);
+}
+
+// Options for the order form's Cookie flavour dropdown. The list lives in
+// cfg.cookieFlavours (the config table), managed from Configure → Cookie flavours, so a
+// new flavour needs no code change. An order saved against a flavour that has since been
+// renamed or removed keeps its own value as a selected option, so opening an old order
+// never silently changes what was ordered.
+const COOKIE_FLAVOURS_FALLBACK = ['New Vanilla', 'Vegan', 'Vanilla', 'Salted Chocolate', 'Ginger', 'Spice'];
+
+function cookieFlavourOptions(selected) {
+  const list = (cfg.cookieFlavours && cfg.cookieFlavours.length)
+    ? cfg.cookieFlavours.slice()
+    : COOKIE_FLAVOURS_FALLBACK.slice();
+  const cur = String(selected || '').trim();
+  if (cur && !list.some(function(f){ return String(f).toLowerCase() === cur.toLowerCase(); })) list.push(cur);
+  return list.map(function(f) {
+    return '<option value="' + esc(f) + '"' + (String(f) === cur ? ' selected' : '') + '>' + esc(f) + '</option>';
+  }).join('');
 }
 
 function removeOrfLine(id) {
@@ -25508,16 +25539,29 @@ async function delCat(i){
 }
 
 // ── Lead picklists manager (cfg.leadSources / cfg.leadNextActions) ──
+// Generic despite the name — drives any cfg array used as a picklist
+// (leadSources, leadNextActions, cookieFlavours). The list order is the dropdown order.
 function renderLeadPicklist(key, listElId){
   const el=document.getElementById(listElId);
   if(!el)return;
   const list=[...(cfg[key]||[])];
   if(!list.length){el.innerHTML='<div class="empty">No options yet.</div>';return;}
   el.innerHTML=list.map((v,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);gap:6px;">
-      <div style="flex:1;min-width:0;font-family:sans-serif;font-size:13px;font-weight:600;">${v}</div>
+      <div style="flex:1;min-width:0;font-family:sans-serif;font-size:13px;font-weight:600;">${esc(v)}</div>
+      <button class="btn btn-sm" onclick="moveLeadPicklistItem('${key}',${i},-1,'${listElId}')" ${i===0?'disabled style="font-size:11px;opacity:0.35;"':'style="font-size:11px;"'} title="Move up">&#9650;</button>
+      <button class="btn btn-sm" onclick="moveLeadPicklistItem('${key}',${i},1,'${listElId}')" ${i===list.length-1?'disabled style="font-size:11px;opacity:0.35;"':'style="font-size:11px;"'} title="Move down">&#9660;</button>
       <button class="btn btn-sm" onclick="editLeadPicklistItem('${key}',${i},'${listElId}')" style="font-size:11px;">Edit</button>
       <button class="btn btn-sm" onclick="delLeadPicklistItem('${key}',${i},'${listElId}')" style="font-size:11px;color:var(--danger);border-color:var(--danger);">Delete</button>
     </div>`).join('');
+}
+
+async function moveLeadPicklistItem(key, i, dir, listElId){
+  const list=cfg[key]||[];
+  const j=i+dir;
+  if(j<0||j>=list.length)return;
+  const tmp=list[i]; list[i]=list[j]; list[j]=tmp;
+  if(!(await saveCfgKey(key,list))){ const back=list[i]; list[i]=list[j]; list[j]=back; showSaveError('Could not save the new order.'); }
+  renderLeadPicklist(key,listElId);
 }
 
 async function addLeadPicklistItem(key, inputId, listElId){
@@ -25543,7 +25587,9 @@ async function editLeadPicklistItem(key, i, listElId){
 
 async function delLeadPicklistItem(key, i, listElId){
   const cur=cfg[key][i];
-  if(!confirm(`Delete option "${cur}"?`))return;
+  const extra = key === 'cookieFlavours'
+    ? '\n\nOrders already saved with this flavour keep it — only the dropdown changes.' : '';
+  if(!confirm(`Delete option "${cur}"?` + extra))return;
   cfg[key].splice(i,1);
   await saveCfgKey(key,cfg[key]);
   renderLeadPicklist(key,listElId);
@@ -32483,7 +32529,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v58.2',
+    app_version: 'v59.0',
     tables: {}
   };
 
