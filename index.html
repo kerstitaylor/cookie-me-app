@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v58.0</title>
+<title>Cookie & Me — Kitchen Manager v58.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10353,6 +10353,77 @@ function removeFlavourRow(rowIdx) {
 }
 
 // ═══════════════════════════════════════════════════════
+// RECIPE INGREDIENT → STOCK MATCHING
+// ═══════════════════════════════════════════════════════
+// Recipes name the specific ingredient in one of two places depending on when they were
+// written. Newer ones put the broad group in `category` ("Baking Staples") and the item in
+// `product_name` ("Flour - Plain"); older ones put the item itself in `category` ("Plain
+// flour") and have no product_name. Neither carries an ingredient id. Stock always has
+// both: a broad `category` and a specific `product`.
+//
+// The bake form used to match and display `recipe.category` against `stock.category`, which
+// broke both ways round. Old recipes matched nothing, because "Butter" is a stock *product*,
+// not a stock category — every row read "Not in stock". New recipes matched the whole group
+// and took the first hit, so four separate Baking Staples rows all auto-filled the same
+// packet and would have recorded that lot number against ingredients that were not that
+// product. Display and matching now both use the specific name, and never the category.
+function recipeIngName(ing) {
+  if (!ing) return '';
+  return String(ing.product_name || ing.ingName || ing.category || '').trim();
+}
+
+// "Flour - Plain" and "Plain flour" are the same thing; "Eggs" and "Egg" are too.
+function _ingNameTokens(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(function(t){ return t.length > 3 ? t.replace(/s$/, '') : t; });
+}
+
+// Closeness of a stock product name to a recipe ingredient name: 0 is an exact match on
+// the same words, higher is a looser match, null is no match at all. A non-match must stay
+// a non-match — falling back to the category is what let one packet serve several
+// different ingredients.
+function _ingNameScore(recipeName, stockName) {
+  const a = _ingNameTokens(recipeName), b = _ingNameTokens(stockName);
+  if (!a.length || !b.length) return null;
+  const aSet = {}, bSet = {};
+  a.forEach(function(t){ aSet[t] = true; });
+  b.forEach(function(t){ bSet[t] = true; });
+  const aInB = a.every(function(t){ return bSet[t]; });
+  const bInA = b.every(function(t){ return aSet[t]; });
+  if (!aInB && !bInA) return null;
+  return Math.abs(Object.keys(aSet).length - Object.keys(bSet).length);
+}
+
+// Best stock row for one recipe ingredient. pools are tried in order (opened before
+// inventory) but a closer name always beats a merely-opened packet, so an exact product
+// match is never passed over. Returns null when nothing genuinely matches.
+function findStockForIngredient(recipeName, pools) {
+  if (!recipeName) return null;
+  let best = null;
+  (pools || []).forEach(function(pool, poolRank) {
+    (pool || []).forEach(function(row) {
+      if (!row) return;
+      // Match the specific product; only fall back to a row's category when it has no
+      // product recorded at all (a handful of very old stock records).
+      const stockName = row.product || row.category || row.cat || '';
+      const score = _ingNameScore(recipeName, stockName);
+      if (score === null) return;
+      if (!best
+        || score < best.score
+        || (score === best.score && poolRank < best.poolRank)
+        || (score === best.score && poolRank === best.poolRank && (row.id || 0) < (best.row.id || 0))) {
+        best = { row: row, score: score, poolRank: poolRank };
+      }
+    });
+  });
+  return best;
+}
+
+// ═══════════════════════════════════════════════════════
 // LOAD RECIPE — BAKE FORM
 // ═══════════════════════════════════════════════════════
 function loadRecipe() {
@@ -10376,6 +10447,7 @@ function loadRecipe() {
   let h = '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;">Record which packet each ingredient came from. The lot/batch number is on the packet label.</div>';
 
   (rec.ingredients||[]).forEach((ing, idx) => {
+    const ingName = recipeIngName(ing);
     const scaledG = ing.amount_num ? Math.round(ing.amount_num * m * 1000)/1000 : null;
     const volStr = ing.amount_measure ? scaleVolumeMeasure(ing.amount_measure, m) : '';
     const amtDisplay = scaledG
@@ -10388,40 +10460,41 @@ function loadRecipe() {
       return;
     }
 
-    const matchOpened = openedStock.filter(i=>(i.category||i.cat||'').toLowerCase()===ing.category.toLowerCase());
-    const matchInv = inventoryStock.filter(i=>(i.category||i.cat||'').toLowerCase()===ing.category.toLowerCase());
-    const matched = [...matchOpened, ...matchInv];
-    const autoId = matched.length ? matched[0].id : '';
-    const autoBatch = matched.length ? (matched[0].batch||'') : '';
-    const isOpen = matchOpened.length > 0;
+    const best = findStockForIngredient(ingName, [openedStock, inventoryStock]);
+    const stockRow = best ? best.row : null;
+    const isOpen = !!best && best.poolRank === 0;
+    const autoId = stockRow ? stockRow.id : '';
+    const autoBatch = stockRow ? (stockRow.batch||'') : '';
     let expiryTag = '';
-    if (matched.length && (matched[0].bb || matched[0].opened_date)) {
+    if (stockRow && (stockRow.bb || stockRow.opened_date)) {
       const _now = new Date(), _soon = new Date(Date.now()+14*86400000);
-      const _ubo = matched[0].opened_date ? calcUseByOpened(matched[0]) : null;
-      const bbExp = matched[0].bb && new Date(matched[0].bb) < _now;
+      const _ubo = stockRow.opened_date ? calcUseByOpened(stockRow) : null;
+      const bbExp = stockRow.bb && new Date(stockRow.bb) < _now;
       const uboExp = _ubo && new Date(_ubo) < _now;
-      const bbSoon = !bbExp && matched[0].bb && new Date(matched[0].bb) <= _soon;
+      const bbSoon = !bbExp && stockRow.bb && new Date(stockRow.bb) <= _soon;
       const uboSoon = !uboExp && _ubo && new Date(_ubo) <= _soon;
       if (bbExp || uboExp) {
         expiryTag = ' <span style="color:var(--danger);font-weight:600">⚠️ Expired</span>';
       } else if (bbSoon || uboSoon) {
-        const soonDate = (bbSoon && uboSoon) ? (matched[0].bb <= _ubo ? matched[0].bb : _ubo) : (bbSoon ? matched[0].bb : _ubo);
+        const soonDate = (bbSoon && uboSoon) ? (stockRow.bb <= _ubo ? stockRow.bb : _ubo) : (bbSoon ? stockRow.bb : _ubo);
         expiryTag = ' <span style="color:#c77700;font-weight:600">⚡ Use by ' + fmtIngDate(soonDate) + '</span>';
       }
     }
-    const stockInfo = matched.length
+    // Name the matched product, so a wrong match is obvious rather than silent.
+    const stockInfo = stockRow
       ? '<span style="font-size:11px;color:' + (isOpen?'var(--success)':'var(--text-muted)') + ';font-family:sans-serif">'
-        + (isOpen ? 'Open packet' : 'In stock') + ': #' + matched[0].id
-        + (matched[0].brand?' · '+matched[0].brand:'')
-        + (matched[0].batch?' · lot: '+matched[0].batch:'')
+        + (isOpen ? 'Open packet' : 'In stock') + ': #' + stockRow.id
+        + (stockRow.product?' · '+esc(stockRow.product):'')
+        + (stockRow.brand?' · '+esc(stockRow.brand):'')
+        + (stockRow.batch?' · lot: '+esc(stockRow.batch):'')
         + '</span>' + expiryTag
       : '<span style="font-size:11px;color:var(--danger);font-family:sans-serif">Not in stock — enter lot no. manually</span>';
 
-    const isEggIng = (ing.category||'').toLowerCase().startsWith('egg');
+    const isEggIng = ingName.toLowerCase().startsWith('egg');
     const pktPh = isEggIng ? 'No. of eggs' : 'Amount used';
-    h += '<div style="padding:10px 0;border-bottom:1px solid var(--gray-light)" id="bk-ing-wrap-' + idx + '" data-ing-cat="' + (ing.category||'') + '">'
+    h += '<div style="padding:10px 0;border-bottom:1px solid var(--gray-light)" id="bk-ing-wrap-' + idx + '" data-ing-cat="' + esc(ingName) + '">'
       + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">'
-      + '<div style="font-weight:600;font-family:sans-serif">' + ing.category
+      + '<div style="font-weight:600;font-family:sans-serif">' + esc(ingName)
       + (ing.notes ? ' <span style="font-weight:400;font-size:11px;color:var(--orange)">' + ing.notes + '</span>' : '')
       + '</div>'
       + '<div style="font-size:13px;font-family:sans-serif;color:var(--navy);font-weight:600">' + amtDisplay + '</div>'
@@ -32387,7 +32460,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v58.0',
+    app_version: 'v58.1',
     tables: {}
   };
 
