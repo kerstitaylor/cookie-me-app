@@ -16,71 +16,63 @@ Rules:
 
 ## Architectural decisions
 
-### A batch's yield is consumed once — `sumConsumedQty()`
+### The freezer is a hold, not a route — `sumConsumedQty()`
 
-Cookies leave a batch's baked yield exactly once. A fresh allocation consumes it directly;
-freezing consumes it at the moment of freezing. The later bake-off or write-off row carries
-`frozen_source_id` **and the same `batch_num` as its frozen parent** — the batch_num purely so
-batch-level traceability queries need no changes — but those cookies were already counted when
-the lot was frozen.
+Cookies put in the freezer are on hold. They consume their batch's yield so nothing else can
+be allocated from them, and they cannot be iced or allocated while they sit there. Taking them
+out returns them to the batch's ordinary unallocated pile **as though they had never been
+frozen** — from that point they are iced and allocated exactly like any other cookie, with no
+special treatment anywhere in the app. The freezer is a side quest between baking and whatever
+comes next, and the only residue is a tag showing how long the stint lasted.
 
-Counting them twice makes a batch read as over-allocated and blocks further allocation: freeze
-100 from a 120-cookie batch, bake off 40, and a naive sum reports 140 used of 120. Every
-per-batch qty total therefore goes through `sumConsumedQty(rows)`, which skips rows with
-`frozen_source_id` set. Roughly 24 sites were rerouted (the allocation guard, tally, remaining
-prefill, unallocated banner, batch history cards, campaign batch cards, stocktake, CSV, the
-printed batch report and the reconciliation report).
+Two child row types record what became of a lot, both carrying `frozen_source_id`:
 
-**Listings are deliberately left alone.** A bake-off row is a real allocation and must stay
-visible everywhere allocations are listed — only the *totals* exclude it. The two accountability
-blocks (printed batch report and the expanded batch card) compare a rendered-list total against a
-database total to catch rendering bugs; both sides carry a parallel `cq` accumulator so the
-mismatch warning keeps working instead of firing on every frozen lot.
+| type | meaning | batch accounting |
+|---|---|---|
+| `unfrozen` | went back into the pile | **subtracted** — the cookies are available again |
+| `disposal` | binned while frozen | left counted — those cookies really did leave the batch |
 
-One deliberate exception: the printed report's Section 4 disposal subtotal (`dispTotal`) is a
-plain sum of the rows it lists, not yield arithmetic, so it still includes frozen write-offs —
-otherwise the subtotal would not match the rows printed under it.
+The parent `frozen` row's `qty` is what went in and never changes, so the freeze stays on the
+record. A lot's held quantity is `qty_frozen − returned − written_off`.
 
-`cost_to_make` needed no change and the opposite rule applies there. Every cost aggregation
-filters on `type in ('sold','customer')` plus `order_ids`/`campaign_ids`, so a `frozen` row is
-already excluded (no customer, no links) while its bake-off child is correctly counted — that
-child is the row representing cookies actually reaching a customer.
+`sumConsumedQty(rows)` implements exactly that, and every per-batch qty total goes through it
+(~24 sites: the allocation guard, tally, remaining prefill, unallocated banner, batch history
+cards, campaign batch cards, stocktake, CSV, the printed batch report and the reconciliation
+report). Listings are deliberately left alone — a freezer row is a real allocation and must stay
+visible; only the *totals* apply the rule. The two accountability blocks compare a rendered-list
+total against a database total, so both sides carry a parallel `cq` accumulator and their
+mismatch warnings keep working.
+
+Because a released cookie takes the ordinary path, **nothing downstream needs to know about the
+freezer**. An earlier design routed frozen cookies to customers directly and would have
+double-counted them through `usedOrders` once they were iced and sold; the hold model removes
+that failure mode entirely rather than patching it.
+
+`cost_to_make` needs no special handling: cost aggregations filter on
+`type in ('sold','customer')` plus `order_ids`/`campaign_ids`, so `frozen` and `unfrozen` rows
+are already excluded, and the eventual real allocation carries the cost as normal.
 
 `fetchLiveBatchAllocations(batchNum)` centralises the live guard query. It filters
 `deleted_at IS NULL` (a soft-deleted allocation used to keep consuming batch capacity — a real
 bug from the soft-delete work) and returns `null` on error, which callers must treat as "cannot
 verify" and refuse rather than as "nothing allocated".
 
-### Frozen stock
+### Frozen stock screen
 
 `allocations.frozen_use_by` (date) is set only on `type='frozen'` rows; `frozen_source_id`
-(self-FK) is set on the bake-off or write-off rows drawn from that lot. The `frozen_lots` view
-rolls each lot up with `qty_baked_off` / `qty_remaining`.
+(self-FK) is set on the `unfrozen` and `disposal` children. The `frozen_lots` view rolls each lot
+up with `qty_returned` / `qty_written_off` / `qty_held`.
 
-The Frozen Stock screen (Production → ❄️ Frozen) **does not query that view**. `frozenLots()`
-mirrors it in JS from the in-memory `allocs` global — which already excludes soft-deleted rows,
-matching the view's `deleted_at` filters — so the screen stays in step with the rest of the app
-after an insert or edit without a round trip. The view remains the reference definition; if you
-change one, change both. A test confirmed the two agree exactly (100 frozen / 50 used / 50 left).
+The screen (Production → ❄️ Frozen) **does not query that view**. `frozenLots()` mirrors it in JS
+from the in-memory `allocs` global — which already excludes soft-deleted rows, matching the
+view's `deleted_at` filters — so the screen stays in step after an insert without a round trip.
+The view remains the reference definition; if you change one, change both. A test confirmed the
+two agree exactly (156 put in / 106 held / 50 taken out).
 
-Three ways cookies move:
-- **Freeze** (`openFreezeForm`) from a batch's detail card, or `type='frozen'` in the allocation
-  form. Validated against remaining batch yield. Use-by defaults to freeze date + 12 weeks
-  (`FROZEN_SHELF_LIFE_WEEKS`), always editable.
-- **Bake off** — the allocation form's "From frozen stock" source toggle. Inserts an ordinary
-  order/campaign allocation plus `frozen_source_id`, with `batch_num` copied from the lot and
-  `date` as the bake-off date. Freezer to oven; there is no thaw step.
-- **Write off** (`openFrozenWriteOff`) for expired or spoiled stock — a `type='disposal'` child
-  of the lot, kept separate from the order flow rather than overloading it.
-
-Guards: a lot with any live children cannot be deleted, and its qty cannot be edited below
-`qty_baked_off`. Lots expiring within `FROZEN_EXPIRY_WARN_DAYS` (3) are highlighted; depleted
-lots are hidden behind a toggle and never deleted, for traceability.
-
-Bake-off and write-off rows render nested under their lot in the Allocate tab's list and in the
-expanded batch card, so the chain reads batch → frozen → what it became. Rows that are part of a
-collection box keep their own box card and are cross-referenced in the nested list instead of
-being moved, so box grouping is unaffected.
+Use-by defaults to freeze date + `FROZEN_SHELF_LIFE_WEEKS` (12) and is always editable; a lot
+within `FROZEN_EXPIRY_WARN_DAYS` (7) of it is highlighted. Emptied lots are hidden behind a
+toggle and never deleted, for traceability. Guards: a lot with any children cannot be deleted,
+and its qty cannot be edited below what has already left it.
 
 ### Source 3 intentionally excludes collection_instance_id allocs
 

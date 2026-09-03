@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v56.0</title>
+<title>Cookie & Me — Kitchen Manager v57.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -1339,24 +1339,6 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <div id="al-form" style="display:none">
         <div class="card">
           <div class="card-title">Add allocation</div>
-          <div class="field" style="margin-bottom:10px;">
-            <label>Cookie source</label>
-            <div style="display:flex;gap:14px;flex-wrap:wrap;font-family:sans-serif;font-size:13px;">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                <input type="radio" name="al-source" id="al-source-fresh" value="fresh" checked onchange="updAllocSource()" style="accent-color:var(--orange)"/>
-                Fresh from batch
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                <input type="radio" name="al-source" id="al-source-frozen" value="frozen" onchange="updAllocSource()" style="accent-color:var(--orange)"/>
-                From frozen stock
-              </label>
-            </div>
-            <div id="al-frozen-panel" style="display:none;margin-top:8px;background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;">
-              <label style="font-size:11px;color:var(--text-muted);font-family:sans-serif;display:block;margin-bottom:3px;">Frozen lot (soonest use-by first)</label>
-              <select id="al-frozen-lot" onchange="onFrozenLotPick()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"></select>
-              <div id="al-frozen-info" style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:5px;"></div>
-            </div>
-          </div>
           <div class="r2">
             <div class="field"><label>Allocation type</label>
               <select id="al-t" onchange="updAllocT();updAllocFrozenUseBy()">
@@ -1439,7 +1421,8 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <div class="card">
         <div class="card-title">❄️ Frozen stock</div>
         <p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">
-          Cookies put aside in the freezer, soonest use-by first. Bake off straight from frozen — there is no thaw step.
+          Cookies on hold in the freezer, soonest use-by first. Take them out and they go straight back
+          into their batch's unallocated cookies, ready to ice and allocate like any other.
         </p>
         <div id="frozen-list"></div>
       </div>
@@ -5048,6 +5031,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="friends" checked onchange="renderFinReport()"/> Friends</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="disposal" checked onchange="renderFinReport()"/> Thrown away</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="frozen" checked onchange="renderFinReport()"/> Frozen</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-family:sans-serif;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:99px;background:var(--white);"><input type="checkbox" class="fr-at" value="unfrozen" checked onchange="renderFinReport()"/> Out of freezer</label>
         </div>
         <!-- Allocation method -->
         <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Allocation method</div>
@@ -7155,7 +7139,142 @@ async function loadBatches() {
 // Same split as campEngagements. An allocation hidden with its engagement must stop counting
 // against batch yield and collection stock, which every consumer gets for free by reading `allocs`.
 // ═══════════════════════════════════════════════════════
-// FROZEN STOCK — freeze, bake off, write off
+// FROZEN STOCK — a hold between baking and whatever comes next
+// ═══════════════════════════════════════════════════════
+// The freezer is a side quest, not a route. Cookies put in are on hold: they consume the
+// batch's yield so nothing else can be allocated from them, and they cannot be iced or
+// allocated while they sit there. Taking them out returns them to the ordinary unallocated
+// pile as though they had never been frozen — from that point they are iced and allocated
+// exactly like any other cookie, with no special treatment anywhere in the app.
+//
+// Two child row types record what happened to a lot, both carrying frozen_source_id:
+//   type='unfrozen'  — went back into the pile. Subtracted from batch consumption, because
+//                      those cookies are available again.
+//   type='disposal'  — binned while frozen. Left counted against the batch, because they
+//                      really did leave it.
+// The parent row's qty never changes, so the freeze itself stays on the record.
+
+const FROZEN_SHELF_LIFE_WEEKS = 12;
+const FROZEN_EXPIRY_WARN_DAYS = 7;
+
+// Cookies drawn from a batch's baked yield. A frozen lot counts while it is held; taking
+// cookies back out of the freezer gives them back. A write-off stays counted — those
+// cookies are gone. Everything else is a plain allocation and counts once.
+function sumConsumedQty(rows) {
+  let total = 0;
+  (rows || []).forEach(function(a) {
+    if (!a) return;
+    if (a.frozen_source_id) {
+      // Returned to the pile — hand the batch its cookies back.
+      if (a.type === 'unfrozen') total -= (Number(a.qty) || 0);
+      // A write-off was already counted by its frozen parent, so it adds nothing here.
+      return;
+    }
+    total += (Number(a.qty) || 0);
+  });
+  return total;
+}
+
+// Live allocation rows for a batch, straight from the database, so two sessions cannot both
+// allocate the same remaining cookies. Soft-deleted rows are excluded — a deleted allocation
+// no longer consumes the batch. Returns null on error, which callers must treat as "cannot
+// verify" rather than "nothing allocated".
+async function fetchLiveBatchAllocations(batchNum) {
+  const { data, error } = await db.from('allocations')
+    .select('qty, type, frozen_source_id')
+    .eq('batch_num', (batchNum || '').trim())
+    .is('deleted_at', null);
+  if (error) { console.error('fetchLiveBatchAllocations error', error); return null; }
+  return data || [];
+}
+
+// Computed from the in-memory allocs global — which already excludes soft-deleted rows —
+// so the screen stays in step with the rest of the app without a round trip.
+function frozenLotChildren(lotId) {
+  return (allocs || []).filter(function(a){ return a.frozen_source_id != null && String(a.frozen_source_id) === String(lotId); });
+}
+
+function frozenLots() {
+  return (allocs || [])
+    .filter(function(a){ return a.type === 'frozen'; })
+    .map(function(a) {
+      const children = frozenLotChildren(a.id);
+      const qtyFrozen = Number(a.qty) || 0;
+      const returned = children.filter(function(c){ return c.type === 'unfrozen'; })
+        .reduce(function(s, c){ return s + (Number(c.qty) || 0); }, 0);
+      const writtenOff = children.filter(function(c){ return c.type === 'disposal'; })
+        .reduce(function(s, c){ return s + (Number(c.qty) || 0); }, 0);
+      return {
+        id: a.id,
+        batch_num: a.batch_num,
+        date_frozen: a.date || '',
+        qty_frozen: qtyFrozen,
+        qty_returned: returned,
+        qty_written_off: writtenOff,
+        qty_held: qtyFrozen - returned - writtenOff,
+        frozen_use_by: a.frozen_use_by || '',
+        notes: a.notes || '',
+        children: children,
+        alloc: a
+      };
+    })
+    .sort(function(x, y) {
+      return String(x.frozen_use_by || '9999-99-99').localeCompare(String(y.frozen_use_by || '9999-99-99'))
+          || String(x.batch_num || '').localeCompare(String(y.batch_num || ''));
+    });
+}
+
+function activeFrozenLots() {
+  return frozenLots().filter(function(l){ return l.qty_held > 0; });
+}
+
+function frozenLotById(lotId) {
+  return frozenLots().find(function(l){ return String(l.id) === String(lotId); }) || null;
+}
+
+// Default use-by: freeze date + 12 weeks. Editable on every freeze.
+function frozenUseByDefault(freezeDate) {
+  const d = new Date((freezeDate || today()) + 'T00:00:00');
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + FROZEN_SHELF_LIFE_WEEKS * 7);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function frozenDaysLeft(useBy) {
+  if (!useBy) return null;
+  const d = new Date(String(useBy).slice(0, 10) + 'T00:00:00');
+  const t = new Date(today() + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  return Math.round((d - t) / 86400000);
+}
+
+// How long a stint in the freezer lasted, in whole days.
+function frozenDaysBetween(fromDate, toDate) {
+  if (!fromDate || !toDate) return null;
+  const a = new Date(String(fromDate).slice(0, 10) + 'T00:00:00');
+  const b = new Date(String(toDate).slice(0, 10) + 'T00:00:00');
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+// The tag a released cookie carries onward: how long it sat in the freezer.
+function frozenStintLabel(lot, child) {
+  const days = frozenDaysBetween(lot.date_frozen, child.date);
+  if (days === null) return 'was frozen';
+  if (days === 0) return 'frozen same day';
+  return days + ' day' + (days === 1 ? '' : 's') + ' in the freezer';
+}
+
+function frozenExpiryStyle(useBy) {
+  const days = frozenDaysLeft(useBy);
+  if (days === null) return { style: 'background:var(--gray-light);color:var(--text-muted);', label: 'No use-by' };
+  if (days < 0)   return { style: 'background:var(--danger-bg,#fdf0ef);color:var(--danger);', label: Math.abs(days) + 'd overdue' };
+  if (days <= FROZEN_EXPIRY_WARN_DAYS) return { style: 'background:var(--warning-bg);color:var(--warning);', label: days === 0 ? 'Today' : days + 'd left' };
+  return { style: 'background:var(--success-bg);color:var(--success);', label: days + 'd left' };
+}
+
+// ═══════════════════════════════════════════════════════
+// FROZEN STOCK — freeze, take out, write off
 // ═══════════════════════════════════════════════════════
 
 let frozenShowDepleted = false;
@@ -7180,9 +7299,10 @@ function openFreezeForm(batchNum) {
       + '<input id="fz-date" type="date" value="' + freezeDate + '" onchange="fzSyncUseBy()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
     + '<div class="u-modal-field"><label>Use by</label>'
       + '<input id="fz-useby" type="date" value="' + frozenUseByDefault(freezeDate) + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/>'
-      + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:3px;">Defaults to ' + FROZEN_SHELF_LIFE_WEEKS + ' weeks from the freeze date — change it if this lot needs a different date.</div></div>'
+      + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:3px;">Defaults to ' + FROZEN_SHELF_LIFE_WEEKS + ' weeks from the freeze date. You are warned when a lot comes within ' + FROZEN_EXPIRY_WARN_DAYS + ' days of it.</div></div>'
     + '<div class="u-modal-field"><label>Note <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label>'
-      + '<textarea id="fz-notes" placeholder="e.g. undecorated, for the Christmas run" style="width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"></textarea></div>';
+      + '<textarea id="fz-notes" placeholder="e.g. par-baked for Father’s Day" style="width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"></textarea></div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">These cookies are held: they cannot be iced or allocated until you take them back out.</div>';
   const footer = (remaining > 0)
     ? '<button class="btn btn-primary" style="flex:1" onclick="doFreezeCookies(\'' + esc(b.num) + '\')">❄ Freeze</button>'
       + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>'
@@ -7190,8 +7310,6 @@ function openFreezeForm(batchNum) {
   openUModal('Freeze cookies', body, footer);
 }
 
-// Keep the use-by suggestion in step while the freeze date is still being chosen,
-// unless it has already been hand-edited away from the suggestion.
 function fzSyncUseBy() {
   const dEl = document.getElementById('fz-date');
   const uEl = document.getElementById('fz-useby');
@@ -7216,7 +7334,6 @@ async function doFreezeCookies(batchNum) {
     if (useBy < date) { alert('Use-by date is before the freeze date.'); return; }
   }
 
-  // Same guard as any other allocation, against live data.
   const live = await fetchLiveBatchAllocations(b.num);
   if (live === null) { alert('Could not check how much of this batch is already allocated — check your connection and try again.'); return; }
   const remaining = (b.yield || 0) - sumConsumedQty(live);
@@ -7231,7 +7348,7 @@ async function doFreezeCookies(batchNum) {
     batch_idx: batches.findIndex(function(x){ return x.id === b.id; }),
     type: 'frozen',
     qty: qty,
-    recipient: { type: 'frozen', name: 'Frozen stock' },
+    recipient: { type: 'frozen', name: 'Freezer' },
     date: date,
     frozen_use_by: useBy,
     notes: notes
@@ -7249,24 +7366,88 @@ async function doFreezeCookies(batchNum) {
   _refreshAfterFrozenChange();
 }
 
+// ── Take cookies back out of the freezer ─────────────────────────────────
+function openUnfreezeForm(lotId) {
+  const lot = frozenLotById(lotId);
+  if (!lot) { alert('That frozen lot no longer exists.'); return; }
+  if (lot.qty_held <= 0) { alert('That lot is empty — there is nothing left to take out.'); return; }
+  const exp = frozenExpiryStyle(lot.frozen_use_by);
+  const stint = frozenDaysBetween(lot.date_frozen, today());
+  const body = ''
+    + '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">'
+      + 'Batch <strong style="color:var(--text)">' + esc(lot.batch_num) + '</strong> · frozen ' + fmtDate(lot.date_frozen)
+      + ' · use by ' + (lot.frozen_use_by ? fmtDate(lot.frozen_use_by) : '—') + ' (' + exp.label + ')'
+      + '<br><strong style="color:var(--text)">' + lot.qty_held + '</strong> cookie' + (lot.qty_held === 1 ? '' : 's') + ' still in the freezer'
+      + (stint !== null ? ' · in there ' + stint + ' day' + (stint === 1 ? '' : 's') : '') + '</div>'
+    + '<div class="u-modal-field"><label>Cookies to take out</label>'
+      + '<input id="fu-qty" type="number" min="1" max="' + lot.qty_held + '" value="' + lot.qty_held + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
+    + '<div class="u-modal-field"><label>Date taken out</label>'
+      + '<input id="fu-date" type="date" value="' + today() + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
+    + '<div class="u-modal-field"><label>Note <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label>'
+      + '<textarea id="fu-notes" placeholder="e.g. baking off for the Cuthbert Stewart order" style="width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"></textarea></div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">They go straight back into batch <strong>' + esc(lot.batch_num) + '</strong>’s unallocated cookies, ready to ice and allocate like any other. The time they spent frozen stays on the record.</div>';
+  openUModal('Take out of the freezer', body,
+    '<button class="btn btn-primary" style="flex:1" onclick="doUnfreeze(' + lot.id + ')">Take out</button>'
+    + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>');
+}
+
+async function doUnfreeze(lotId) {
+  const lot = frozenLotById(lotId);
+  if (!lot) { alert('That frozen lot no longer exists.'); return; }
+  const qty = parseInt((document.getElementById('fu-qty') || {}).value) || 0;
+  const date = (document.getElementById('fu-date') || {}).value || today();
+  const notes = ((document.getElementById('fu-notes') || {}).value || '').trim() || null;
+  if (qty <= 0) { alert('Enter how many cookies to take out.'); return; }
+  const dateErr = validateDate(date, 'Date taken out');
+  if (dateErr) { alert(dateErr); return; }
+  if (date < lot.date_frozen) { alert('That date is before the cookies went into the freezer.'); return; }
+  if (qty > lot.qty_held) {
+    alert('Cannot take out ' + qty + ': that lot has only ' + lot.qty_held + ' cookie' + (lot.qty_held === 1 ? '' : 's') + ' left in the freezer.');
+    return;
+  }
+  const days = frozenDaysBetween(lot.date_frozen, date);
+  setSyncStatus('syncing', 'Saving...');
+  const { data, error } = await db.from('allocations').insert([{
+    batch_num: lot.batch_num,
+    type: 'unfrozen',
+    qty: qty,
+    recipient: { type: 'unfrozen', name: 'Back from freezer' },
+    date: date,
+    notes: notes,
+    frozen_source_id: lot.id
+  }]).select();
+  if (error || !data) {
+    setSyncStatus('err', 'Sync error');
+    console.error('doUnfreeze error', error);
+    showSaveError('Could not take those cookies out of the freezer.');
+    return;
+  }
+  allocs.push(data[0]);
+  setSyncStatus('ok', 'Saved ✓');
+  closeUModal();
+  showSaveToast(qty + ' cookie' + (qty === 1 ? '' : 's') + ' back in batch ' + lot.batch_num
+    + (days !== null ? ' · ' + days + ' day' + (days === 1 ? '' : 's') + ' frozen' : ''));
+  _refreshAfterFrozenChange();
+}
+
 // ── Write off frozen stock ────────────────────────────────────────────────
 function openFrozenWriteOff(lotId) {
   const lot = frozenLotById(lotId);
   if (!lot) { alert('That frozen lot no longer exists.'); return; }
-  if (lot.qty_remaining <= 0) { alert('That lot has nothing left to write off.'); return; }
+  if (lot.qty_held <= 0) { alert('That lot is empty — there is nothing left to write off.'); return; }
   const exp = frozenExpiryStyle(lot.frozen_use_by);
   const body = ''
     + '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">'
       + 'Batch <strong style="color:var(--text)">' + esc(lot.batch_num) + '</strong> · frozen ' + fmtDate(lot.date_frozen)
       + ' · use by ' + (lot.frozen_use_by ? fmtDate(lot.frozen_use_by) : '—') + ' (' + exp.label + ')'
-      + '<br><strong style="color:var(--text)">' + lot.qty_remaining + '</strong> cookie' + (lot.qty_remaining === 1 ? '' : 's') + ' left in this lot.</div>'
+      + '<br><strong style="color:var(--text)">' + lot.qty_held + '</strong> cookie' + (lot.qty_held === 1 ? '' : 's') + ' still in the freezer.</div>'
     + '<div class="u-modal-field"><label>Cookies to write off</label>'
-      + '<input id="fwo-qty" type="number" min="1" max="' + lot.qty_remaining + '" value="' + lot.qty_remaining + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
+      + '<input id="fwo-qty" type="number" min="1" max="' + lot.qty_held + '" value="' + lot.qty_held + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
     + '<div class="u-modal-field"><label>Date</label>'
       + '<input id="fwo-date" type="date" value="' + today() + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
     + '<div class="u-modal-field"><label>Reason <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label>'
       + '<textarea id="fwo-notes" placeholder="e.g. past use-by, freezer burn" style="width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"></textarea></div>'
-    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Recorded as a disposal against this lot. The batch total is unchanged — these cookies were already counted when the lot was frozen.</div>';
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">These cookies are gone, so they stay counted against the batch. Use “Take out” instead if they are still good.</div>';
   openUModal('Write off frozen stock', body,
     '<button class="btn btn-danger" style="flex:1" onclick="doFrozenWriteOff(' + lot.id + ')">Write off</button>'
     + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>');
@@ -7281,8 +7462,8 @@ async function doFrozenWriteOff(lotId) {
   if (qty <= 0) { alert('Enter how many cookies to write off.'); return; }
   const dateErr = validateDate(date, 'Date');
   if (dateErr) { alert(dateErr); return; }
-  if (qty > lot.qty_remaining) {
-    alert('Cannot write off ' + qty + ': that lot has only ' + lot.qty_remaining + ' left.');
+  if (qty > lot.qty_held) {
+    alert('Cannot write off ' + qty + ': that lot has only ' + lot.qty_held + ' left in the freezer.');
     return;
   }
   setSyncStatus('syncing', 'Saving...');
@@ -7311,10 +7492,22 @@ async function doFrozenWriteOff(lotId) {
 function _refreshAfterFrozenChange() {
   if (document.getElementById('frozen-list')) renderFrozenStock();
   if (selBI >= 0 && document.getElementById('al-list')) {
-    renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderUnallocBanner(); renderRecentAllocBatches();
+    renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderUnallocBanner(); renderRecentAllocBatches(); renderAllocIcingInstances();
   }
   if (document.getElementById('hist-list')) renderHist();
-  popFrozenLotPicker();
+}
+
+// The use-by field belongs only on a row that is itself creating a frozen lot.
+function updAllocFrozenUseBy() {
+  const wrap = document.getElementById('al-useby-wrap');
+  if (!wrap) return;
+  const t = (document.getElementById('al-t') || {}).value;
+  const show = t === 'frozen';
+  wrap.style.display = show ? 'block' : 'none';
+  const inp = document.getElementById('al-useby');
+  if (show && inp && !inp.value) {
+    inp.value = frozenUseByDefault((document.getElementById('al-dt') || {}).value || today());
+  }
 }
 
 // ── Frozen Stock screen ───────────────────────────────────────────────────
@@ -7327,25 +7520,25 @@ function renderFrozenStock() {
   const el = document.getElementById('frozen-list');
   if (!el) return;
   const all = frozenLots();
-  const depleted = all.filter(function(l){ return l.qty_remaining <= 0; });
-  const shown = frozenShowDepleted ? all : all.filter(function(l){ return l.qty_remaining > 0; });
+  const emptied = all.filter(function(l){ return l.qty_held <= 0; });
+  const shown = frozenShowDepleted ? all : all.filter(function(l){ return l.qty_held > 0; });
 
-  const totalRemaining = all.reduce(function(s, l){ return s + Math.max(0, l.qty_remaining); }, 0);
+  const totalHeld = all.reduce(function(s, l){ return s + Math.max(0, l.qty_held); }, 0);
   const expiringSoon = all.filter(function(l) {
-    if (l.qty_remaining <= 0) return false;
+    if (l.qty_held <= 0) return false;
     const d = frozenDaysLeft(l.frozen_use_by);
     return d !== null && d <= FROZEN_EXPIRY_WARN_DAYS;
   }).length;
 
-  let head = '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;font-family:sans-serif;margin-bottom:10px;">'
-    + '<span><strong style="font-size:15px;color:var(--navy);">' + totalRemaining + '</strong> cookie' + (totalRemaining === 1 ? '' : 's') + ' in the freezer</span>'
+  const head = '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;font-family:sans-serif;margin-bottom:10px;">'
+    + '<span><strong style="font-size:15px;color:var(--navy);">' + totalHeld + '</strong> cookie' + (totalHeld === 1 ? '' : 's') + ' in the freezer</span>'
     + (expiringSoon ? '<span style="color:var(--warning);font-weight:700;">' + expiringSoon + ' lot' + (expiringSoon === 1 ? '' : 's') + ' to use within ' + FROZEN_EXPIRY_WARN_DAYS + ' days</span>' : '')
-    + (depleted.length ? '<a href="javascript:void(0)" onclick="toggleFrozenShowDepleted()" style="color:var(--navy);text-decoration:underline;">'
-        + (frozenShowDepleted ? 'Hide' : 'Show') + ' ' + depleted.length + ' fully used lot' + (depleted.length === 1 ? '' : 's') + '</a>' : '')
+    + (emptied.length ? '<a href="javascript:void(0)" onclick="toggleFrozenShowDepleted()" style="color:var(--navy);text-decoration:underline;">'
+        + (frozenShowDepleted ? 'Hide' : 'Show') + ' ' + emptied.length + ' emptied lot' + (emptied.length === 1 ? '' : 's') + '</a>' : '')
     + '</div>';
 
   if (!shown.length) {
-    el.innerHTML = head + '<div class="empty">' + (all.length ? 'No frozen stock left — every lot has been used.' : 'Nothing frozen yet. Use “Freeze cookies” on a batch to put some aside.') + '</div>';
+    el.innerHTML = head + '<div class="empty">' + (all.length ? 'The freezer is empty — every lot has been taken out or written off.' : 'Nothing frozen yet. Use “Freeze cookies” on a batch to put some aside.') + '</div>';
     return;
   }
 
@@ -7355,19 +7548,22 @@ function renderFrozenStock() {
   const rows = shown.map(function(l) {
     const exp = frozenExpiryStyle(l.frozen_use_by);
     const days = frozenDaysLeft(l.frozen_use_by);
-    const urgent = l.qty_remaining > 0 && days !== null && days <= FROZEN_EXPIRY_WARN_DAYS;
-    const rowBg = l.qty_remaining <= 0 ? 'background:var(--gray-light);opacity:0.75;' : (urgent ? 'background:var(--warning-bg);' : '');
+    const urgent = l.qty_held > 0 && days !== null && days <= FROZEN_EXPIRY_WARN_DAYS;
+    const rowBg = l.qty_held <= 0 ? 'background:var(--gray-light);opacity:0.75;' : (urgent ? 'background:var(--warning-bg);' : '');
     const b = findBatchByNum(l.batch_num);
-    const actions = l.qty_remaining > 0
-      ? '<button class="btn btn-sm" onclick="goFrozenBakeOff(' + l.id + ')" style="font-size:10px;white-space:nowrap;">Bake off</button>'
+    const inFor = frozenDaysBetween(l.date_frozen, today());
+    const actions = l.qty_held > 0
+      ? '<button class="btn btn-sm btn-primary" onclick="openUnfreezeForm(' + l.id + ')" style="font-size:10px;white-space:nowrap;">Take out</button>'
         + ' <button class="btn btn-sm" onclick="openFrozenWriteOff(' + l.id + ')" style="font-size:10px;white-space:nowrap;color:var(--danger);border-color:var(--danger);">Write off</button>'
-      : '<span style="font-size:11px;color:var(--text-muted);">Fully used</span>';
+      : '<span style="font-size:11px;color:var(--text-muted);">Emptied</span>';
     return '<tr style="' + rowBg + '">'
       + '<td style="' + td + 'font-weight:700;">' + esc(l.batch_num) + (b && b.recipe ? '<div style="font-weight:400;font-size:10px;color:var(--text-muted);">' + esc(b.recipe) + '</div>' : '') + '</td>'
-      + '<td style="' + td + 'white-space:nowrap;">' + fmtDate(l.date_frozen) + '</td>'
+      + '<td style="' + td + 'white-space:nowrap;">' + fmtDate(l.date_frozen)
+        + (l.qty_held > 0 && inFor !== null ? '<div style="font-size:10px;color:var(--text-muted);">' + inFor + 'd ago</div>' : '') + '</td>'
       + '<td style="' + td + 'text-align:right;">' + l.qty_frozen + '</td>'
-      + '<td style="' + td + 'text-align:right;color:var(--text-muted);">' + l.qty_baked_off + '</td>'
-      + '<td style="' + td + 'text-align:right;font-weight:700;color:' + (l.qty_remaining > 0 ? 'var(--navy)' : 'var(--text-muted)') + ';">' + l.qty_remaining + '</td>'
+      + '<td style="' + td + 'text-align:right;font-weight:700;color:' + (l.qty_held > 0 ? 'var(--navy)' : 'var(--text-muted)') + ';">' + l.qty_held + '</td>'
+      + '<td style="' + td + 'text-align:right;color:var(--text-muted);">' + (l.qty_returned || '—') + '</td>'
+      + '<td style="' + td + 'text-align:right;color:' + (l.qty_written_off ? 'var(--danger)' : 'var(--text-muted)') + ';">' + (l.qty_written_off || '—') + '</td>'
       + '<td style="' + td + 'white-space:nowrap;">' + (l.frozen_use_by ? fmtDate(l.frozen_use_by) : '—')
         + '<div style="display:inline-block;margin-left:6px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;' + exp.style + '">' + exp.label + '</div></td>'
       + '<td style="' + td + '">' + (l.notes ? esc(l.notes) : '<span style="color:var(--text-muted);">—</span>') + '</td>'
@@ -7376,229 +7572,37 @@ function renderFrozenStock() {
   }).join('');
 
   el.innerHTML = head
-    + '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table style="width:100%;border-collapse:collapse;min-width:760px;">'
+    + '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table style="width:100%;border-collapse:collapse;min-width:820px;">'
     + '<thead><tr>'
-    + ['Batch', 'Frozen', 'Qty frozen', 'Used', 'Remaining', 'Use by', 'Note', ''].map(function(h){ return '<th style="' + th + '">' + h + '</th>'; }).join('')
+    + ['Batch', 'Frozen', 'Put in', 'In freezer', 'Taken out', 'Written off', 'Use by', 'Note', ''].map(function(h){ return '<th style="' + th + '">' + h + '</th>'; }).join('')
     + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
-// Jump to the Allocate tab with the frozen source preselected for this lot.
-function goFrozenBakeOff(lotId) {
-  const lot = frozenLotById(lotId);
-  if (!lot) { alert('That frozen lot no longer exists.'); return; }
-  const bi = batches.findIndex(function(b){ return normBatchNum(b.num) === normBatchNum(lot.batch_num); });
-  if (bi < 0) { alert('The batch this lot came from is no longer in the app.'); return; }
-  go('production');
-  goProd('prod-alloc');
-  setTimeout(function() {
-    const bSel = document.getElementById('al-b');
-    if (bSel) { bSel.value = String(bi); loadAllocBatch(); }
-    setTimeout(function() {
-      const src = document.getElementById('al-source-frozen');
-      if (src) { src.checked = true; updAllocSource(); }
-      const lotSel = document.getElementById('al-frozen-lot');
-      if (lotSel) { lotSel.value = String(lotId); onFrozenLotPick(); }
-    }, 120);
-  }, 120);
-}
-
-// ── Allocation form: fresh vs frozen source ───────────────────────────────
-function allocSourceIsFrozen() {
-  const el = document.getElementById('al-source-frozen');
-  return !!(el && el.checked);
-}
-
-function updAllocSource() {
-  const frozen = allocSourceIsFrozen();
-  const panel = document.getElementById('al-frozen-panel');
-  if (panel) panel.style.display = frozen ? 'block' : 'none';
-  const typeSel = document.getElementById('al-t');
-  // Freezing is its own action; you cannot freeze cookies that are already frozen.
-  if (typeSel) {
-    const frozenOpt = typeSel.querySelector('option[value="frozen"]');
-    if (frozenOpt) frozenOpt.disabled = frozen;
-    if (frozen && typeSel.value === 'frozen') { typeSel.value = 'sold'; updAllocT(); }
-  }
-  if (frozen) popFrozenLotPicker();
-  updAllocFrozenUseBy();
-  prefillRemainingQty();
-}
-
-// The use-by field only belongs on a row that is itself creating a frozen lot.
-function updAllocFrozenUseBy() {
-  const wrap = document.getElementById('al-useby-wrap');
-  if (!wrap) return;
-  const t = (document.getElementById('al-t') || {}).value;
-  const show = t === 'frozen' && !allocSourceIsFrozen();
-  wrap.style.display = show ? 'block' : 'none';
-  const inp = document.getElementById('al-useby');
-  if (show && inp && !inp.value) {
-    inp.value = frozenUseByDefault((document.getElementById('al-dt') || {}).value || today());
-  }
-}
-
-function popFrozenLotPicker() {
-  const sel = document.getElementById('al-frozen-lot');
-  if (!sel) return;
-  const prev = sel.value;
-  const lots = activeFrozenLots();
-  if (!lots.length) {
-    sel.innerHTML = '<option value="">— No frozen stock available —</option>';
-    onFrozenLotPick();
-    return;
-  }
-  sel.innerHTML = '<option value="">— Select a frozen lot —</option>' + lots.map(function(l) {
-    const exp = frozenDaysLeft(l.frozen_use_by);
-    const expTxt = l.frozen_use_by ? ('use by ' + fmtDate(l.frozen_use_by) + (exp !== null && exp < 0 ? ' (overdue)' : '')) : 'no use-by';
-    return '<option value="' + l.id + '">' + esc(l.batch_num) + ' · ' + expTxt + ' · ' + l.qty_remaining + ' left</option>';
-  }).join('');
-  if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
-  onFrozenLotPick();
-}
-
-function onFrozenLotPick() {
-  const sel = document.getElementById('al-frozen-lot');
-  const info = document.getElementById('al-frozen-info');
-  if (!sel || !info) return;
-  const lot = sel.value ? frozenLotById(sel.value) : null;
-  if (!lot) { info.textContent = ''; prefillRemainingQty(); return; }
-  const exp = frozenExpiryStyle(lot.frozen_use_by);
-  info.innerHTML = 'Batch <strong>' + esc(lot.batch_num) + '</strong> · frozen ' + fmtDate(lot.date_frozen)
-    + ' · <strong>' + lot.qty_remaining + '</strong> of ' + lot.qty_frozen + ' left'
-    + ' <span style="display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;' + exp.style + '">' + exp.label + '</span>';
-  const qtyEl = document.getElementById('al-q');
-  if (qtyEl) qtyEl.value = lot.qty_remaining;
-  const remEl = document.getElementById('al-remaining');
-  if (remEl) remEl.textContent = lot.qty_remaining + ' left in this frozen lot';
-}
-
-// ── Nested bake-off / write-off rows under a frozen lot ───────────────────
+// ── What became of a lot, shown under it ─────────────────────────────────
 function frozenChildRowsHtml(lotId) {
-  const children = frozenLotChildren(lotId).slice().sort(function(a, b){ return String(a.date || '').localeCompare(String(b.date || '')); });
   const lot = frozenLotById(lotId);
-  const remaining = lot ? lot.qty_remaining : 0;
+  if (!lot) return '';
+  const children = lot.children.slice().sort(function(a, b){ return String(a.date || '').localeCompare(String(b.date || '')); });
   if (!children.length) {
     return '<div style="margin-top:4px;padding:5px 0 2px 16px;border-left:2px solid var(--border);font-size:11px;color:var(--text-muted);font-family:sans-serif;">'
-      + 'Still in the freezer — nothing baked off yet.</div>';
+      + 'All ' + lot.qty_frozen + ' still in the freezer.</div>';
   }
   const rows = children.map(function(c) {
     const isDisposal = c.type === 'disposal';
-    const who = recipDisplayName(c.recipient) || (isDisposal ? 'Written off' : c.type);
-    const boxNote = c.collection_instance_id ? ' <span style="color:var(--text-muted);">(in a collection box)</span>' : '';
-    return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;font-family:sans-serif;">'
+    const stint = frozenStintLabel(lot, c);
+    return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;font-family:sans-serif;flex-wrap:wrap;">'
       + '<span style="color:var(--text-muted);white-space:nowrap;">' + (c.date ? fmtDate(c.date) : '—') + '</span>'
-      + '<span class="tag ' + (isDisposal ? 'tag-red' : 'tag-blue') + '" style="font-size:9px;">' + esc(isDisposal ? 'Written off' : c.type) + '</span>'
-      + '<span style="flex:1;">' + esc(who) + boxNote + '</span>'
+      + '<span class="tag ' + (isDisposal ? 'tag-red' : 'tag-green') + '" style="font-size:9px;">' + (isDisposal ? 'Written off' : 'Taken out') + '</span>'
+      + '<span style="flex:1;color:var(--text-muted);">' + esc(stint) + (c.notes ? ' · ' + esc(c.notes) : '') + '</span>'
       + '<span style="font-weight:700;">' + (c.qty || 0) + '</span>'
       + '</div>';
   }).join('');
-  return '<div style="margin-top:4px;padding:4px 0 2px 16px;border-left:2px solid var(--purple);">'
-    + '<div style="font-size:10px;font-weight:700;color:var(--purple);text-transform:uppercase;letter-spacing:0.05em;font-family:sans-serif;margin-bottom:2px;">Baked off from this lot</div>'
+  return '<div style="margin-top:4px;padding:4px 0 2px 16px;border-left:2px solid #10627f;">'
+    + '<div style="font-size:10px;font-weight:700;color:#10627f;text-transform:uppercase;letter-spacing:0.05em;font-family:sans-serif;margin-bottom:2px;">Freezer history</div>'
     + rows
     + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;padding-top:3px;border-top:1px dashed var(--border);margin-top:3px;">'
-      + remaining + ' still in the freezer</div>'
+      + lot.qty_held + ' still in the freezer</div>'
     + '</div>';
-}
-
-// ═══════════════════════════════════════════════════════
-// FROZEN STOCK — helpers
-// ═══════════════════════════════════════════════════════
-// Cookies leave a batch's baked yield exactly once. A fresh allocation consumes it
-// directly; freezing consumes it at the moment of freezing. The later bake-off or
-// write-off row carries frozen_source_id plus the same batch_num as its frozen parent
-// — the batch_num purely so batch-level traceability queries need no changes — but
-// those cookies were already counted when the lot was frozen. Counting them again
-// makes the batch read as over-allocated and blocks further allocation, so every
-// per-batch qty total goes through sumConsumedQty().
-const FROZEN_SHELF_LIFE_WEEKS = 12;
-const FROZEN_EXPIRY_WARN_DAYS = 3;
-
-function sumConsumedQty(rows) {
-  return (rows || []).reduce(function(s, a) {
-    if (a && a.frozen_source_id) return s;   // already counted when frozen
-    return s + (Number(a && a.qty) || 0);
-  }, 0);
-}
-
-// Live allocation rows for a batch, straight from the database, so two sessions
-// cannot both allocate the same remaining cookies. Soft-deleted rows are excluded —
-// a deleted allocation no longer consumes the batch. Returns null on error, which
-// callers must treat as "cannot verify" rather than "nothing allocated".
-async function fetchLiveBatchAllocations(batchNum) {
-  const { data, error } = await db.from('allocations')
-    .select('qty, frozen_source_id')
-    .eq('batch_num', (batchNum || '').trim())
-    .is('deleted_at', null);
-  if (error) { console.error('fetchLiveBatchAllocations error', error); return null; }
-  return data || [];
-}
-
-// Mirrors the frozen_lots view in JS. Computed from the in-memory allocs global —
-// which already excludes soft-deleted rows, matching the view's deleted_at filters —
-// so the screen stays in step with the rest of the app after an insert or edit
-// without a round trip.
-function frozenLotChildren(lotId) {
-  return (allocs || []).filter(function(a){ return a.frozen_source_id != null && String(a.frozen_source_id) === String(lotId); });
-}
-
-function frozenLots() {
-  return (allocs || [])
-    .filter(function(a){ return a.type === 'frozen'; })
-    .map(function(a) {
-      const children = frozenLotChildren(a.id);
-      const qtyFrozen = Number(a.qty) || 0;
-      const bakedOff = children.reduce(function(s, c){ return s + (Number(c.qty) || 0); }, 0);
-      return {
-        id: a.id,
-        batch_num: a.batch_num,
-        date_frozen: a.date || '',
-        qty_frozen: qtyFrozen,
-        qty_baked_off: bakedOff,
-        qty_remaining: qtyFrozen - bakedOff,
-        frozen_use_by: a.frozen_use_by || '',
-        notes: a.notes || '',
-        children: children,
-        alloc: a
-      };
-    })
-    .sort(function(x, y) {
-      return String(x.frozen_use_by || '9999-99-99').localeCompare(String(y.frozen_use_by || '9999-99-99'))
-          || String(x.batch_num || '').localeCompare(String(y.batch_num || ''));
-    });
-}
-
-function activeFrozenLots() {
-  return frozenLots().filter(function(l){ return l.qty_remaining > 0; });
-}
-
-function frozenLotById(lotId) {
-  return frozenLots().find(function(l){ return String(l.id) === String(lotId); }) || null;
-}
-
-// Default use-by: freeze date + 12 weeks. Editable on every freeze.
-function frozenUseByDefault(freezeDate) {
-  const d = new Date((freezeDate || today()) + 'T00:00:00');
-  if (isNaN(d.getTime())) return '';
-  d.setDate(d.getDate() + FROZEN_SHELF_LIFE_WEEKS * 7);
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
-
-// Days until use-by; negative once past. null when no date is set.
-function frozenDaysLeft(useBy) {
-  if (!useBy) return null;
-  const d = new Date(String(useBy).slice(0, 10) + 'T00:00:00');
-  const t = new Date(today() + 'T00:00:00');
-  if (isNaN(d.getTime())) return null;
-  return Math.round((d - t) / 86400000);
-}
-
-// Shared colour treatment for a lot's use-by state.
-function frozenExpiryStyle(useBy) {
-  const days = frozenDaysLeft(useBy);
-  if (days === null) return { style: 'background:var(--gray-light);color:var(--text-muted);', label: 'No use-by' };
-  if (days < 0)   return { style: 'background:var(--danger-bg,#fdf0ef);color:var(--danger);', label: Math.abs(days) + 'd overdue' };
-  if (days <= FROZEN_EXPIRY_WARN_DAYS) return { style: 'background:var(--warning-bg);color:var(--warning);', label: days === 0 ? 'Today' : days + 'd left' };
-  return { style: 'background:var(--success-bg);color:var(--success);', label: days + 'd left' };
 }
 
 async function loadAllocs() {
@@ -11524,8 +11528,6 @@ function loadAllocBatch() {
   info.textContent = `${b.recipe||'No recipe'} · ${b.date} · ${b.yield||'?'} cookies · made by ${b.made_by||'—'}`;
   // Clear all form fields when switching batch
   editingAllocId = null;
-  const alSrcFresh = document.getElementById('al-source-fresh');
-  if (alSrcFresh) { alSrcFresh.checked = true; updAllocSource(); }
   const alUseBy = document.getElementById('al-useby'); if (alUseBy) alUseBy.value = '';
   const alPickerInput = document.querySelector('#al-cust-picker-wrap .cust-picker-input'); if (alPickerInput) alPickerInput.value = '';
   const alCustId = document.getElementById('al-cust-id'); if (alCustId) alCustId.value = '';
@@ -11599,9 +11601,10 @@ async function addAlloc() {
     const _editing = allocs.find(x => x.id === editingAllocId);
     if (_editing && _editing.type === 'frozen') {
       const _lot = frozenLotById(editingAllocId);
-      if (_lot && qty < _lot.qty_baked_off) {
-        alert('Cannot reduce this frozen lot to ' + qty + ': ' + _lot.qty_baked_off
-          + ' cookie' + (_lot.qty_baked_off === 1 ? '' : 's') + ' have already been baked off or written off from it.');
+      const _gone = _lot ? (_lot.qty_returned + _lot.qty_written_off) : 0;
+      if (_lot && qty < _gone) {
+        alert('Cannot reduce this frozen lot to ' + qty + ': ' + _gone
+          + ' cookie' + (_gone === 1 ? ' has' : 's have') + ' already been taken out of it or written off.');
         return;
       }
     }
@@ -11619,32 +11622,6 @@ async function addAlloc() {
       alert('Save failed — your changes were NOT saved to the database. Check your connection and try again.');
     }
   } else {
-    // Bake-off from a frozen lot: the cookies left the batch when they were frozen,
-    // so the batch yield is not touched again. What is checked instead is that the lot
-    // still holds enough. batch_num is copied from the lot so batch-level traceability
-    // queries need no changes.
-    if (allocSourceIsFrozen()) {
-      const _lotId = (document.getElementById('al-frozen-lot') || {}).value;
-      if (!_lotId) { alert('Choose which frozen lot these cookies came out of.'); return; }
-      const _lot = frozenLotById(_lotId);
-      if (!_lot) { alert('That frozen lot no longer exists — reload and try again.'); return; }
-      if (qty > _lot.qty_remaining) {
-        alert('Cannot allocate ' + qty + ': that frozen lot has only ' + _lot.qty_remaining
-          + ' cookie' + (_lot.qty_remaining === 1 ? '' : 's') + ' left.');
-        return;
-      }
-      const _aieElF = document.getElementById('al-icing-entry-id');
-      await insertAlloc({ batchNum:_lot.batch_num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes,
-        campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake,
-        icingEntryId: _aieElF ? (_aieElF.value || null) : null, frozenSourceId: _lot.id });
-      showSaveToast('Allocated ' + qty + ' from frozen stock');
-      _resetAllocFormAfterSave();
-      renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderRecentAllocBatches(); renderUnallocBanner(); renderAllocIcingInstances();
-      popFrozenLotPicker();
-      if (document.getElementById('frozen-list')) renderFrozenStock();
-      return;
-    }
-
     // Calculate how many cookies from this batch are already allocated
     // Source 1: live DB query (avoids stale in-memory data from concurrent sessions)
     const _liveAllocs = await fetchLiveBatchAllocations(b.num);
@@ -11683,7 +11660,6 @@ async function addAlloc() {
     await insertAlloc({ batchNum:b.num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes, campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake, icingEntryId: _aieId, frozenUseBy: _useBy });
     showSaveToast('Allocation saved');
     if (document.getElementById('frozen-list')) renderFrozenStock();
-    popFrozenLotPicker();
     document.getElementById('al-q').value = '';
     const alNotesEl = document.getElementById('al-notes'); if (alNotesEl) alNotesEl.value = '';
     const alCostEl = document.getElementById('al-cost-to-make'); if (alCostEl) alCostEl.value = '';
@@ -11723,7 +11699,7 @@ function renderAllocList() {
     });
   }
   if (!list.length) { el.innerHTML='<div class="empty">No allocations yet.</div>'; return; }
-  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold'};
+  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',unfrozen:'Out of freezer',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold'};
   const tagCls = {disposal:'tag-red',donated:'tag-green',family:'tag-green',gifted:'tag-purple',testing:'tag-gray',friends:'tag-amber',sold:'tag-blue',customer:'tag-blue'};
 
   // A3 FIX: group box allocs (same collection_instance_id) into one card per instance.
@@ -11805,10 +11781,11 @@ function renderAllocList() {
       +'<button class="btn-edit" onclick="jumpToEditAlloc('+a.id+')">&#9998; Edit</button>'
       +'<button class="btn-del" onclick="confirmDeleteAlloc('+a.id+')">&#128465; Delete</button>';
     const _srcTag = a.frozen_source_id
-      ? '<span style="font-size:10px;color:#10627f;font-family:sans-serif;font-weight:700;">&#10052; from frozen</span>' : '';
+      ? '<span style="font-size:10px;color:#10627f;font-family:sans-serif;font-weight:700;">&#10052; from the freezer</span>' : '';
     const _lotBlock = a.type === 'frozen' ? frozenChildRowsHtml(a.id) : '';
     const _lotActions = a.type === 'frozen'
-      ? '<button class="btn btn-sm" onclick="openFrozenWriteOff('+a.id+')" style="font-size:11px;">Write off</button>' : '';
+      ? '<button class="btn btn-sm" onclick="openUnfreezeForm('+a.id+')" style="font-size:11px;">Take out of freezer</button>'
+        + '<button class="btn btn-sm" onclick="openFrozenWriteOff('+a.id+')" style="font-size:11px;">Write off</button>' : '';
     return '<div style="padding:8px 0;border-bottom:1px solid var(--gray-light);">'
       + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'+typeBadge+namePart+phonePart+_srcTag+qtyPart+'</div>'
       + '<div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">'+datePart+methodPart+addrPart+distPart+cookieDescPart+'</div>'
@@ -12183,12 +12160,6 @@ function editAlloc(id) {
   editingAllocId = id;
   const r = a.recipient||{};
   document.getElementById('al-t').value = a.type||'sold';
-  const _edSrc = document.getElementById(a.frozen_source_id ? 'al-source-frozen' : 'al-source-fresh');
-  if (_edSrc) { _edSrc.checked = true; updAllocSource(); }
-  if (a.frozen_source_id) {
-    const _edLot = document.getElementById('al-frozen-lot');
-    if (_edLot) { _edLot.value = String(a.frozen_source_id); onFrozenLotPick(); }
-  }
   const _edUseBy = document.getElementById('al-useby');
   if (_edUseBy) _edUseBy.value = a.frozen_use_by || '';
   updAllocFrozenUseBy();
@@ -12503,7 +12474,7 @@ function renderUnallocBanner() {
 }
 function renderRecentAllocBatches() {
   const el = document.getElementById('al-recent-batches'); if (!el) return;
-  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing'};
+  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',unfrozen:'Out of freezer',donated:'Donated',gifted:'Gifted',testing:'Testing'};
   // Get batches that have at least one allocation, sorted newest first, capped at 10
   const batchesWithAllocs = [...batches]
     .filter(b => {
@@ -12527,7 +12498,7 @@ function renderRecentAllocBatches() {
     const detail = isExp ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-light)">
         ${ba.map(a=>{const r=a.recipient||{};const rName=recipDisplayName(a.recipient)||'—';return `<div class="row" style="padding:5px 0">
-          <span class="tag ${a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber'}" style="font-size:10px">${tl[a.type]||a.type}</span>
+          <span class="tag ${a.type==='unfrozen'?'tag-green':a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber'}" style="font-size:10px">${tl[a.type]||a.type}</span>
           <div style="flex:1;font-family:sans-serif;font-size:12px">${rName}${r.phone?' · <a href="tel:'+r.phone+'" style="color:var(--navy);text-decoration:none;">'+r.phone+'</a>':''}<br>
             <span style="font-size:11px;color:var(--text-muted)">${a.date} · ${a.method}${a.dist&&a.dist.length?' · '+a.dist.join(', '):''}</span>
           </div>
@@ -12616,10 +12587,10 @@ function renderAllocHistory() {
   var typeF = (document.getElementById('ha-type')||{value:''}).value;
   var from = (document.getElementById('ha-from')||{value:''}).value;
   var to = (document.getElementById('ha-to')||{value:''}).value;
-  var tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold',gift:'Gift',samples:'Samples',giveaway:'Giveaway',donation:'Donation'};
+  var tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',unfrozen:'Out of freezer',donated:'Donated',gifted:'Gifted',testing:'Testing',sold:'Sold',gift:'Gift',samples:'Samples',giveaway:'Giveaway',donation:'Donation'};
 
   function typeTagClass(type) {
-    return type==='frozen'?'tag-frozen':type==='customer'||type==='sold'?'tag-blue':type==='disposal'?'tag-red':type==='donated'||type==='family'||type==='donation'?'tag-green':type==='gifted'||type==='gift'?'tag-purple':type==='testing'||type==='samples'?'tag-gray':type==='friends'||type==='giveaway'?'tag-amber':'tag-amber';
+    return type==='unfrozen'?'tag-green':type==='frozen'?'tag-frozen':type==='customer'||type==='sold'?'tag-blue':type==='disposal'?'tag-red':type==='donated'||type==='family'||type==='donation'?'tag-green':type==='gifted'||type==='gift'?'tag-purple':type==='testing'||type==='samples'?'tag-gray':type==='friends'||type==='giveaway'?'tag-amber':'tag-amber';
   }
 
   // Source 1: direct and campaign allocations
@@ -16177,7 +16148,7 @@ function rclRenderRecipients() {
   }
   el.innerHTML = rclRecipients.map((r, i) => {
     const hasContact = r.phone || r.email;
-    const typeClass = r.type==='frozen'?'tag-frozen':r.type==='sold'?'tag-blue':r.type==='disposal'?'tag-red':r.type==='donated'||r.type==='consumed'?'tag-green':r.type==='gifted'||r.type==='giveaway'?'tag-purple':r.type==='samples'?'tag-orange':r.type==='testing'?'tag-gray':'tag-amber';
+    const typeClass = r.type==='unfrozen'?'tag-green':r.type==='frozen'?'tag-frozen':r.type==='sold'?'tag-blue':r.type==='disposal'?'tag-red':r.type==='donated'||r.type==='consumed'?'tag-green':r.type==='gifted'||r.type==='giveaway'?'tag-purple':r.type==='samples'?'tag-orange':r.type==='testing'?'tag-gray':'tag-amber';
     return `<div style="padding:8px 0;border-bottom:1px solid var(--gray-light)">
       <div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">
         <div style="flex:1;min-width:0">
@@ -21364,7 +21335,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
       + (_noContactCount ? '⚠ '+_noContactCount+' '+(mb.size>1?'people have':'person has')+' no contact details on record. ' : '')
       + 'Each person listed below received cookies affected by this recall. Check which cookies they need to return or dispose of.</div>';
     _masterArr.forEach(p => {
-      const _pTypeClass = p.type==='frozen'?'tag-frozen':p.type==='order'||p.type==='sold'?'tag-blue':p.type==='donated'||p.type==='consumed'?'tag-green':p.type==='gifted'||p.type==='giveaway'?'tag-purple':p.type==='samples'?'tag-orange':p.type==='testing'?'tag-gray':'tag-blue';
+      const _pTypeClass = p.type==='unfrozen'?'tag-green':p.type==='frozen'?'tag-frozen':p.type==='order'||p.type==='sold'?'tag-blue':p.type==='donated'||p.type==='consumed'?'tag-green':p.type==='gifted'||p.type==='giveaway'?'tag-purple':p.type==='samples'?'tag-orange':p.type==='testing'?'tag-gray':'tag-blue';
       const _pHasContact = !!(p.phone||p.email||p.socStr);
       const _pCallBtn = p.phone ? '<a href="tel:'+esc(p.phone)+'" style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:var(--success-bg);border:1.5px solid var(--success);border-radius:var(--radius);font-size:18px;text-decoration:none;flex-shrink:0">📞</a>' : '';
       const _pEmailBtn = p.email ? '<a href="mailto:'+esc(p.email)+'?subject=Important%20notice%20regarding%20your%20Cookie%20%26%20Me%20order" style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:#e8f0fb;border:1.5px solid #1a4fa0;border-radius:var(--radius);font-size:18px;text-decoration:none;flex-shrink:0">✉️</a>' : '';
@@ -21652,7 +21623,7 @@ function renderHist() {
       }).join('');
       const directAllocHtml = directAllocs.map(function(a){
         const rname=recipDisplayName(a.recipient)||'—';
-        const tagCol=a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber';
+        const tagCol=a.type==='unfrozen'?'tag-green':a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':a.type==='friends'?'tag-amber':'tag-amber';
         return '<div style="font-size:11px;font-family:sans-serif;padding:5px 0;border-bottom:1px solid var(--gray-light);display:flex;gap:8px;align-items:center;">'
           +'<span class="tag '+tagCol+'" style="font-size:10px">'+_bS(a.type)+'</span>'
           +'<strong style="flex:1">'+esc(rname)+'</strong>'
@@ -30499,7 +30470,7 @@ function renderCampDetailView(el, c) {
             });
             return lines.join('');
           })();
-          const allocLines = ba.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
+          const allocLines = ba.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='unfrozen'?'tag-green':a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
           const detail = isExp ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-family:sans-serif;">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;font-size:12px;margin-bottom:10px;">
               <div><span style="color:var(--text-muted)">Recipe</span><br><strong>${b.recipe||'—'}${b.mult>1?' ×'+b.mult:''}</strong></div>
@@ -30551,7 +30522,7 @@ function renderCampDetailView(el, c) {
               });
               return lines2.join('');
             })();
-            const allocLines2 = ba2.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
+            const allocLines2 = ba2.map(a=>{const r=a.recipient||{};return '<div style="font-size:11px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);"><span class="tag '+(a.type==='unfrozen'?'tag-green':a.type==='frozen'?'tag-frozen':a.type==='customer'?'tag-blue':a.type==='disposal'?'tag-red':a.type==='donated'||a.type==='family'?'tag-green':a.type==='gifted'?'tag-purple':a.type==='testing'?'tag-gray':'tag-amber')+'" style="font-size:10px">'+a.type+'</span> <strong>'+(r.name||'—')+'</strong> · '+a.qty+' cookies · '+a.date+'</div>';}).join('');
             const detail2 = isExp2 ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-family:sans-serif;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;font-size:12px;margin-bottom:10px;">
                 <div><span style="color:var(--text-muted)">Recipe</span><br><strong>${b.recipe||'—'}${b.mult>1?' ×'+b.mult:''}</strong></div>
@@ -32411,7 +32382,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v56.0',
+    app_version: 'v57.0',
     tables: {}
   };
 
@@ -33971,7 +33942,7 @@ function viewAlloc(id) {
   const r = a.recipient||{};
   const liveCust = (typeof r === 'object' && r.customerId != null) ? (cfg.customers||[]).find(c => c && c.id == r.customerId) : null;
   const b = batches.find(x=>x.num===a.batch_num)||{};
-  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',donated:'Donated',gifted:'Gifted',testing:'Testing'};
+  const tl = {customer:'Customer',family:'Family',friends:'Friends',disposal:'Thrown away',frozen:'Frozen',unfrozen:'Out of freezer',donated:'Donated',gifted:'Gifted',testing:'Testing'};
   const body = uField('Type', tl[a.type]||a.type)
     + uField('Recipient', liveCust ? custDisplayName(liveCust) : recipDisplayName(a.recipient))
     + uField('Phone', liveCust ? (liveCust.phone||'') : (r.phone||''))
@@ -33992,10 +33963,9 @@ function confirmDeleteAlloc(id) {
   const a = allocs.find(x=>x.id===id); if (!a) return;
   if (a.type === 'frozen') {
     const lot = frozenLotById(id);
-    if (lot && lot.qty_baked_off > 0) {
-      alert('Cannot delete this frozen lot: ' + lot.qty_baked_off + ' cookie'
-        + (lot.qty_baked_off === 1 ? ' has' : 's have') + ' already been baked off or written off from it.\n\n'
-        + 'Delete those ' + lot.children.length + ' allocation' + (lot.children.length === 1 ? '' : 's') + ' first.');
+    if (lot && lot.children.length) {
+      alert('Cannot delete this frozen lot: cookies have already been taken out of it or written off.\n\n'
+        + 'Delete those ' + lot.children.length + ' record' + (lot.children.length === 1 ? '' : 's') + ' first.');
       return;
     }
   }
