@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v58.1</title>
+<title>Cookie & Me — Kitchen Manager v58.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10352,6 +10352,29 @@ function removeFlavourRow(rowIdx) {
   if (el) el.remove();
 }
 
+// A saved batch ingredient's display name. Newer records carry the specific name in
+// `ingName`. Older ones saved whatever the recipe had in `category`, which for recipes
+// written in the newer style is the broad group ("Baking Staples") rather than the item —
+// those are recovered from the packet that was recorded against the line. Rows whose
+// `category` is already specific (old-style recipes, and icing decoration lines) are left
+// exactly as they are.
+function _isBroadStockCategory(name) {
+  if (!name) return false;
+  const n = String(name).toLowerCase();
+  return (ings || []).some(function(x){ return x && String(x.category || '').toLowerCase() === n; });
+}
+
+function batchIngLabel(i) {
+  if (!i) return '';
+  if (i.ingName) return i.ingName;
+  const cat = i.category || i.description || '';
+  if (i.ingId && _isBroadStockCategory(cat)) {
+    const stock = (ings || []).find(function(x){ return x && x.id === i.ingId; });
+    if (stock && stock.product) return stock.product;
+  }
+  return cat;
+}
+
 // ═══════════════════════════════════════════════════════
 // RECIPE INGREDIENT → STOCK MATCHING
 // ═══════════════════════════════════════════════════════
@@ -10460,11 +10483,11 @@ function loadRecipe() {
       return;
     }
 
+    // Stock ID and Lot are always entered by hand from the packet label, so nothing is
+    // pre-filled here. The match below is shown only as a hint about what is in stock.
     const best = findStockForIngredient(ingName, [openedStock, inventoryStock]);
     const stockRow = best ? best.row : null;
     const isOpen = !!best && best.poolRank === 0;
-    const autoId = stockRow ? stockRow.id : '';
-    const autoBatch = stockRow ? (stockRow.batch||'') : '';
     let expiryTag = '';
     if (stockRow && (stockRow.bb || stockRow.opened_date)) {
       const _now = new Date(), _soon = new Date(Date.now()+14*86400000);
@@ -10501,7 +10524,7 @@ function loadRecipe() {
       + '</div>'
       + '<div style="margin-bottom:5px">' + stockInfo + '</div>'
       + '<div id="bk-pkt-rows-' + idx + '">'
-      + buildPacketRow(idx, 0, autoId, autoBatch, '', pktPh)
+      + buildPacketRow(idx, 0, '', '', '', pktPh)
       + '</div>'
       + '<button class="btn btn-sm" style="font-size:11px;margin-top:4px;color:var(--navy)" onclick="addPacketRow(' + idx + ')">+ Used another packet</button>'
       + '</div>';
@@ -10720,7 +10743,7 @@ async function saveBake() {
         const p = packets[0]||{};
         const useNum = (p.enteredAmtNum !== null) ? p.enteredAmtNum : scaledNum;
         const useAmt = (p.enteredAmtNum !== null) ? (String(p.enteredAmtNum) + unitSuffix) : scaledAmt;
-        ingUsed.push({ category:ri2.category, amount:useAmt, amount_num:useNum, unit:ri2.unit||null, ingId:p.ingId||null, ingBatch:p.ingBatch||'', ingBrand:p.ingBrand||'' });
+        ingUsed.push({ category:ri2.category, ingName:recipeIngName(ri2), amount:useAmt, amount_num:useNum, unit:ri2.unit||null, ingId:p.ingId||null, ingBatch:p.ingBatch||'', ingBrand:p.ingBrand||'' });
       } else {
         const allEntered = packets.every(p => p.enteredAmtNum !== null);
         packets.forEach(p => {
@@ -10733,7 +10756,7 @@ async function saveBake() {
             useNum = scaledNum !== null ? Math.round(scaledNum / packets.length * 1000) / 1000 : null;
             useAmt = useNum !== null ? (String(useNum) + unitSuffix) : scaledAmt;
           }
-          ingUsed.push({ category:ri2.category, amount:useAmt, amount_num:useNum, unit:ri2.unit||null, ingId:p.ingId||null, ingBatch:p.ingBatch||'', ingBrand:p.ingBrand||'', multiPacket:true });
+          ingUsed.push({ category:ri2.category, ingName:recipeIngName(ri2), amount:useAmt, amount_num:useNum, unit:ri2.unit||null, ingId:p.ingId||null, ingBatch:p.ingBatch||'', ingBrand:p.ingBrand||'', multiPacket:true });
         });
       }
     });
@@ -11121,7 +11144,7 @@ function _renderBakeReadonlyInfo(b) {
     + uField('Total allocated', tot + ' cookies');
   if ((b.ingredients || []).length) {
     html += `<div class="u-modal-field"><label>Ingredients</label><div style="font-size:13px;">${
-      b.ingredients.map(i=>`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><span>${esc(i.category||'')}</span><span style="color:var(--text-muted)">${esc(i.amount||'')}${i.ingBatch?' · lot: '+esc(i.ingBatch):''}</span></div>`).join('')
+      b.ingredients.map(i=>`<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--gray-light);font-size:12px;font-family:sans-serif"><span>${esc(batchIngLabel(i))}</span><span style="color:var(--text-muted)">${esc(i.amount||'')}${i.ingBatch?' · lot: '+esc(i.ingBatch):''}</span></div>`).join('')
     }</div></div>`;
   }
   if ((b.icingEntries || []).length) {
@@ -16968,7 +16991,7 @@ function _prBuildBatches(rows) {
       // and show the count in brackets after the name.
       var _ingKeyMap = {};
       allIngs.forEach(function(i) {
-        var key = (i._type||'') + '|' + (i.category||i.description||'') + '|' + (i.ingBatch||i.lot||'') + '|' + String(i.ingId||'');
+        var key = (i._type||'') + '|' + batchIngLabel(i) + '|' + (i.ingBatch||i.lot||'') + '|' + String(i.ingId||'');
         if (!_ingKeyMap[key]) { _ingKeyMap[key] = { ing: i, count: 0 }; }
         _ingKeyMap[key].count++;
       });
@@ -16979,7 +17002,7 @@ function _prBuildBatches(rows) {
         var i = v.ing;
         var isUnique = i._type === 'Unique to portion';
         var rowStyle = isUnique ? ' style="background:#fff3e0;"' : (i._type === 'Icing' ? ' style="background:#f5f2ff;"' : '');
-        var label = (i.category||i.description||'—') + (v.count > 1 ? ' (' + v.count + ')' : '');
+        var label = (batchIngLabel(i)||'—') + (v.count > 1 ? ' (' + v.count + ')' : '');
         html += '<tr' + rowStyle + '><td>' + i._type + '</td><td>' + label + '</td><td>' + (i.ingBatch||i.lot||'—') + '</td><td>' + (i.ingId?'#'+i.ingId:'—') + '</td><td>' + (i.amount||i.qty||'—') + '</td></tr>';
       });
       html += '</table>';
@@ -19447,7 +19470,7 @@ function recallExportPrint(mb, q, deliveryLogs, icingFilter) {
       + (_prrmap.size?'<table><tr><th>Name</th><th>Type</th><th>Total Qty</th><th>Method</th><th>Date</th><th>Phone</th><th>Email</th><th>Social Media</th></tr>'+_prRows+'</table>':'<p><em>No campaign/direct allocations recorded.</em></p>')
       + (_prORecips.length?'<h3>Direct orders</h3><table><tr><th>Customer</th><th>Type</th><th>Qty</th><th>Order No.</th><th>Occasion</th><th>Phone</th><th>Email</th><th>Social Media</th></tr>'+_prOrderRows+'</table>':'');
     const _prSupplierHtml = delMatches.length?'<h3>Supplier source records</h3><table><tr><th>Lot</th><th>Supplier</th><th>Received</th><th>Condition</th><th>Food type</th></tr>'+delMatches.map(dm=>'<tr><td>'+dm.lot+'</td><td>'+(dm.supplier||'—')+'</td><td>'+(dm.date||'—')+'</td><td>'+(dm.condition||'—')+'</td><td>'+(dm.foodType||'—')+'</td></tr>').join('')+'</table>':'';
-    const _prIngRows = allIngs.map(i=>'<tr><td>'+(i.category||i.description||'')+(i.isChoc?' (chocolate)':'')+(i.isFlavour?' (flavouring)':'')+'</td><td>'+(i.ingBatch||i.lot||'—')+'</td><td>'+(i.ingId?'#'+i.ingId:'—')+'</td></tr>').join('');
+    const _prIngRows = allIngs.map(i=>'<tr><td>'+esc(batchIngLabel(i))+(i.isChoc?' (chocolate)':'')+(i.isFlavour?' (flavouring)':'')+'</td><td>'+(i.ingBatch||i.lot||'—')+'</td><td>'+(i.ingId?'#'+i.ingId:'—')+'</td></tr>').join('');
     const _prOccasionRow = b.occasion?'<tr><th>Occasion</th><td colspan="3">'+esc(b.occasion)+'</td></tr>':'';
     const _prNotesRow = b.notes?'<tr><th>Notes</th><td colspan="3">'+esc(b.notes)+'</td></tr>':'';
     // Accountability box for print
@@ -20228,7 +20251,7 @@ function _recallRenderReport(mode, combined, stockToPull, basket) {
       <div class="card-title">🍪 Affected batches</div>`;
     affectedArr.forEach(info => {
       const b = info.batch;
-      const baseIngLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`);
+      const baseIngLines = (b.ingredients || []).map(i => `${esc(batchIngLabel(i))}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`);
       const icingDecorLines = [];
       (b.icingEntries || []).forEach(e => {
         (e.decoration || []).forEach(d => {
@@ -20409,7 +20432,7 @@ function _recallReportPrint() {
     body += `<h2>🍪 Affected batches</h2>`;
     affectedArr.forEach(info => {
       const b = info.batch;
-      const baseIngLines = (b.ingredients || []).map(i => `${esc(i.category || '')}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`);
+      const baseIngLines = (b.ingredients || []).map(i => `${esc(batchIngLabel(i))}${i.ingBatch ? ' · lot ' + esc(i.ingBatch) : ''}`);
       const icingDecorLines = [];
       (b.icingEntries || []).forEach(e => {
         (e.decoration || []).forEach(d => {
@@ -20909,7 +20932,7 @@ async function doRecall() {
   // GAP 3 FIX: category/description text search now includes flavouring array
   batches.forEach((b,bi)=>{
     const allIngs = [...(b.ingredients||[]), ...(b.chocolate||[]), ...(b.flavouring||[])];
-    if (allIngs.some(i=>(i.category||i.description||'').toLowerCase().includes(q))) { mb.add(bi); mbBaseMatch.add(bi); }
+    if (allIngs.some(i=>((i.category||i.description||'') + ' ' + batchIngLabel(i)).toLowerCase().includes(q))) { mb.add(bi); mbBaseMatch.add(bi); }
   });
 
   // GAP 4 FIX: strip # prefix before lot number search so #23368 matches lot 23368
@@ -21153,7 +21176,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
         </div>
         ${allBatchIngs.length ? `<div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Ingredients used</div>
         <div style="margin-bottom:8px">${allBatchIngs.map(i=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif">
-          <span>${i.category||i.description||''}${i.isChocolate?' 🍫':''}${i.isFlavouring?' 🌿':''}</span>
+          <span>${esc(batchIngLabel(i))}${i.isChocolate?' 🍫':''}${i.isFlavouring?' 🌿':''}</span>
           <span style="color:var(--text-muted)">${i.amount||''}${i.ingBatch?' · lot: '+i.ingBatch:''}${i.ingId?' · #'+i.ingId:''}</span>
         </div>`).join('')}</div>` : ''}
         ${b.notes?`<div style="font-size:12px;font-family:sans-serif;color:var(--text-muted);font-style:italic;margin-top:4px">Notes: ${esc(b.notes)}</div>`:''}
@@ -21166,7 +21189,7 @@ function _renderRecallResults(mb, q, deliveryLogs, summary, icingFilter) {
         <span style="font-size:12px;color:var(--text-muted);font-family:sans-serif">${b.date}</span>
       </div>
       <div style="font-size:13px;margin-bottom:4px;font-family:sans-serif">${b.recipe||'No recipe'} · ${b.yield||'?'} cookies · made by ${b.made_by||'—'}</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;font-family:sans-serif">Ingredients: ${allBatchIngs.map(i=>`${i.category||i.description||''}${i.ingId?' #'+i.ingId:''}${i.ingBatch?' ('+i.ingBatch+')':''}`).join(' · ')||'none'}</div>`;
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;font-family:sans-serif">Ingredients: ${allBatchIngs.map(i=>`${esc(batchIngLabel(i))}${i.ingId?' #'+i.ingId:''}${i.ingBatch?' ('+i.ingBatch+')':''}`).join(' · ')||'none'}</div>`;
 
     // Supplier chain panel
     if (deliveryMatches.length) {
@@ -21640,7 +21663,7 @@ function renderHist() {
     // Ingredient list for expanded view
     const ingList = (b.ingredients||[]).map(i =>
       '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif">'
-      + '<span style="color:var(--text)">' + (i.category||'') + (i.isChocolate?' 🍫':'') + (i.isFlavouring?' 🌿':'') + '</span>'
+      + '<span style="color:var(--text)">' + esc(batchIngLabel(i)) + (i.isChocolate?' 🍫':'') + (i.isFlavouring?' 🌿':'') + '</span>'
       + '<span style="color:var(--text-muted)">' + (i.amount||'') + (i.ingBatch?' · lot: '+i.ingBatch:'') + (i.ingId?' · #'+i.ingId:'') + '</span>'
       + '</div>'
     ).join('');
@@ -26807,7 +26830,7 @@ function exportBatches(src, withIngredients) {
       } else {
         allIngs.forEach(i => {
           csvRows.push([...base,
-            i.category||i.description||'',
+            batchIngLabel(i),
             i.ingId ? '#'+i.ingId : '',
             i.ingBatch||i.lot||'',
             i.ingBrand||i.brand||'',
@@ -30531,7 +30554,7 @@ function renderCampDetailView(el, c) {
           const tot = sumConsumedQty(ba);
           const remaining = (b.yield||0)-tot;
           const isExp = campBatchExpandedId===b.id;
-          const ingList = (b.ingredients||[]).map(i=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif"><span>'+esc(i.category||'')+'</span><span style="color:var(--text-muted)">'+(i.amount||'')+(i.ingBatch?' · lot: '+i.ingBatch:'')+'</span></div>').join('');
+          const ingList = (b.ingredients||[]).map(i=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif"><span>'+esc(batchIngLabel(i))+'</span><span style="color:var(--text-muted)">'+(i.amount||'')+(i.ingBatch?' · lot: '+i.ingBatch:'')+'</span></div>').join('');
           const icingLines = (()=>{
             var seen={}, lines=[];
             (b.icingEntries||[]).forEach(function(e){
@@ -30583,7 +30606,7 @@ function renderCampDetailView(el, c) {
             const tot2 = sumConsumedQty(ba2);
             const remaining2 = (b.yield||0)-tot2;
             const isExp2 = campBatchExpandedId===b.id;
-            const ingList2 = (b.ingredients||[]).map(i=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif"><span>'+esc(i.category||'')+'</span><span style="color:var(--text-muted)">'+(i.amount||'')+(i.ingBatch?' · lot: '+i.ingBatch:'')+'</span></div>').join('');
+            const ingList2 = (b.ingredients||[]).map(i=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--gray-light);font-size:11px;font-family:sans-serif"><span>'+esc(batchIngLabel(i))+'</span><span style="color:var(--text-muted)">'+(i.amount||'')+(i.ingBatch?' · lot: '+i.ingBatch:'')+'</span></div>').join('');
             const icingLines2 = (()=>{
               var seen2={}, lines2=[];
               (b.icingEntries||[]).forEach(function(e){
@@ -32460,7 +32483,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v58.1',
+    app_version: 'v58.2',
     tables: {}
   };
 
