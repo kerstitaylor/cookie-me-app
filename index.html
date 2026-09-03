@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v59.0</title>
+<title>Cookie & Me — Kitchen Manager v59.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -22967,7 +22967,7 @@ function addOrfLine(prefill) {
       <div class="field">
         <label>Cookie flavour</label>
         <select id="orf-flavour-${id}">
-          ${cookieFlavourOptions((prefill?.flavour||prefill?.cookie_type||'Vanilla').replace(' + Choc Chips','').trim())}
+          ${cookieFlavourOptions((prefill?.flavour||prefill?.cookie_type||'').replace(' + Choc Chips','').trim())}
         </select>
         <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;font-weight:400;cursor:pointer;">
           <input type="checkbox" id="orf-chocchip-${id}" ${(prefill?.flavour||prefill?.cookie_type||'').includes('Choc Chips')?'checked':''} style="width:15px;height:15px;"/>
@@ -22998,8 +22998,11 @@ function cookieFlavourOptions(selected) {
     : COOKIE_FLAVOURS_FALLBACK.slice();
   const cur = String(selected || '').trim();
   if (cur && !list.some(function(f){ return String(f).toLowerCase() === cur.toLowerCase(); })) list.push(cur);
+  // A new line has nothing saved, so it starts on the first flavour in the list — the
+  // order set in Configure decides the default, rather than a name pinned in the code.
+  const effective = cur || list[0] || '';
   return list.map(function(f) {
-    return '<option value="' + esc(f) + '"' + (String(f) === cur ? ' selected' : '') + '>' + esc(f) + '</option>';
+    return '<option value="' + esc(f) + '"' + (String(f) === effective ? ' selected' : '') + '>' + esc(f) + '</option>';
   }).join('');
 }
 
@@ -32529,7 +32532,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v59.0',
+    app_version: 'v59.1',
     tables: {}
   };
 
