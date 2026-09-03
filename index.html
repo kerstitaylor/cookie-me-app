@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v57.0</title>
+<title>Cookie & Me — Kitchen Manager v58.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -5391,8 +5391,10 @@ function recipDisplayName(r) {
 }
 // -- Task type helpers --
 function taskTypeOptions(selected) {
-  const base = ['Bake','Ice'];
-  const custom = (cfg.taskTypes||[]);
+  const base = ['Pre-bake','Bake','Bake-off','Ice'];
+  // Drop any custom type that duplicates one now built in, so it does not appear twice.
+  const baseLc = base.map(function(b){ return b.toLowerCase(); });
+  const custom = (cfg.taskTypes||[]).filter(function(c){ return baseLc.indexOf(String(c).toLowerCase()) === -1; });
   const all = [...base, ...custom];
   return all.map(o => '<option value="'+o+'"'+(selected===o?' selected':'')+'>'+o+'</option>').join('') +
     '<option value="Other"'+(selected==='Other'?' selected':'')+'>Other</option>';
@@ -5400,6 +5402,8 @@ function taskTypeOptions(selected) {
 function inferTaskType(raw) {
   if (!raw) return {type:'', detail:''};
   const r = raw.toLowerCase();
+  if (r.includes('pre-bake') || r.includes('prebake') || r.includes('par-bake') || r.includes('parbake')) return {type:'Pre-bake', detail: (r==='pre-bake'||r==='prebake') ? '' : raw};
+  if (r.includes('bake-off') || r.includes('bakeoff') || r.includes('bake off')) return {type:'Bake-off', detail: (r==='bake-off'||r==='bakeoff'||r==='bake off') ? '' : raw};
   if (r === 'bake' || r.startsWith('bake') || r.includes('bake')) return {type:'Bake', detail: r==='bake' ? '' : raw};
   if (r === 'ice' || r === 'icing' || r.startsWith('ice') || r.startsWith('icing') || r.includes('ice') || r.includes('icing')) return {type:'Ice', detail: (r==='ice'||r==='icing') ? '' : raw};
   return {type:'Other', detail: raw};
@@ -7926,13 +7930,14 @@ async function loadRecentSetupSessions() {
 }
 
 // Build <option> HTML for a startup session picker.
-// taskTypeFilter: 'Bake' or 'Ice' — only show sessions that have that task type.
-// '' means show all.
+// taskTypeFilter: a task type, or an array of them — only show sessions that have one of
+// those task types. '' (or an empty array) means show all.
 function setupSessionOpts(taskTypeFilter) {
+  var wanted = Array.isArray(taskTypeFilter) ? taskTypeFilter : (taskTypeFilter ? [taskTypeFilter] : []);
   var filtered = recentSetupSessions.filter(function(r) {
-    if (!taskTypeFilter) return true;
+    if (!wanted.length) return true;
     var tasks = r.data.tasks || [];
-    return tasks.some(function(t) { return t.taskType === taskTypeFilter; });
+    return tasks.some(function(t) { return wanted.indexOf(t.taskType) > -1; });
   });
   if (!filtered.length) return '<option value="">— No matching startup sessions —</option>';
   var opts = '<option value="">— Enter date manually —</option>';
@@ -8127,7 +8132,7 @@ async function init() {
     popAll();
     // Populate startup session pickers (static forms)
     var _bkPick = document.getElementById('bk-setup-pick');
-    if (_bkPick) _bkPick.innerHTML = setupSessionOpts('Bake');
+    if (_bkPick) _bkPick.innerHTML = setupSessionOpts(['Bake','Pre-bake','Bake-off']);
     var _icingPick = document.getElementById('icing-setup-pick');
     if (_icingPick) _icingPick.innerHTML = setupSessionOpts('Ice');
     const nowDate = today();
@@ -32382,7 +32387,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v57.0',
+    app_version: 'v58.0',
     tables: {}
   };
 
