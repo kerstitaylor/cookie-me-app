@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v59.1</title>
+<title>Cookie & Me — Kitchen Manager v59.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -10861,7 +10861,10 @@ async function saveBake() {
       const _cIng = ings.find(function(x){ return x.id === _cId; });
       if (!_cIng) continue;
       const _cFields = { last_used_in_batch: num };
-      if (!_cIng.lifecycle_status || _cIng.lifecycle_status === 'inventory') _cFields.lifecycle_status = 'opened';
+      if (!_cIng.lifecycle_status || _cIng.lifecycle_status === 'inventory') {
+        _cFields.lifecycle_status = 'opened';
+        _cFields.opened_date = date;
+      }
       await updateIng(_cId, _cFields);
     }
     // Sync linked_batch_ids on each order this batch was baked for
@@ -32532,7 +32535,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v59.1',
+    app_version: 'v59.2',
     tables: {}
   };
 
