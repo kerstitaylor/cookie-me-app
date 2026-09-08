@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v59.2</title>
+<title>Cookie & Me — Kitchen Manager v59.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -30105,10 +30105,10 @@ function addPendingBoxAlloc(engId) {
       var currentEngAllocIds = allocs
         .filter(function(a){ return a.collection_instance_id === instId && a.recipient === (campEngagements.find(function(e){ return String(e.id)===engIdStr; })||{}).name; })
         .map(function(a){ return a.id; });
-      var usedElsewhere = allocs.reduce(function(s, a) {
-        if (currentEngAllocIds.indexOf(a.id) > -1) return s; // exclude this eng's existing allocs
-        return a.batch_num === bNum ? s + (a.qty || 0) : s;
-      }, 0);
+      var usedElsewhere = sumConsumedQty(allocs.filter(function(a) {
+        if (currentEngAllocIds.indexOf(a.id) > -1) return false; // exclude this eng's existing allocs
+        return a.batch_num === bNum;
+      }));
       var cookiesNeeded = batchCookieNeeds[bNum];
       if (usedElsewhere + cookiesNeeded > b.yield) {
         alert('Cannot allocate: ' + bNum + ' has ' + b.yield + ' cookies, ' + usedElsewhere + ' are already allocated to others. This allocation needs ' + cookiesNeeded + ' from this batch but only ' + (b.yield - usedElsewhere) + ' remain.');
@@ -30204,10 +30204,10 @@ async function saveBoxAllocations(engId) {
     if (!chkBatch || !chkBatch.yield) continue;
     // Sum allocs for this batch excluding the records we just deleted (this engagement's old allocs)
     var deletedIds = toDelete.map(function(a){ return a.id; });
-    var usedByOthers = allocs.reduce(function(s, a) {
-      if (deletedIds.indexOf(a.id) > -1) return s; // already deleted above
-      return a.batch_num === bKey ? s + (a.qty || 0) : s;
-    }, 0);
+    var usedByOthers = sumConsumedQty(allocs.filter(function(a) {
+      if (deletedIds.indexOf(a.id) > -1) return false; // already deleted above
+      return a.batch_num === bKey;
+    }));
     var needed = batchCookieTotals[bKey];
     if (usedByOthers + needed > chkBatch.yield) {
       alert('Cannot save: ' + bKey + ' has ' + chkBatch.yield + ' cookies, ' + usedByOthers + ' are already allocated to others. This engagement needs ' + needed + ' from this batch but only ' + (chkBatch.yield - usedByOthers) + ' remain. Remove some allocations and try again.');
@@ -32535,7 +32535,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v59.2',
+    app_version: 'v59.3',
     tables: {}
   };
 
