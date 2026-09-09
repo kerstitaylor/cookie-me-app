@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v59.3</title>
+<title>Cookie & Me — Kitchen Manager v59.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -29491,6 +29491,56 @@ async function saveColInstance() {
     }
   }
 
+  // Rule 6: an icing entry's total commitment across ALL collection instances (this one
+  // included) cannot exceed what was actually iced. Rule 3 above only checks this instance in
+  // isolation, so two separate instances can each pass individually while jointly over-claiming
+  // the same entry — this is how Father's Day batch 047 ended up promising 20 Hearts-and-Circles
+  // cookies against an 18-cookie icing session (two single-batch instances both linked to it).
+  function _colFindEntryById(eid) {
+    var found = null;
+    batches.forEach(function(b){ (b.icingEntries||[]).forEach(function(e){ if (String(e.id)===String(eid)) found = { entry: e, batchNum: b.num }; }); });
+    return found;
+  }
+  function _colSlotEntryDemand(ids, assignedQty) {
+    // Splits a slot's assigned qty across its checked entries proportional to each entry's own
+    // qty, so a slot pooling two icing sessions doesn't get billed in full against each of them.
+    var demand = {};
+    var combinedQty = ids.reduce(function(s, id){ var f = _colFindEntryById(id); return s + (f ? (f.entry.qty||0) : 0); }, 0) || 1;
+    ids.forEach(function(id) {
+      var f = _colFindEntryById(id);
+      var entryQty = f ? (f.entry.qty||0) : 0;
+      demand[id] = assignedQty * (entryQty / combinedQty);
+    });
+    return demand;
+  }
+  var _colEditingInstId = document.getElementById('col-if-id').value;
+  var entryDemand = {};
+  assignments.forEach(function(sa) {
+    var sl = (t.slots || []).find(function(x){ return x.slotId === sa.slotId; });
+    if (!sl || sl.random || !sa.assignedQty || !sa.icingEntryIds || !sa.icingEntryIds.length) return;
+    var demand = _colSlotEntryDemand(sa.icingEntryIds, sa.assignedQty);
+    Object.keys(demand).forEach(function(id) { entryDemand[id] = (entryDemand[id] || 0) + demand[id]; });
+  });
+  Object.keys(entryDemand).forEach(function(eid) {
+    var f = _colFindEntryById(eid);
+    if (!f) return;
+    var claimedElsewhere = 0;
+    (collectionInstances || []).forEach(function(inst) {
+      if (_colEditingInstId && String(inst.id) === String(_colEditingInstId)) return; // being replaced by this save
+      (inst.slot_assignments || []).forEach(function(a) {
+        var ids = a.icingEntryIds || [a.icingEntryId].filter(Boolean);
+        if (!a.assignedQty || ids.indexOf(eid) === -1) return;
+        claimedElsewhere += (_colSlotEntryDemand(ids, a.assignedQty))[eid] || 0;
+      });
+    });
+    var thisDemand = entryDemand[eid];
+    var total = claimedElsewhere + thisDemand;
+    if (total > (f.entry.qty || 0) + 0.01) {
+      var design = f.entry.cookieDescription || f.entry.occasion || 'Unnamed entry';
+      validationErrors.push('"' + design + '" (batch ' + f.batchNum + ', ' + (f.entry.qty||0) + ' iced): other instances already claim ~' + Math.round(claimedElsewhere) + ', this one needs ~' + Math.round(thisDemand) + ' — that is ~' + Math.round(total) + ' total, more than was ever iced.');
+    }
+  });
+
   if (validationErrors.length) {
     showMsg('col-if-msg', '⚠️ Cannot save: ' + validationErrors.join(' | '), 'danger');
     return;
@@ -32535,7 +32585,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v59.3',
+    app_version: 'v59.4',
     tables: {}
   };
 
