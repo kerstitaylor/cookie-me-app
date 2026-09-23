@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v62.0</title>
+<title>Cookie & Me — Kitchen Manager v63.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -4110,19 +4110,14 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <!-- S4b: Production Costs -->
         <div class="card" style="margin-bottom:10px;">
           <div class="card-title">Section 4b — Production Costs</div>
-          <div class="r2">
-            <div class="field"><label>Packaging costs ($)</label><input type="number" id="orf-cost-pkg" min="0" step="0.01" placeholder="0.00" oninput="orfRecalcFinancials()"/></div>
-            <div class="field"><label>Ingredient costs ($)</label><input type="number" id="orf-cost-ing" min="0" step="0.01" placeholder="0.00" oninput="orfRecalcFinancials()"/></div>
-          </div>
-          <div class="r2">
-            <div class="field"><label>Printing costs ($)</label><input type="number" id="orf-cost-print" min="0" step="0.01" placeholder="0.00" oninput="orfRecalcFinancials()"/></div>
-            <div class="field"><label>Social media expenses ($) <span style="font-weight:400;font-size:11px;color:var(--text-muted)">ads, props, photos</span></label><input type="number" id="orf-cost-social" min="0" step="0.01" placeholder="0.00" oninput="orfRecalcFinancials()"/></div>
-          </div>
-          <div class="r2" style="margin-top:4px;">
-            <div class="field"><label>Extra cookies added to box ($) <span style="font-weight:400;font-size:11px;color:var(--text-muted)">cost of cookies beyond what was ordered</span></label><input type="number" id="orf-cost-extra-cookies" min="0" step="0.01" placeholder="0.00" oninput="orfRecalcFinancials()"/></div>
+          <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
+            <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;">Production cost</div>
+            <div id="orf-prod-cost" style="font-weight:700;font-size:18px;color:var(--navy);font-family:sans-serif;">$0.00</div>
+            <div id="orf-extra-cookies-line" style="display:none;font-size:12px;color:var(--warning);font-family:sans-serif;margin-top:4px;"></div>
+            <div id="orf-legacy-social" style="display:none;font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;"></div>
           </div>
           <div style="margin-top:8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-bottom:6px;">Other expenses</div>
+            <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-bottom:6px;">Additional costs <span style="font-weight:400;font-size:11px;color:var(--text-muted);text-transform:none;letter-spacing:normal;">— ingredients, packaging, printing, social media etc. beyond the standard rate</span></div>
             <div id="orf-exp-rows"></div>
             <button class="btn btn-sm" onclick="orfAddExpRow()" style="width:100%;margin-top:4px;">+ Add expense</button>
           </div>
@@ -11675,7 +11670,7 @@ var _orfExpIdx = 0;
 
 function orfAddExpRow(prefill) {
   var idx = _orfExpIdx++;
-  var types = cfg.campaignExpenseTypes || ['Transport','Courier','Printing','Packaging','Ingredients','Props','Stall fee','Other'];
+  var types = cfg.campaignExpenseTypes || ['Ingredients','Packaging','Printing','Social media','Props','Stall fee','Other'];
   var opts = types.map(function(t){ return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join('');
   var row = document.createElement('div');
   row.id = 'orf-exp-row-' + idx;
@@ -11734,6 +11729,50 @@ function orfCollectExpenses() {
   }).filter(Boolean);
 }
 
+// Cookies actually written in the order's variety rows right now (works for a
+// brand-new order too, before anything has been saved).
+function orfOrderedQty() {
+  var total = 0;
+  document.querySelectorAll('#orf-lines > div[id^="orf-line-"]').forEach(function(row) {
+    var id = row.id.replace('orf-line-','');
+    total += parseInt((document.getElementById('orf-qty-'+id)||{}).value) || 0;
+  });
+  return total;
+}
+
+// Cookies actually allocated to this order — same two sources the reconciliation
+// report and frOrderCookieCost use (a row in allocations, or a line inside the
+// order's own cookie_allocations). Only meaningful once the order exists.
+function orfAllocatedQty(orderId) {
+  if (!orderId) return 0;
+  var o = orders.find(function(x){ return String(x.id) === String(orderId); });
+  var fromCookieAllocs = o ? (o.cookie_allocations||[]).reduce(function(s,ca){ return s+(Number(ca.qty)||0); },0) : 0;
+  var fromAllocs = (allocs||[]).filter(function(a){ return ['sold','customer'].includes(a.type) && a.order_ids && a.order_ids.map(String).includes(String(orderId)); })
+    .reduce(function(s,a){ return s+(Number(a.qty)||0); },0);
+  return fromCookieAllocs + fromAllocs;
+}
+
+// Recomputes the bold "Production cost" figure and the "Extra cookies" line from
+// live form state — ordered qty (from the variety rows) × the standard cost per
+// cookie, plus whatever's actually allocated beyond that.
+function orfUpdateProdCost() {
+  var prodEl = document.getElementById('orf-prod-cost');
+  var extraEl = document.getElementById('orf-extra-cookies-line');
+  if (!prodEl) return 0;
+  var orderId = (document.getElementById('orf-order-id')||{}).value;
+  var ordered = orfOrderedQty();
+  var allocated = orfAllocatedQty(orderId);
+  var rate = currentCostPerCookie();
+  var prodCost = ordered * rate;
+  prodEl.textContent = '$' + prodCost.toFixed(2) + (ordered ? ' (' + ordered + ' × $' + rate.toFixed(2) + ')' : '');
+  var extra = Math.max(0, allocated - ordered);
+  if (extraEl) {
+    extraEl.style.display = extra > 0 ? 'block' : 'none';
+    extraEl.textContent = extra > 0 ? ('Extra cookies: ' + extra + ' × $' + rate.toFixed(2) + ' = $' + (extra*rate).toFixed(2) + ' (' + allocated + ' allocated vs ' + ordered + ' ordered)') : '';
+  }
+  return prodCost + extra*rate;
+}
+
 function orfRecalcFinancials() {
   var summary = document.getElementById('orf-financials-summary');
   var finRows = document.getElementById('orf-fin-rows');
@@ -11745,17 +11784,9 @@ function orfRecalcFinancials() {
 
   // Costs
   var costLines = [];
-  var pkg   = parseFloat((document.getElementById('orf-cost-pkg')||{}).value)||0;
-  var ing   = parseFloat((document.getElementById('orf-cost-ing')||{}).value)||0;
-  var print = parseFloat((document.getElementById('orf-cost-print')||{}).value)||0;
-  var soc   = parseFloat((document.getElementById('orf-cost-social')||{}).value)||0;
-  var extraCookies = parseFloat((document.getElementById('orf-cost-extra-cookies')||{}).value)||0;
+  var prodCost = orfUpdateProdCost();
   var courier = _orfDeliveryRows.reduce(function(s,r){ return r.type==='Courier'?s+(parseFloat(r.courier_actual)||0):s; },0);
-  if (pkg)    costLines.push({ label:'Packaging',     amount: pkg });
-  if (ing)    costLines.push({ label:'Ingredients',   amount: ing });
-  if (print)  costLines.push({ label:'Printing',      amount: print });
-  if (soc)    costLines.push({ label:'Social media',  amount: soc });
-  if (extraCookies) costLines.push({ label:'Extra cookies', amount: extraCookies });
+  if (prodCost) costLines.push({ label:'Production cost (incl. extra cookies)', amount: prodCost });
   if (courier) costLines.push({ label:'Delivery costs', amount: courier });
   orfCollectExpenses().forEach(function(e){ costLines.push({ label: e.type, amount: e.amount }); });
 
@@ -22949,7 +22980,7 @@ function renderOrdersList() {
 
       ${(() => {
         const revenue = (o.payments||[]).filter(p=>!p._meta).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
-        const costs = (parseFloat(o.cost_packaging)||0)+(parseFloat(o.cost_ingredients)||0)+(parseFloat(o.cost_printing)||0)+(parseFloat(o.cost_social)||0)+(parseFloat(o.cost_extra_cookies)||0)+((o.other_expenses||[]).reduce((s,e)=>s+(parseFloat(e.amount)||0),0));
+        const costs = frOrderCookieCost(o)+(parseFloat(o.cost_social)||0)+((o.other_expenses||[]).reduce((s,e)=>s+(parseFloat(e.amount)||0),0));
         const courierCost = (o.deliveries||[]).reduce((s,d)=>d.type==='Courier'?s+(parseFloat(d.courier_actual)||0):s,0);
         const totalCosts = costs + courierCost;
         const profit = revenue - totalCosts;
@@ -23064,8 +23095,6 @@ function openNewOrderForm() {
   orfInitDeliveryRows(null);
   orfInitPaymentRows(null);
   orfRenderDistPills();
-  // Reset production costs
-  ['orf-cost-pkg','orf-cost-ing','orf-cost-print','orf-cost-social','orf-cost-extra-cookies'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   var expRows = document.getElementById('orf-exp-rows'); if (expRows) expRows.innerHTML = '';
   addOrfLine();
   _populateBatchSelect();
@@ -23138,20 +23167,21 @@ function openEditOrderForm(orderId) {
   document.querySelectorAll('#orf-dist-pills .pill').forEach(function(p){
     if (savedDist.includes(p.textContent)) p.classList.add('active');
   });
-  // Load production costs
-  document.getElementById('orf-cost-pkg').value = o.cost_packaging || '';
-  document.getElementById('orf-cost-ing').value = o.cost_ingredients || '';
-  document.getElementById('orf-cost-print').value = o.cost_printing || '';
-  document.getElementById('orf-cost-social').value = o.cost_social || '';
-  document.getElementById('orf-cost-extra-cookies').value = o.cost_extra_cookies || '';
+  // Legacy social media cost, if any — preserved but no longer editable here;
+  // new social costs go through Additional costs instead.
+  var legacySocEl = document.getElementById('orf-legacy-social');
+  if (legacySocEl) {
+    legacySocEl.style.display = o.cost_social ? 'block' : 'none';
+    legacySocEl.textContent = o.cost_social ? 'Legacy social media cost on file: $' + parseFloat(o.cost_social).toFixed(2) : '';
+  }
   var expRowsEl = document.getElementById('orf-exp-rows'); if (expRowsEl) expRowsEl.innerHTML = '';
   (o.other_expenses || []).forEach(function(e){ orfAddExpRow(e); });
-  orfRecalcFinancials();
   document.getElementById('orf-quick-note').value = '';
   document.getElementById('orf-lines').innerHTML = '';
   const lines = orderLines.filter(l => String(l.order_id) === String(orderId));
   if (lines.length) lines.forEach(l => addOrfLine(l));
   else addOrfLine();
+  orfRecalcFinancials();
   _renderOrfBatches(o);
   _populateBatchSelect();
   document.getElementById('orf-new-cust-panel').style.display = 'none';
@@ -23292,7 +23322,7 @@ function addOrfLine(prefill) {
     <button onclick="removeOrfLine(${id})" style="position:absolute;top:6px;right:6px;background:none;border:none;color:var(--danger);cursor:pointer;font-size:16px;line-height:1;">×</button>
     <div style="font-size:11px;font-weight:700;font-family:sans-serif;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em;">Variety ${id+1}</div>
     <div class="r2">
-      <div class="field"><label>Qty</label><input id="orf-qty-${id}" type="number" min="1" placeholder="e.g. 12" value="${prefill?.quantity||''}"/></div>
+      <div class="field"><label>Qty</label><input id="orf-qty-${id}" type="number" min="1" placeholder="e.g. 12" value="${prefill?.quantity||''}" oninput="orfUpdateProdCost()"/></div>
       <div class="field"><label>Shape</label>
         <select id="orf-shape-${id}" onchange="orfToggleShapeName(${id})">
           <option value="Round"${(prefill?.shape||'Round')==='Round'?' selected':''}>Round</option>
@@ -23325,6 +23355,7 @@ function addOrfLine(prefill) {
     <div class="field"><label>Embellishments</label><input id="orf-embel-${id}" placeholder="e.g. fondant flowers, metallic balls" value="${prefill?.embellishments||''}"/></div>
     <div class="field"><label>Notes</label><input id="orf-line-notes-${id}" placeholder="Any other details..." value="${prefill?.notes||''}"/></div>`;
   document.getElementById('orf-lines').appendChild(div);
+  orfUpdateProdCost();
 }
 
 // Options for the order form's Cookie flavour dropdown. The list lives in
@@ -23351,6 +23382,7 @@ function cookieFlavourOptions(selected) {
 function removeOrfLine(id) {
   const el = document.getElementById('orf-line-'+id);
   if (el) el.remove();
+  orfUpdateProdCost();
 }
 
 function orfToggleShapeName(id) {
@@ -23681,11 +23713,14 @@ async function saveOrderFull() {
     deliveries:           orfReadDeliveryRows().length ? orfReadDeliveryRows() : null,
     payments:             orfReadPaymentRows().length ? orfReadPaymentRows() : null,
     dist:                 orfGetDistSel(),
-    cost_packaging:       parseFloat(document.getElementById('orf-cost-pkg').value)||null,
-    cost_ingredients:     parseFloat(document.getElementById('orf-cost-ing').value)||null,
-    cost_printing:        parseFloat(document.getElementById('orf-cost-print').value)||null,
-    cost_social:          parseFloat(document.getElementById('orf-cost-social').value)||null,
-    cost_extra_cookies:   parseFloat(document.getElementById('orf-cost-extra-cookies').value)||null,
+    // Superseded by the auto-calculated production cost (qty x standard cost per
+    // cookie) — always cleared. cost_social is deliberately omitted here so any
+    // pre-existing value is left untouched; new social costs go through
+    // Additional costs (other_expenses) instead.
+    cost_packaging:       null,
+    cost_ingredients:     null,
+    cost_printing:        null,
+    cost_extra_cookies:   null,
     other_expenses:       orfCollectExpenses(),
     notes:                notesVal,
     comments:             _orfComments.length ? _orfComments : null
@@ -31393,7 +31428,7 @@ function openBakeForCampaign(campId) {
 let _campExpIdx = 0;
 function addCampExpRow(prefill) {
   const idx = _campExpIdx++;
-  const types = cfg.campaignExpenseTypes || ['Transport','Courier','Printing','Packaging','Ingredients','Props','Stall fee','Other'];
+  const types = cfg.campaignExpenseTypes || ['Ingredients','Packaging','Printing','Social media','Props','Stall fee','Other'];
   const opts = types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
   const row = document.createElement('div');
   row.id = 'camp-exp-row-'+idx;
@@ -32947,7 +32982,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v62.0',
+    app_version: 'v63.0',
     tables: {}
   };
 
