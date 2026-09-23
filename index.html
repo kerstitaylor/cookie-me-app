@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v61.0</title>
+<title>Cookie & Me — Kitchen Manager v61.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18981,7 +18981,7 @@ async function printReconciliationReport() {
   // Fetch all tables fresh in one pass
   var results = await Promise.all([
     db.from('batches').select('*').order('id'),
-    db.from('allocations').select('*').order('id'),
+    db.from('allocations').select('*').is('deleted_at', null).order('id'),
     db.from('orders').select('*').order('id'),
     db.from('ingredients').select('*').order('id'),
     db.from('campaigns').select('*').order('id'),
@@ -32916,7 +32916,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v61.0',
+    app_version: 'v61.1',
     tables: {}
   };
 
