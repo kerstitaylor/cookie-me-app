@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v63.0</title>
+<title>Cookie & Me — Kitchen Manager v64.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -31200,6 +31200,7 @@ function renderCampDetailEdit(el, c) {
     return s + received;
   },0);
   const rev = engRevenueEdit > 0 ? engRevenueEdit : (parseFloat(c.revenue_total)||0);
+  const campCookieCost = campaignCookieCost(c.id);
 
   // Migrate legacy transport/courier into other_expenses if needed
   let otherExps = c.other_expenses ? [...c.other_expenses] : [];
@@ -31210,7 +31211,7 @@ function renderCampDetailEdit(el, c) {
     otherExps.push({type:'Courier', amount:c.cost_courier, notes:''});
   }
 
-  const expTypesOpts = (cfg.campaignExpenseTypes||['Transport','Courier','Printing','Packaging','Ingredients','Props','Stall fee','Printing','Other'])
+  const expTypesOpts = (cfg.campaignExpenseTypes||['Ingredients','Packaging','Printing','Social media','Props','Stall fee','Other'])
     .map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
 
   const expRows = otherExps.map((e,i)=>`
@@ -31323,19 +31324,15 @@ function renderCampDetailEdit(el, c) {
     <!-- Financial edit -->
     <div class="card" style="margin-bottom:10px;">
       <div class="card-title">Financials</div>
-      <div class="r2">
-        <div class="field"><label>Total revenue ($) <span style="font-weight:400;font-size:11px;color:var(--text-muted)">auto-calculated from payments</span></label><input type="number" id="cf-rev" value="${rev||''}" min="0" step="0.01" readonly style="background:var(--gray-light);color:var(--text-muted);cursor:not-allowed;"/></div>
-        <div class="field"><label>Packaging costs ($)</label><input type="number" id="cf-cost-pkg" value="${c.cost_packaging||''}" min="0" step="0.01"/></div>
-      </div>
-      <div class="r2">
-        <div class="field"><label>Printing costs ($)</label><input type="number" id="cf-cost-print" value="${c.cost_printing||''}" min="0" step="0.01"/></div>
-        <div class="field"><label>Ingredient costs ($)</label><input type="number" id="cf-cost-ing" value="${c.cost_ingredients||''}" min="0" step="0.01"/></div>
-      </div>
-      <div class="field"><label>Social media expenses ($) <span style="font-weight:400;font-size:11px;color:var(--text-muted)">paid ads, props, photo costs</span></label>
-        <input type="number" id="cf-social-exp" value="${c.social_media_expenses||''}" min="0" step="0.01"/>
+      <div class="field"><label>Total revenue ($) <span style="font-weight:400;font-size:11px;color:var(--text-muted)">auto-calculated from payments</span></label><input type="number" id="cf-rev" value="${rev||''}" min="0" step="0.01" readonly style="background:var(--gray-light);color:var(--text-muted);cursor:not-allowed;"/></div>
+      <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;margin:10px 0;">
+        <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;">Production cost</div>
+        <div style="font-weight:700;font-size:18px;color:var(--navy);font-family:sans-serif;">$${campCookieCost.toFixed(2)}</div>
+        <div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;">Standard cost per cookie × every cookie allocated to this campaign so far (sold, gifted, samples, etc.) — updates automatically as allocations are made.</div>
+        ${c.social_media_expenses ? `<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:4px;">Legacy social media cost on file: $${parseFloat(c.social_media_expenses).toFixed(2)}</div>` : ''}
       </div>
       <div style="margin-top:8px;">
-        <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-bottom:6px;">Other expenses</div>
+        <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-bottom:6px;">Additional costs <span style="font-weight:400;font-size:11px;color:var(--text-muted);text-transform:none;letter-spacing:normal;">— ingredients, packaging, printing, social media etc. beyond the standard rate</span></div>
         <div id="camp-exp-rows">${expRows}</div>
         <button class="btn btn-sm" onclick="addCampExpRow()" style="width:100%;margin-top:4px;">+ Add expense</button>
       </div>
@@ -31536,12 +31533,14 @@ async function saveCampaignInline() {
       },0);
       return calc > 0 ? calc : (parseFloat(document.getElementById('cf-rev')?.value)||null);
     })(),
-    cost_packaging: parseFloat(document.getElementById('cf-cost-pkg')?.value)||null,
-    cost_printing: parseFloat(document.getElementById('cf-cost-print')?.value)||null,
-    cost_ingredients: parseFloat(document.getElementById('cf-cost-ing')?.value)||null,
+    // Superseded by the auto-calculated production cost (campaignCookieCost) — always
+    // cleared. social_media_expenses is deliberately omitted here so any pre-existing
+    // value is left untouched; new social costs go through Additional costs instead.
+    cost_packaging: null,
+    cost_printing: null,
+    cost_ingredients: null,
     cost_transport: null, // cleared — now in other_expenses
     cost_courier: null,   // cleared — now in other_expenses
-    social_media_expenses: parseFloat(document.getElementById('cf-social-exp')?.value)||null,
     other_expenses: collectCampExpenses(),
   };
   const result = await updateCampaign(activeCampaignId, fields);
@@ -32982,7 +32981,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v63.0',
+    app_version: 'v64.0',
     tables: {}
   };
 
@@ -36051,6 +36050,17 @@ function frOrderCookieCost(o) {
   const allocCtm = (allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.order_ids&&a.order_ids.map(String).includes(String(o.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
   const cookieAllocCtm = (o.cookie_allocations||[]).reduce((s,ca)=>s+(parseFloat(ca.cost_to_make)||0),0);
   return allocCtm + cookieAllocCtm;
+}
+
+// Total cost of every cookie allocated to a campaign so far — every allocation type
+// (sold, gifted, samples, etc.) except frozen/unfrozen, which are the freezer hold and
+// never a final destination. Unlike orders, campaign cookies live entirely in the
+// allocations table (no separate cookie_allocations-style gap), so this is the whole
+// picture on its own.
+function campaignCookieCost(campaignId) {
+  return (allocs||[]).filter(function(a){
+    return a.campaign_ids && a.campaign_ids.map(String).includes(String(campaignId)) && a.type !== 'frozen' && a.type !== 'unfrozen';
+  }).reduce(function(s,a){ return s + (parseFloat(a.cost_to_make)||0); }, 0);
 }
 
 // All production/delivery costs on a campaign
