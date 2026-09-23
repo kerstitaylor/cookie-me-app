@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v59.5</title>
+<title>Cookie & Me — Kitchen Manager v60.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2916,6 +2916,27 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </div>
         </div>
 
+        <!-- FROZEN REPORT -->
+        <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden">
+          <div style="background:var(--gray-light);padding:8px 12px;font-size:12px;font-weight:700;font-family:sans-serif;color:var(--navy)">❄️ Frozen Report</div>
+          <div style="padding:10px 12px;">
+            <div style="margin-bottom:8px;"><input id="frx-search" class="search-input" placeholder="Search — batch, order, campaign, notes..." style="margin-bottom:0;font-size:12px;"/></div>
+            <div class="r2" style="margin-bottom:6px;">
+              <div class="field" style="margin-bottom:0;"><label>From date</label><input id="frx-from" type="date"/></div>
+              <div class="field" style="margin-bottom:0;"><label>To date</label><input id="frx-to" type="date"/></div>
+            </div>
+            <div class="r2" style="margin-bottom:8px;">
+              <div class="field" style="margin-bottom:0;"><label>Batch</label><input id="frx-batch" type="text" placeholder="e.g. B-053"/></div>
+              <div class="field" style="margin-bottom:0;"><label>Order / customer</label><input id="frx-order" type="text" placeholder="Search order or customer..."/></div>
+            </div>
+            <div class="field" style="margin-bottom:8px;"><label>Campaign</label><select id="frx-campaign" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);"><option value="">All campaigns</option></select></div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-primary" onclick="exportFrozenFiltered()" style="flex:1;">⬇ Export CSV</button>
+              <button class="btn" onclick="openFrozenReport()" style="flex:1;">🔍 Open report</button>
+            </div>
+          </div>
+        </div>
+
         <!-- STOCK TAKE -->
         <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;">
           <div style="background:var(--gray-light);padding:8px 12px;font-size:12px;font-weight:700;font-family:sans-serif;color:var(--navy);">📋 Stock Take</div>
@@ -4718,6 +4739,23 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;" onclick="printRecordsDoc('allocs')">Allocations</button>
         <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;" onclick="printRecordsDoc('recipes')">Recipes</button>
         <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;" onclick="toggleIcingPrintFilters()">Icing Records <span id="icing-toggle-arrow">▼</span></button>
+        <button class="btn btn-primary btn-sm" style="padding:9px 6px;font-size:12px;grid-column:1/-1;" onclick="toggleFrozenPrintFilters()">❄️ Frozen Report <span id="frozen-toggle-arrow">▼</span></button>
+      </div>
+      <div id="frozen-print-filters" style="display:none;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;">
+        <div style="background:var(--gray-light);padding:8px 12px;font-size:12px;font-weight:700;font-family:sans-serif;color:var(--navy);">❄️ Frozen Report — filters</div>
+        <div style="padding:10px 12px;">
+          <div style="margin-bottom:8px;"><input id="frp-search" class="search-input" placeholder="Search — batch, order, campaign, notes..." style="margin-bottom:0;font-size:12px;"/></div>
+          <div class="r2" style="margin-bottom:6px;">
+            <div class="field" style="margin-bottom:0;"><label>From date</label><input id="frp-from" type="date"/></div>
+            <div class="field" style="margin-bottom:0;"><label>To date</label><input id="frp-to" type="date"/></div>
+          </div>
+          <div class="r2" style="margin-bottom:8px;">
+            <div class="field" style="margin-bottom:0;"><label>Batch</label><input id="frp-batch" type="text" placeholder="e.g. B-053"/></div>
+            <div class="field" style="margin-bottom:0;"><label>Order / customer</label><input id="frp-order" type="text" placeholder="Search order or customer..."/></div>
+          </div>
+          <div class="field" style="margin-bottom:8px;"><label>Campaign</label><select id="frp-campaign" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);"><option value="">All campaigns</option></select></div>
+          <button class="btn btn-primary" onclick="printFrozenFiltered()" style="width:100%;">🖨 Print Frozen Report</button>
+        </div>
       </div>
       <div id="icing-print-filters" style="display:none;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;">
         <div style="background:var(--gray-light);padding:8px 12px;font-size:12px;font-weight:700;font-family:sans-serif;color:var(--navy);">🍪 Icing Records — filters</div>
@@ -4862,6 +4900,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="btn" onclick="go('hist');setTimeout(()=>goHist('hist-allocs'),60)">Allocations</button>
         <button class="btn" onclick="go('hist');setTimeout(()=>goHist('hist-recipes'),60)">Recipes</button>
         <button class="btn" onclick="openIcingReport()">Icing Records</button>
+        <button class="btn" style="grid-column:1/-1;" onclick="openFrozenReport()">❄️ Frozen Report</button>
       </div>
     </div>
     <div class="card" style="margin-bottom:10px;">
@@ -4958,6 +4997,39 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 
     <!-- Report body -->
     <div id="ir-body"></div>
+  </div>
+
+  <!-- ═══ FROZEN REPORT SECTION ═══ -->
+  <div id="s-frozen-report" class="section" style="padding:12px 16px 0;">
+    <button class="btn btn-sm" style="margin-bottom:12px;font-size:12px;" onclick="_activeSubSection['records']='__hub__';go('records')">← Records</button>
+    <div style="font-size:17px;font-weight:700;color:var(--navy);margin-bottom:4px;">❄️ Frozen Report</div>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Every batch that has been through the freezer, when cookies came out, and for which order or campaign.</div>
+
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.07em;font-family:sans-serif;margin-bottom:8px;">Filters</div>
+      <div style="margin-bottom:8px;"><input id="frz-search" class="search-input" placeholder="Search — batch, order, campaign, notes..." oninput="renderFrozenReport()" style="margin-bottom:0;"/></div>
+      <div class="r2">
+        <div class="field"><label>From date</label><input id="frz-from" type="date" oninput="renderFrozenReport()"/></div>
+        <div class="field"><label>To date</label><input id="frz-to" type="date" oninput="renderFrozenReport()"/></div>
+      </div>
+      <div class="r2">
+        <div class="field"><label>Batch</label><input id="frz-batch" type="text" placeholder="e.g. B-053" oninput="renderFrozenReport()"/></div>
+        <div class="field"><label>Order / customer</label><input id="frz-order" type="text" placeholder="Search order or customer..." oninput="renderFrozenReport()"/></div>
+      </div>
+      <div class="field"><label>Campaign</label><select id="frz-campaign" onchange="renderFrozenReport()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);"><option value="">All campaigns</option></select></div>
+      <div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;">The Campaign filter only finds removals tagged with a campaign when they were taken out. Older removals only have a free-text note — use Search to find those.</div>
+      <button class="btn btn-sm" style="font-size:12px;" onclick="clearFrozenReportFilters()">Clear filters</button>
+    </div>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="btn btn-sm" onclick="printFrozenReport()" style="font-size:12px;">🖨 Print</button>
+      <button class="btn btn-sm" onclick="exportFrozenReportCSV()" style="font-size:12px;">📤 CSV</button>
+    </div>
+
+    <!-- Report body -->
+    <div id="frz-body"></div>
   </div>
 
   <!-- ═══ CORPORATE GIFTING REGISTER SECTION ═══ -->
@@ -5466,7 +5538,7 @@ function findBatchByNum(num) {
 function batchDropdownHtml(idx, context, existingValue) {
   // Split parents must never appear in dropdowns — only their children do
   const activeBatches = batches.filter(b => !b.isSplitParent);
-  const recent = [...activeBatches].sort((a,b) => (b.date||'').localeCompare(a.date||'')).slice(0,5);
+  const recent = [...activeBatches].sort((a,b) => (b.date||'').localeCompare(a.date||'')).slice(0,10);
   const existingNorm = normBatchNum(existingValue||'');
   // Check if existing value matches one of the recent batches
   const existingInRecent = existingValue && recent.some(b => normBatchNum(b.num) === existingNorm);
@@ -7404,10 +7476,30 @@ function openUnfreezeForm(lotId) {
       + '<input id="fu-date" type="date" value="' + today() + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;font-family:sans-serif;box-sizing:border-box;"/></div>'
     + '<div class="u-modal-field"><label>Note <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label>'
       + '<textarea id="fu-notes" placeholder="e.g. baking off for the Cuthbert Stewart order" style="width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:sans-serif;box-sizing:border-box;"></textarea></div>'
-    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">They go straight back into batch <strong>' + esc(lot.batch_num) + '</strong>’s unallocated cookies, ready to ice and allocate like any other. The time they spent frozen stays on the record.</div>';
+    + '<div style="margin-bottom:10px;">'
+      + '<button type="button" id="fu-links-toggle" onclick="toggleFuLinks()" style="font-size:12px;background:none;border:1px dashed var(--border);border-radius:var(--radius);padding:4px 10px;color:var(--text-muted);cursor:pointer;font-family:sans-serif;width:100%;text-align:left;">+ Link to campaign / order (optional)</button>'
+      + '<div id="fu-links-panel" style="display:none;margin-top:8px;">'
+        + '<div class="u-modal-field" style="margin-bottom:8px;"><label style="font-size:12px;">Campaigns</label><div id="fu-camp-picker"></div></div>'
+        + '<div class="u-modal-field" style="margin-bottom:0;"><label style="font-size:12px;">Orders</label><div id="fu-order-picker"></div></div>'
+      + '</div>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">They go straight back into batch <strong>' + esc(lot.batch_num) + '</strong>’s unallocated cookies, ready to ice and allocate like any other. The time they spent frozen stays on the record. Linking a campaign or order here is just for traceability in the Frozen Report — it does not allocate the cookies.</div>';
   openUModal('Take out of the freezer', body,
     '<button class="btn btn-primary" style="flex:1" onclick="doUnfreeze(' + lot.id + ')">Take out</button>'
     + '<button class="btn" style="flex:1" onclick="closeUModal()">Cancel</button>');
+}
+
+function toggleFuLinks() {
+  var panel = document.getElementById('fu-links-panel');
+  var btn = document.getElementById('fu-links-toggle');
+  if (!panel) return;
+  var open = panel.style.display === 'none';
+  panel.style.display = open ? 'block' : 'none';
+  if (btn) btn.textContent = open ? '− Hide campaign / order links' : '+ Link to campaign / order (optional)';
+  if (open) {
+    renderCampMultiPicker('fu-camp-picker', []);
+    renderOrderMultiPicker('fu-order-picker', []);
+  }
 }
 
 async function doUnfreeze(lotId) {
@@ -7425,6 +7517,8 @@ async function doUnfreeze(lotId) {
     return;
   }
   const days = frozenDaysBetween(lot.date_frozen, date);
+  const campIds = getCampMultiPickerIds('fu-camp-picker');
+  const orderIds = getOrderMultiPickerIds('fu-order-picker');
   setSyncStatus('syncing', 'Saving...');
   const { data, error } = await db.from('allocations').insert([{
     batch_num: lot.batch_num,
@@ -7433,6 +7527,8 @@ async function doUnfreeze(lotId) {
     recipient: { type: 'unfrozen', name: 'Back from freezer' },
     date: date,
     notes: notes,
+    campaign_ids: campIds.length ? campIds : null,
+    order_ids: orderIds.length ? orderIds : null,
     frozen_source_id: lot.id
   }]).select();
   if (error || !data) {
@@ -8398,6 +8494,7 @@ function go(t) {
         'fin-report':    ()=>{ document.getElementById('s-fin-report').classList.add('active'); renderFinReport(); },
         'customer-report': ()=>{ document.getElementById('s-customer-report').classList.add('active'); renderCustomerReport(); },
         'icing-report':  ()=>{ document.getElementById('s-icing-report').classList.add('active'); renderIcingReport(); },
+        'frozen-report': ()=>{ document.getElementById('s-frozen-report').classList.add('active'); renderFrozenReport(); },
         'stocktake-report': ()=>{ document.getElementById('s-stocktake-report').classList.add('active'); renderStocktakeReport(); },
         'trusted-suppliers': ()=>{ document.getElementById('s-trusted-suppliers').classList.add('active'); renderTrustedSuppliers(); },
         'corp-gifting':  ()=>{ document.getElementById('s-corp-gifting').classList.add('active'); renderCorpGiftingRec(); },
@@ -10115,6 +10212,8 @@ async function delIngConfirm(id) { if(!confirm('Remove this ingredient?'))return
 // Edit-mode state for the bake form (null = adding a new batch)
 let bkEditId = null;
 let bkEditReturnTo = null;
+// Set true only while re-running saveBake() after the user dismissed the duplicate-batch warning
+let _bkDupeOverride = false;
 
 function setBakeD() {
   const t = today();
@@ -10837,6 +10936,32 @@ async function saveBake() {
     const { data: dupRows } = await db.from('batches').select('id').eq('num', num.trim());
     if ((dupRows && dupRows.length > 0) || batches.find(function(b){ return normBatchNum(b.num) === numNorm; })) {
       alert('Batch number ' + num + ' already exists. Please use a different number.');
+      return;
+    }
+  }
+
+  // Duplicate order/campaign guard — warns (does not block) when a new batch shares an
+  // order or campaign recipient with an existing batch on the same date. That combination
+  // was the actual signature of the B-053/B-054 incident (2026-09-13): the same real bake
+  // got saved twice under two different batch numbers because the second save went through
+  // the ordinary Add form instead of the ✏️ Edit action, so this can't catch every duplicate —
+  // only the case where the same order/campaign is being fulfilled twice on the same day.
+  if (!bkEditId && !_bkDupeOverride) {
+    const campIdsAll = [campIdVal].concat(bkExtraCampIds).filter(Boolean);
+    const dupeBatch = batches.find(function(b) {
+      if (b.isSplitParent || b.date !== date) return false;
+      const bOrderIds = b.order_ids || [];
+      const bCampIds = [].concat(b.campaign_id ? [b.campaign_id] : [], b.extra_campaign_ids || []);
+      return bkOrderIds.some(function(id){ return bOrderIds.includes(id); })
+        || campIdsAll.some(function(id){ return bCampIds.includes(id); });
+    });
+    if (dupeBatch) {
+      showConfirm(
+        'Possible duplicate batch',
+        'Batch ' + dupeBatch.num + ' on ' + date + ' already covers the same ' + (campIdsAll.length ? 'campaign' : 'order') + '. Save another batch anyway?',
+        'Save anyway',
+        function() { _bkDupeOverride = true; saveBake().finally(function(){ _bkDupeOverride = false; }); }
+      );
       return;
     }
   }
@@ -32607,7 +32732,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v59.5',
+    app_version: 'v60.0',
     tables: {}
   };
 
@@ -34673,6 +34798,249 @@ function exportIcingFiltered() {
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'icing-records-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click();
+}
+
+// ═══════════════════════════════════════════════════════
+// FROZEN REPORT — every batch that has been through the freezer,
+// when cookies came back out (or were written off), and for which
+// order/campaign. Read-only history built on top of frozenLots();
+// it never changes batch accounting, it only reports on it.
+// ═══════════════════════════════════════════════════════
+
+function _frzPopulateCampaignSelect(id) {
+  var sel = document.getElementById(id);
+  if (!sel) return;
+  var opts = '<option value="">All campaigns</option>';
+  (campaigns||[]).forEach(function(c){ opts += '<option value="' + c.id + '">' + esc(c.name||'') + '</option>'; });
+  sel.innerHTML = opts;
+}
+
+function frzOrderLabel(o) {
+  var cust = (cfg.customers||[]).find(function(c){ return String(c.id) === String(o.customer_id); });
+  var name = cust ? custDisplayName(cust) : (o.occasion || '');
+  return (o.order_number || ('ORD-' + o.id)) + (name ? ' · ' + name : '');
+}
+
+// A removal/write-off row only carries order_ids/campaign_ids if it was tagged when it
+// was taken out (see toggleFuLinks/doUnfreeze) — older rows have none, just free-text notes.
+function frzChildOrderLabels(c) {
+  return (c.order_ids||[]).map(function(oid){
+    var o = (orders||[]).find(function(x){ return String(x.id)===String(oid); });
+    return o ? frzOrderLabel(o) : ('ORD-'+oid);
+  });
+}
+function frzChildCampaignLabels(c) {
+  return (c.campaign_ids||[]).map(function(cid){
+    var camp = (campaigns||[]).find(function(x){ return String(x.id)===String(cid); });
+    return camp ? camp.name : ('Campaign '+cid);
+  });
+}
+
+function frzGetFiltersFromIds(prefix) {
+  return {
+    search: ((document.getElementById(prefix+'-search')||{}).value||'').trim().toLowerCase(),
+    from:   (document.getElementById(prefix+'-from')||{}).value||'',
+    to:     (document.getElementById(prefix+'-to')||{}).value||'',
+    batch:  ((document.getElementById(prefix+'-batch')||{}).value||'').trim().toLowerCase(),
+    order:  ((document.getElementById(prefix+'-order')||{}).value||'').trim().toLowerCase(),
+    camp:   (document.getElementById(prefix+'-campaign')||{}).value||''
+  };
+}
+
+function frzLotMatchesFilters(lot, f) {
+  if (f.batch && !(lot.batch_num||'').toLowerCase().includes(f.batch)) return false;
+
+  if (f.from || f.to) {
+    var inRange = function(d){ return (!f.from || (d||'') >= f.from) && (!f.to || (d||'') <= f.to); };
+    var anyDate = inRange(lot.date_frozen) || (lot.children||[]).some(function(c){ return inRange(c.date||''); });
+    if (!anyDate) return false;
+  }
+
+  if (f.order) {
+    var orderMatch = (lot.children||[]).some(function(c){
+      return frzChildOrderLabels(c).some(function(lbl){ return lbl.toLowerCase().includes(f.order); })
+        || (c.notes||'').toLowerCase().includes(f.order);
+    });
+    if (!orderMatch) return false;
+  }
+
+  if (f.camp) {
+    // Structured match only — free-text notes on older removals can't be matched reliably
+    // against a campaign name (e.g. "Father's Day" vs "Father's Day 2026"). Use Search for those.
+    var campMatch = (lot.children||[]).some(function(c){
+      return (c.campaign_ids||[]).some(function(cid){ return String(cid)===String(f.camp); });
+    });
+    if (!campMatch) return false;
+  }
+
+  if (f.search) {
+    var b = findBatchByNum(lot.batch_num);
+    var hayParts = [lot.batch_num||'', b?(b.recipe||''):'', lot.notes||'', lot.date_frozen||'', lot.frozen_use_by||''];
+    (lot.children||[]).forEach(function(c){
+      hayParts.push(c.date||'', c.notes||'');
+      hayParts = hayParts.concat(frzChildOrderLabels(c), frzChildCampaignLabels(c));
+    });
+    if (!hayParts.join(' ').toLowerCase().includes(f.search)) return false;
+  }
+
+  return true;
+}
+
+function frzGetFilteredWith(prefix) {
+  var f = frzGetFiltersFromIds(prefix);
+  return frozenLots().filter(function(lot){ return frzLotMatchesFilters(lot, f); })
+    .sort(function(a,b){ return (b.date_frozen||'').localeCompare(a.date_frozen||'') || String(a.batch_num||'').localeCompare(String(b.batch_num||'')); });
+}
+
+function frzLotCardHtml(lot) {
+  var b = findBatchByNum(lot.batch_num);
+  var exp = frozenExpiryStyle(lot.frozen_use_by);
+  var children = (lot.children||[]).slice().sort(function(a,c){ return String(a.date||'').localeCompare(String(c.date||'')); });
+  var childRows = children.length ? children.map(function(c) {
+    var isDisposal = c.type === 'disposal';
+    var links = frzChildOrderLabels(c).concat(frzChildCampaignLabels(c));
+    var linkHtml = links.length
+      ? '<span style="color:var(--navy);">\u{1F464} ' + esc(links.join(', ')) + '</span>'
+      : (c.notes ? '<span style="color:var(--text-muted);">' + esc(c.notes) + '</span>' : '<span style="color:var(--text-muted);font-style:italic;">No order/campaign recorded</span>');
+    return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px;font-family:sans-serif;flex-wrap:wrap;border-bottom:1px dashed var(--gray-light);">'
+      + '<span style="color:var(--text-muted);white-space:nowrap;">' + (c.date ? fmtDate(c.date) : '—') + '</span>'
+      + '<span class="tag ' + (isDisposal ? 'tag-red' : 'tag-green') + '" style="font-size:9px;">' + (isDisposal ? 'Written off' : 'Taken out') + '</span>'
+      + '<span style="font-weight:700;">' + (c.qty||0) + '</span>'
+      + '<span style="flex:1;min-width:140px;">' + linkHtml + '</span>'
+      + (links.length && c.notes ? '<span style="color:var(--text-muted);font-size:11px;">' + esc(c.notes) + '</span>' : '')
+      + '</div>';
+  }).join('') : '<div style="padding:4px 0;font-size:12px;color:var(--text-muted);font-family:sans-serif;">Still fully in the freezer — nothing taken out yet.</div>';
+
+  return '<div class="card" style="margin-bottom:10px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;margin-bottom:6px;">'
+    + '<div>'
+    + '<div style="font-weight:700;color:var(--navy);font-size:14px;">' + esc(lot.batch_num) + (b && b.recipe ? ' · ' + esc(b.recipe) : '') + '</div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">Frozen ' + fmtDate(lot.date_frozen) + ' · ' + lot.qty_frozen + ' cookies</div>'
+    + '</div>'
+    + '<div style="text-align:right;">'
+    + '<div style="font-weight:700;font-size:13px;color:' + (lot.qty_held > 0 ? 'var(--navy)' : 'var(--text-muted)') + ';">' + (lot.qty_held > 0 ? lot.qty_held + ' still in freezer' : 'Emptied') + '</div>'
+    + (lot.frozen_use_by ? '<div style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;display:inline-block;margin-top:2px;' + exp.style + '">Use by ' + fmtDate(lot.frozen_use_by) + ' · ' + exp.label + '</div>' : '')
+    + '</div></div>'
+    + childRows
+    + '</div>';
+}
+
+function openFrozenReport() {
+  _frzPopulateCampaignSelect('frz-campaign');
+  _activeSubSection['records'] = 'frozen-report';
+  go('records');
+  renderFrozenReport();
+}
+
+function clearFrozenReportFilters() {
+  ['frz-search','frz-from','frz-to','frz-batch','frz-order'].forEach(function(id){
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
+  var sel = document.getElementById('frz-campaign'); if (sel) sel.value = '';
+  renderFrozenReport();
+}
+
+function renderFrozenReport() {
+  var el = document.getElementById('frz-body'); if (!el) return;
+  var lots = frzGetFilteredWith('frz');
+  if (!lots.length) { el.innerHTML = '<div class="empty">No frozen batches match the current filters.</div>'; return; }
+  var totalFrozen = lots.reduce(function(s,l){ return s + l.qty_frozen; }, 0);
+  var totalReturned = lots.reduce(function(s,l){ return s + l.qty_returned; }, 0);
+  var totalWrittenOff = lots.reduce(function(s,l){ return s + l.qty_written_off; }, 0);
+  var totalHeld = lots.reduce(function(s,l){ return s + Math.max(0, l.qty_held); }, 0);
+  var summary = '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">'
+    + lots.length + ' lot' + (lots.length===1?'':'s') + ' · ' + totalFrozen + ' frozen · ' + totalReturned + ' taken out · '
+    + totalWrittenOff + ' written off · ' + totalHeld + ' still held</div>';
+  el.innerHTML = summary + lots.map(frzLotCardHtml).join('');
+}
+
+function toggleFrozenPrintFilters() {
+  var panel = document.getElementById('frozen-print-filters');
+  if (!panel) return;
+  var open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  var arrow = document.getElementById('frozen-toggle-arrow');
+  if (arrow) arrow.textContent = open ? '▼' : '▲';
+  if (!open) _frzPopulateCampaignSelect('frp-campaign');
+}
+
+function _frzPrintHtml(lots) {
+  function eventLine(c) {
+    var isDisposal = c.type === 'disposal';
+    var links = frzChildOrderLabels(c).concat(frzChildCampaignLabels(c));
+    return '<div class="entry">'
+      + '<span class="tag">' + esc(c.date ? fmtDate(c.date) : '—') + '</span>'
+      + '<span class="tag">' + (isDisposal ? 'Written off' : 'Taken out') + '</span>'
+      + '<span class="tag">' + (c.qty||0) + ' cookies</span>'
+      + (links.length ? '<br>\u{1F464} ' + esc(links.join(', ')) : '')
+      + (c.notes ? '<br><span class="dec">' + esc(c.notes) + '</span>' : '')
+      + '</div>';
+  }
+  function lotBlock(lot) {
+    var b = findBatchByNum(lot.batch_num);
+    var children = (lot.children||[]).slice().sort(function(a,c){ return String(a.date||'').localeCompare(String(c.date||'')); });
+    return '<h3>' + esc(lot.batch_num) + (b && b.recipe ? ' — ' + esc(b.recipe) : '') + '</h3>'
+      + '<div style="font-size:11px;color:#666;margin-bottom:4px;">Frozen ' + fmtDate(lot.date_frozen) + ' · ' + lot.qty_frozen + ' cookies'
+      + (lot.frozen_use_by ? ' · use by ' + fmtDate(lot.frozen_use_by) : '') + ' · ' + (lot.qty_held > 0 ? lot.qty_held + ' still held' : 'emptied') + '</div>'
+      + (children.length ? children.map(eventLine).join('') : '<div class="entry"><em>Nothing taken out yet.</em></div>');
+  }
+  var L = ['<html><head><title>Frozen Report</title><style>',
+    'body{font-family:sans-serif;font-size:12px;padding:20px;color:#222;}h1{font-size:16px;}',
+    'h3{font-size:12px;margin:12px 0 2px;background:#122640;color:#fff;padding:5px 10px;border-radius:4px;}',
+    '.entry{padding:5px 0 5px 4px;border-bottom:1px solid #eee;}',
+    '.tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;background:#e8edf5;margin-right:3px;}',
+    '.dec{color:#666;font-size:11px;}',
+    '@media print{h3{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}',
+    '</style></head><body>',
+    '<h1>Cookie &amp; Me — Frozen Report</h1>',
+    '<p style="color:#666;font-size:11px;">Printed: ' + new Date().toLocaleDateString('en-NZ') + '</p>'];
+  if (!lots.length) L.push('<p>No frozen batches match the current filters.</p>');
+  lots.forEach(function(lot){ L.push(lotBlock(lot)); });
+  L.push('</body></html>');
+  return L.join('');
+}
+
+function printFrozenReport() {
+  var w = window.open('','_blank'); w.document.write(_frzPrintHtml(frzGetFilteredWith('frz'))); w.document.close(); w.print();
+}
+function printFrozenFiltered() {
+  var w = window.open('','_blank'); w.document.write(_frzPrintHtml(frzGetFilteredWith('frp'))); w.document.close(); w.print();
+}
+
+function _frzCsvRows(lots) {
+  var rows = [['Batch','Recipe','Frozen Date','Qty Frozen','Event Date','Event Type','Event Qty','Order(s)','Campaign(s)','Notes','Use By','Still Held']];
+  lots.forEach(function(lot) {
+    var b = findBatchByNum(lot.batch_num);
+    var recipe = b ? (b.recipe||'') : '';
+    var children = (lot.children||[]).slice().sort(function(a,c){ return String(a.date||'').localeCompare(String(c.date||'')); });
+    if (!children.length) {
+      rows.push([lot.batch_num, recipe, lot.date_frozen, lot.qty_frozen, '', 'Still in freezer', '', '', '', lot.notes||'', lot.frozen_use_by||'', lot.qty_held]);
+    } else {
+      children.forEach(function(c) {
+        rows.push([lot.batch_num, recipe, lot.date_frozen, lot.qty_frozen, c.date||'', c.type==='disposal'?'Written off':'Taken out',
+          c.qty||'', frzChildOrderLabels(c).join('; '), frzChildCampaignLabels(c).join('; '), c.notes||'', lot.frozen_use_by||'', lot.qty_held]);
+      });
+    }
+  });
+  return rows;
+}
+
+function _frzDownloadCsv(lots) {
+  var rows = _frzCsvRows(lots);
+  var csv = rows.map(function(r){ return r.map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+  var a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'frozen-report-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+function exportFrozenReportCSV() {
+  _frzDownloadCsv(frzGetFilteredWith('frz'));
+}
+function exportFrozenFiltered() {
+  var sel = document.getElementById('frx-campaign');
+  if (sel && sel.options.length <= 1) _frzPopulateCampaignSelect('frx-campaign');
+  _frzDownloadCsv(frzGetFilteredWith('frx'));
 }
 
 
