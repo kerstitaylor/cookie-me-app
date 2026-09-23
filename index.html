@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v61.1</title>
+<title>Cookie & Me — Kitchen Manager v61.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -23451,7 +23451,7 @@ async function orfConfirmAlloc(orderId, icingEntryId) {
   var o = orders.find(function(x){ return String(x.id) === String(orderId); });
   if (!o) return;
   var allocs = (o.cookie_allocations || []).filter(function(c){ return String(c.icing_entry_id) !== String(icingEntryId); });
-  allocs.push({ icing_entry_id: icingEntryId, qty: qty, confirmed_at: new Date().toISOString() });
+  allocs.push({ icing_entry_id: icingEntryId, qty: qty, confirmed_at: new Date().toISOString(), cost_to_make: qty * currentCostPerCookie() });
 
   var ok = await updateOrder(orderId, { cookie_allocations: allocs });
   if (ok === false) { showSaveError('Cookie allocation not saved — check your connection.'); return; }
@@ -32916,7 +32916,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v61.1',
+    app_version: 'v61.2',
     tables: {}
   };
 
@@ -35976,6 +35976,17 @@ function frOrderCosts(o) {
   return lines;
 }
 
+// Cookie production cost for an order — cookies can be recorded in two places (see
+// CLAUDE.md "One checkout, one engagement" / batch reconciliation notes): a row in the
+// allocations table tagged with this order's id, or a line inside the order's own
+// cookie_allocations array (confirmed icing-entry quantities). Both carry their own
+// cost_to_make, so the order's real cookie cost is the sum of both sources.
+function frOrderCookieCost(o) {
+  const allocCtm = (allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.order_ids&&a.order_ids.map(String).includes(String(o.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
+  const cookieAllocCtm = (o.cookie_allocations||[]).reduce((s,ca)=>s+(parseFloat(ca.cost_to_make)||0),0);
+  return allocCtm + cookieAllocCtm;
+}
+
 // All production/delivery costs on a campaign
 function frCampCosts(c, engs) {
   const lines = [];
@@ -35990,14 +36001,8 @@ function frCampCosts(c, engs) {
   return lines;
 }
 
-// Cost per gifted/disposed campaign box based on cookies_per_box
-// Temporary flat rates until per-template cost recording is built
-const FR_BOX_COST = { 6: 4.44, 12: 8.88 };
 // Non-revenue order types — module scope so both renderFinReport and printFinReport can access
 const NON_REVENUE_ORDER_TYPES = ['gift','samples','testing','giveaway','donation'];
-function frBoxCost(cpb) {
-  return FR_BOX_COST[cpb] || 0;
-}
 
 // Resolve cookies_per_box for an engagement via instance → template chain
 function frEngCpb(e) {
@@ -36007,6 +36012,21 @@ function frEngCpb(e) {
   if (!inst) return null;
   const tmpl = (collectionTemplates||[]).find(function(t){ return t.id===inst.template_id; });
   return tmpl ? (tmpl.cookies_per_box||null) : null;
+}
+
+// Real cost of a gifted/disposed campaign box — summed straight from the allocation
+// row(s) that box was built from (matched by collection_instance_id), each of which
+// already carries its own cost_to_make. Replaces an old hardcoded per-box rate that
+// double-counted once real allocations were costed (the box's cookies were counted
+// once here AND once via the ordinary GIVEAWAY_TYPES sweep over the allocations table).
+function frEngGiveawayAllocs(e) {
+  return (allocs||[]).filter(function(a){ return a.collection_instance_id === e.collection_instance_id; });
+}
+function frEngGiveawayCost(e) {
+  return frEngGiveawayAllocs(e).reduce(function(s,a){ return s + (parseFloat(a.cost_to_make)||0); }, 0);
+}
+function frEngGiveawayQty(e) {
+  return frEngGiveawayAllocs(e).reduce(function(s,a){ return s + (Number(a.qty)||0); }, 0);
 }
 
 // ── Main render ───────────────────────────────────────
@@ -36038,7 +36058,7 @@ function renderFinReport() {
       const oNum     = o.order_number || ('ORD-'+String(o.id).slice(-4));
       const oLines   = (orderLines||[]).filter(l=>l.order_id===o.id);
       const cookieSummary = oLines.length ? oLines.map(l=>(l.quantity||'?')+'× '+(l.cookie_type||l.flavour||'Cookie')).join(', ') : '';
-      const allocCtm = (allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.order_ids&&a.order_ids.map(String).includes(String(o.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
+      const allocCtm = frOrderCookieCost(o);
       const grandCogs= totalCogs + allocCtm;
       const row = { o, oNum, custName, received, costLines, totalCogs, allocCtm, grandCogs, cookieSummary, oType };
 
@@ -36093,12 +36113,14 @@ function renderFinReport() {
   // All three combined for filtering
   const ALL_NO_INCOME   = [...GIVEAWAY_TYPES, ...WRITEOFF_TYPES, ...DONATION_TYPES];
 
-  function frBucketRows(types) {
+  // excludeCollectionLinked: campaign gifted/disposed boxes are costed separately below
+  // (frEngGiveawayCost, matched by collection_instance_id) so they aren't summed here too.
+  function frBucketRows(types, excludeCollectionLinked) {
     const rows=[], groupTotals={};
     let totalQty=0, totalCost=0, uncosted=0;
     if (f.inclAllocs) {
       (allocs||[])
-        .filter(a=>types.includes(a.type) && f.allocTypes.includes(a.type) && frInDateRange(a.date,f.from,f.to) && (!a.method||f.allocMethods.includes(a.method)))
+        .filter(a=>types.includes(a.type) && f.allocTypes.includes(a.type) && frInDateRange(a.date,f.from,f.to) && (!a.method||f.allocMethods.includes(a.method)) && (!excludeCollectionLinked || !a.collection_instance_id))
         .forEach(function(a) {
           const ctm=parseFloat(a.cost_to_make)||0;
           const unc=(a.cost_to_make===null||a.cost_to_make===undefined||a.cost_to_make==='');
@@ -36112,22 +36134,24 @@ function renderFinReport() {
     return {rows, groupTotals, totalQty, totalCost, uncosted};
   }
 
-  const giv  = frBucketRows(GIVEAWAY_TYPES);
+  const giv  = frBucketRows(GIVEAWAY_TYPES, true);
   const woff = frBucketRows(WRITEOFF_TYPES);
   const don  = frBucketRows(DONATION_TYPES);
 
-  // Campaign gifted/disposed boxes go into giveaways
+  // Campaign gifted/disposed boxes go into giveaways — costed from their real allocation
+  // rows (frEngGiveawayCost/Qty), not the generic sweep above, so they're counted once.
   if (f.inclCampaigns) {
     campBlocks.forEach(function(block) {
       block.givEngs.forEach(function(e) {
-        const cpb=frEngCpb(e), rate=cpb?frBoxCost(cpb):0;
-        const boxes=e.boxes||0, ctm=boxes*rate, noRate=!cpb||!FR_BOX_COST[cpb];
-        giv.totalQty+=boxes*(cpb||0); giv.totalCost+=ctm;
+        const cpb=frEngCpb(e);
+        const boxes=e.boxes||0;
+        const qty=frEngGiveawayQty(e), ctm=frEngGiveawayCost(e), noRate=qty>0&&ctm===0;
+        giv.totalQty+=qty; giv.totalCost+=ctm;
         if(noRate) giv.uncosted++;
         const grp='campaign-'+e.box_type.toLowerCase();
         if(!giv.groupTotals[grp]) giv.groupTotals[grp]={qty:0,cost:0,label:'Campaign '+e.box_type};
-        giv.groupTotals[grp].qty+=boxes*(cpb||0); giv.groupTotals[grp].cost+=ctm;
-        giv.rows.push({kind:'campbox',e,campName:block.c.name,boxes,cpb,rate,ctm,noRate});
+        giv.groupTotals[grp].qty+=qty; giv.groupTotals[grp].cost+=ctm;
+        giv.rows.push({kind:'campbox',e,campName:block.c.name,boxes,cpb,qty,ctm,noRate});
       });
     });
   }
@@ -36383,15 +36407,14 @@ function renderFinReport() {
           +'<td style="padding:4px 8px;font-size:11px;color:var(--text-muted);">'+esc(row.kohaNote||'')+'</td>'
           +'</tr>';
       } else {
-        const cpbLabel=row.cpb?row.cpb+' cookies/box':'unknown size';
-        const rateNote=row.noRate?'⚠ no rate for '+cpbLabel:'$'+row.rate.toFixed(2)+'/box · '+cpbLabel;
+        const rateNote=row.noRate?'⚠ no cost recorded':(row.qty?'$'+(row.ctm/row.qty).toFixed(2)+'/cookie':'—');
         h += '<tr style="border-bottom:1px solid var(--gray-light);">'
           +'<td style="padding:4px 8px;">'+esc(frCampDate((campaigns||[]).find(c=>c.id===row.e.campaign_id)||{})||'—')+'</td>'
           +'<td style="padding:4px 8px;font-size:11px;color:var(--text-muted);">'+esc(row.campName)+'</td>'
           +'<td style="padding:4px 8px;">'+esc(row.e.name||'—')+'</td>'
           +'<td style="padding:4px 8px;"><span class="tag tag-purple" style="font-size:10px;">Campaign '+esc(row.e.box_type)+'</span></td>'
           +'<td style="padding:4px 8px;font-size:11px;color:var(--text-muted);">'+row.boxes+' box'+(row.boxes!==1?'es':'')+'</td>'
-          +'<td style="padding:4px 8px;text-align:right;">'+(row.cpb?row.boxes*row.cpb:'—')+'</td>'
+          +'<td style="padding:4px 8px;text-align:right;">'+row.qty+'</td>'
           +'<td style="padding:4px 8px;text-align:right;">'+(row.noRate?'<span style="color:var(--text-muted);">$0.00 ⚠</span>':frFmt(row.ctm))+'</td>'
           +'<td style="padding:4px 8px;font-size:11px;color:var(--text-muted);">'+rateNote+'</td>'
           +'</tr>';
@@ -36570,7 +36593,7 @@ function printFinReport(bodyOnly) {
     nonSoldO.forEach(function(o){
       const cl=frOrderCosts(o);
       const tc=cl.reduce((s,l)=>s+l.amount,0);
-      const allocCtm=(allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.order_ids&&a.order_ids.map(String).includes(String(o.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
+      const allocCtm=frOrderCookieCost(o);
       const gc=tc+allocCtm;
       const rec=frOrderReceived(o);
       const cust=(cfg.customers||[]).find(c=>String(c.id)===String(o.customer_id));
@@ -36587,7 +36610,7 @@ function printFinReport(bodyOnly) {
         const rec=frOrderReceived(o);
         const cl=frOrderCosts(o);
         const tc=cl.reduce((s,l)=>s+l.amount,0);
-        const allocCtm=(allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.order_ids&&a.order_ids.map(String).includes(String(o.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
+        const allocCtm=frOrderCookieCost(o);
         const gc=tc+allocCtm;
         const cust=(cfg.customers||[]).find(c=>String(c.id)===String(o.customer_id));
         const oLines=(orderLines||[]).filter(l=>l.order_id===o.id);
@@ -36647,7 +36670,7 @@ function printFinReport(bodyOnly) {
     let tbl='<table><thead><tr><th>Date</th><th>Batch / Campaign</th><th>Recipient</th><th>Type</th><th>Method</th><th>Qty</th><th>Cost</th><th>Notes</th></tr></thead><tbody>';
     let tq=0, tc=0;
     if (f.inclAllocs) {
-      (allocs||[]).filter(a=>types.includes(a.type)&&f.allocTypes.includes(a.type)&&frInDateRange(a.date,f.from,f.to)&&(!a.method||f.allocMethods.includes(a.method))).sort((x,y)=>(x.type||'').localeCompare(y.type||'')).forEach(function(a){
+      (allocs||[]).filter(a=>types.includes(a.type)&&f.allocTypes.includes(a.type)&&frInDateRange(a.date,f.from,f.to)&&(!a.method||f.allocMethods.includes(a.method))&&(!includeCampBoxes||!a.collection_instance_id)).sort((x,y)=>(x.type||'').localeCompare(y.type||'')).forEach(function(a){
         const ctm=parseFloat(a.cost_to_make)||0;
         tq+=a.qty||0; tc+=ctm;
         const ml=(methodLabels[a.method]||a.method||'—')+(a.method==='market'&&a.market?' @ '+a.market:'');
@@ -36657,10 +36680,10 @@ function printFinReport(bodyOnly) {
     if (includeCampBoxes && f.inclCampaigns) {
       (campaigns||[]).filter(c=>frInDateRange(frCampDate(c),f.from,f.to)).forEach(function(c){
         (campEngagements||[]).filter(e=>e.campaign_id===c.id&&(e.box_type==='Gifted'||e.box_type==='Disposed')).forEach(function(e){
-          const cpb=frEngCpb(e); const rate=cpb?frBoxCost(cpb):0;
-          const boxes=e.boxes||0; const ctm=boxes*rate;
-          tq+=boxes*(cpb||0); tc+=ctm;
-          tbl+='<tr><td class="date-col">'+(frCampDate(c)||'—')+'</td><td>'+c.name+'</td><td>'+(e.name||'—')+'</td><td><span class="tag tag-purple">Campaign '+e.box_type+'</span></td><td>'+boxes+' box'+(boxes!==1?'es':'')+'</td><td style="text-align:right;">'+(cpb?boxes*cpb:'—')+'</td><td style="text-align:right;">'+frFmt(ctm)+'</td><td>'+(cpb?'$'+rate.toFixed(2)+'/box':'⚠ no rate')+'</td></tr>';
+          const cpb=frEngCpb(e);
+          const boxes=e.boxes||0, qty=frEngGiveawayQty(e), ctm=frEngGiveawayCost(e);
+          tq+=qty; tc+=ctm;
+          tbl+='<tr><td class="date-col">'+(frCampDate(c)||'—')+'</td><td>'+c.name+'</td><td>'+(e.name||'—')+'</td><td><span class="tag tag-purple">Campaign '+e.box_type+'</span></td><td>'+boxes+' box'+(boxes!==1?'es':'')+'</td><td style="text-align:right;">'+qty+'</td><td style="text-align:right;">'+frFmt(ctm)+'</td><td>'+(qty?'$'+(ctm/qty).toFixed(2)+'/cookie':'⚠ no cost recorded')+'</td></tr>';
         });
       });
     }
@@ -36786,7 +36809,7 @@ function exportFinReportCSV() {
       const rec=frOrderReceived(o);
       const cl=frOrderCosts(o);
       const tc=cl.reduce((s,l)=>s+l.amount,0);
-      const allocCtm=(allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.order_ids&&a.order_ids.map(String).includes(String(o.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
+      const allocCtm=frOrderCookieCost(o);
       const gc=tc+allocCtm;
       const cust=(cfg.customers||[]).find(c=>String(c.id)===String(o.customer_id));
       const oLines=(orderLines||[]).filter(l=>l.order_id===o.id);
@@ -36798,7 +36821,7 @@ function exportFinReportCSV() {
       const rec=frOrderReceived(o);
       const cl=frOrderCosts(o);
       const tc=cl.reduce((s,l)=>s+l.amount,0);
-      const allocCtm=(allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.order_ids&&a.order_ids.map(String).includes(String(o.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
+      const allocCtm=frOrderCookieCost(o);
       const gc=tc+allocCtm;
       const cust=(cfg.customers||[]).find(c=>String(c.id)===String(o.customer_id));
       const oLines=(orderLines||[]).filter(l=>l.order_id===o.id);
@@ -36847,7 +36870,7 @@ function exportFinReportCSV() {
   function csvAllocRows(types, includeCampBoxes) {
     const r=[]; let tc=0;
     if (f.inclAllocs) {
-      (allocs||[]).filter(a=>types.includes(a.type)&&f.allocTypes.includes(a.type)&&frInDateRange(a.date,f.from,f.to)&&(!a.method||f.allocMethods.includes(a.method))).sort((x,y)=>(x.type||'').localeCompare(y.type||'')).forEach(function(a){
+      (allocs||[]).filter(a=>types.includes(a.type)&&f.allocTypes.includes(a.type)&&frInDateRange(a.date,f.from,f.to)&&(!a.method||f.allocMethods.includes(a.method))&&(!includeCampBoxes||!a.collection_instance_id)).sort((x,y)=>(x.type||'').localeCompare(y.type||'')).forEach(function(a){
         const ctm=parseFloat(a.cost_to_make)||0; tc+=ctm;
         const ml=(methodLabels[a.method]||a.method||'—')+(a.method==='market'&&a.market?' @ '+a.market:'');
         r.push([a.date||'',a.batch_num||'',frAllocRecipName(a),typeLabels[a.type]||a.type,ml,a.qty||0,ctm.toFixed(2),a.notes||'']);
@@ -36856,9 +36879,9 @@ function exportFinReportCSV() {
     if (includeCampBoxes && f.inclCampaigns) {
       (campaigns||[]).filter(c=>frInDateRange(frCampDate(c),f.from,f.to)).forEach(function(c){
         (campEngagements||[]).filter(e=>e.campaign_id===c.id&&(e.box_type==='Gifted'||e.box_type==='Disposed')).forEach(function(e){
-          const cpb=frEngCpb(e); const rate=cpb?frBoxCost(cpb):0;
-          const boxes=e.boxes||0; const ctm=boxes*rate; tc+=ctm;
-          r.push([frCampDate(c)||'',c.name,e.name||'—','Campaign '+e.box_type,boxes+' boxes',cpb?boxes*cpb:'',ctm.toFixed(2),cpb?'$'+rate.toFixed(2)+'/box':'no rate recorded']);
+          const cpb=frEngCpb(e);
+          const boxes=e.boxes||0, qty=frEngGiveawayQty(e), ctm=frEngGiveawayCost(e); tc+=ctm;
+          r.push([frCampDate(c)||'',c.name,e.name||'—','Campaign '+e.box_type,boxes+' boxes',qty,ctm.toFixed(2),qty?'$'+(ctm/qty).toFixed(2)+'/cookie':'no cost recorded']);
         });
       });
     }
