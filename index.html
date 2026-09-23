@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v64.0</title>
+<title>Cookie & Me — Kitchen Manager v64.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -2076,22 +2076,11 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </div>
         </div>
 
-        <!-- Financials -->
-        <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;">
-          <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;margin-bottom:8px;">Financial summary</div>
-          <div class="r2">
-            <div class="field"><label>Total revenue ($)</label><input type="number" id="cf-rev" min="0" step="0.01"/></div>
-            <div class="field"><label>Packaging costs ($)</label><input type="number" id="cf-cost-pkg" min="0" step="0.01"/></div>
-          </div>
-          <div class="r2">
-            <div class="field"><label>Transport costs ($)</label><input type="number" id="cf-cost-trans" min="0" step="0.01"/></div>
-            <div class="field"><label>Courier costs ($)</label><input type="number" id="cf-cost-courier" min="0" step="0.01"/></div>
-          </div>
-          <div class="r2">
-            <div class="field"><label>Printing costs ($)</label><input type="number" id="cf-cost-print" min="0" step="0.01"/></div>
-            <div class="field"><label>Ingredient costs ($)</label><input type="number" id="cf-cost-ing" min="0" step="0.01"/></div>
-          </div>
-          <div class="field"><label>Other costs ($)</label><input type="number" id="cf-cost-other" min="0" step="0.01"/></div>
+        <!-- Financials — costs and revenue are tracked once the campaign exists and
+             cookies start getting allocated to it (Edit view → Financials card), not
+             at creation time, so there's nothing to fill in here yet. -->
+        <div style="background:var(--gray-light);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--text-muted);font-family:sans-serif;">
+          💰 Costs, revenue, and production cost are tracked automatically once you save this campaign and start allocating cookies to it — you'll find them on the campaign's Financials card after saving.
         </div>
 
         <!-- Collaborators -->
@@ -30190,13 +30179,6 @@ function openCampForm(id) {
   document.getElementById('cf-donation-per-box').value = '';
   document.getElementById('cf-donation-recipient').value = '';
   document.getElementById('cf-donation-actual').value = '';
-  document.getElementById('cf-rev').value = '';
-  document.getElementById('cf-cost-pkg').value = '';
-  document.getElementById('cf-cost-trans').value = '';
-  document.getElementById('cf-cost-courier').value = '';
-  document.getElementById('cf-cost-print').value = '';
-  document.getElementById('cf-cost-ing').value = '';
-  document.getElementById('cf-cost-other').value = '';
   document.getElementById('cf-collabs').innerHTML = '';
   document.getElementById('cf-msg').style.display = 'none';
   const shortcut = document.getElementById('cf-eng-shortcut');
@@ -32981,7 +32963,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v64.0',
+    app_version: 'v64.1',
     tables: {}
   };
 
