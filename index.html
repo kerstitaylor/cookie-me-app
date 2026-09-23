@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v60.1</title>
+<title>Cookie & Me — Kitchen Manager v61.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -3346,6 +3346,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
       <button class="sub-tab" onclick="goConfigure('cfg-equipment')">Equipment</button>
       <button class="sub-tab" onclick="goConfigure('cfg-suppliers')">Suppliers</button>
       <button class="sub-tab" onclick="goConfigure('cfg-steps-lib')">Step library</button>
+      <button class="sub-tab" onclick="goConfigure('cfg-costing')">💰 Costing</button>
       <button class="sub-tab" onclick="goConfigure('cfg-import')">Import</button>
       <button class="sub-tab" onclick="goConfigure('cfg-data-tools')">Data tools</button>
       <button class="sub-tab" onclick="goConfigure('cfg-trash')">🗑 Trash</button>
@@ -3568,6 +3569,17 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </div>
         </div>
       </div>
+    </div>
+    <div id="cfg-costing" class="section">
+      <div class="card" style="margin-bottom:12px;">
+        <div class="card-title">💰 Standard Costing</div>
+        <p style="font-size:13px;color:var(--text-muted);font-family:sans-serif;margin-bottom:0;">
+          Set a standard cost per cookie here. This will later be used to cost your orders, campaigns, and other
+          allocations automatically — start with the all-up figure below, and switch to a full itemized breakdown
+          once you've worked out what each ingredient, packaging item, and hour of labour actually costs you.
+        </p>
+      </div>
+      <div id="cfg-costing-body"></div>
     </div>
     <div id="cfg-import" class="section">
       <div class="card">
@@ -8604,7 +8616,7 @@ function goTeam(t) {
   if(t==='team-certs'){popCertSelects();document.getElementById('cert-form').style.display='none';document.getElementById('cert-list').style.display='block';renderCertList();}
 }
 function goConfigure(t) {
-  const ts=['cfg-team','cfg-household','cfg-cats','cfg-chklists','cfg-equipment','cfg-suppliers','cfg-steps-lib','cfg-import','cfg-data-tools','cfg-trash'];
+  const ts=['cfg-team','cfg-household','cfg-cats','cfg-chklists','cfg-equipment','cfg-suppliers','cfg-steps-lib','cfg-costing','cfg-import','cfg-data-tools','cfg-trash'];
   document.querySelectorAll('#s-configure .sub-tab').forEach((el,i)=>el.classList.toggle('active',ts[i]===t));
   ts.forEach(s=>{const el=document.getElementById(s);if(el)el.classList.toggle('active',s===t);});
   if(t==='cfg-team')renderCfgTeam();
@@ -8612,6 +8624,7 @@ function goConfigure(t) {
   if(t==='cfg-equipment')renderEquipmentList();
   if(t==='cfg-suppliers')renderCfgSuppliersList();
   if(t==='cfg-steps-lib')renderCfgStepsLib();
+  if(t==='cfg-costing')renderCfgCosting();
   if(t==='cfg-trash')renderTrash();
 }
 function renderCfgSuppliersList() {
@@ -14196,6 +14209,130 @@ function renderConfigure() {
   renderLeadPicklist('leadSources', 'cfg-lead-source-list');
   renderLeadPicklist('leadNextActions', 'cfg-lead-next-action-list');
   renderLeadPicklist('cookieFlavours', 'cfg-cookie-flavour-list');
+}
+
+// ═══════════════════════════════════════════════════════
+// STANDARD COSTING — a single cost-per-cookie figure other features (orders,
+// campaigns, allocations) will read from later. Two modes: a flat "simple"
+// all-up figure, or a "detailed" itemized breakdown that sums to its own
+// per-cookie figure. Only one mode is ever active at a time.
+// ═══════════════════════════════════════════════════════
+
+const COSTING_DEFAULT = {
+  mode: 'simple',
+  simple: { allUpPerCookie: 0 },
+  detailed: {
+    ingredients: { label: 'Ingredients',    unitLabel: 'cookie',  costPerUnit: 0, cookiesPerUnit: 1 },
+    bags:        { label: 'Bags',           unitLabel: 'bag',     costPerUnit: 0, cookiesPerUnit: 1 },
+    boxes:       { label: 'Boxes',          unitLabel: 'box',     costPerUnit: 0, cookiesPerUnit: 1 },
+    ribbons:     { label: 'Ribbons',        unitLabel: 'ribbon',  costPerUnit: 0, cookiesPerUnit: 1 },
+    stamps:      { label: 'Postage stamps', unitLabel: 'stamp',   costPerUnit: 0, cookiesPerUnit: 1 },
+    design:      { label: 'Design',         unitLabel: 'design',  costPerUnit: 0, cookiesPerUnit: 1 },
+    labour:      { label: 'Baking labour',  unitLabel: 'hour',    costPerUnit: 0, cookiesPerUnit: 1 }
+  }
+};
+
+// Merge saved values over the defaults so new itemized categories added later
+// (or a costing key that doesn't exist yet) always come back complete.
+function costingCfg() {
+  const saved = cfg.costing || {};
+  const detailed = {};
+  Object.keys(COSTING_DEFAULT.detailed).forEach(function(key) {
+    detailed[key] = Object.assign({}, COSTING_DEFAULT.detailed[key], (saved.detailed || {})[key] || {});
+  });
+  return {
+    mode: saved.mode || COSTING_DEFAULT.mode,
+    simple: Object.assign({}, COSTING_DEFAULT.simple, saved.simple || {}),
+    detailed: detailed
+  };
+}
+
+function costPerCookieFromDetailed(detailed) {
+  return Object.keys(detailed).reduce(function(sum, key) {
+    const item = detailed[key];
+    const cookiesPerUnit = Number(item.cookiesPerUnit) || 1;
+    const costPerUnit = Number(item.costPerUnit) || 0;
+    return sum + (costPerUnit / cookiesPerUnit);
+  }, 0);
+}
+
+// Single source of truth for "what does one cookie cost right now" — this is
+// what future order/campaign/allocation costing will call.
+function currentCostPerCookie() {
+  const c = costingCfg();
+  return c.mode === 'detailed' ? costPerCookieFromDetailed(c.detailed) : (Number(c.simple.allUpPerCookie) || 0);
+}
+
+async function setCostingMode(mode) {
+  const c = costingCfg();
+  c.mode = mode;
+  await saveCfgKey('costing', c);
+  renderCfgCosting();
+}
+
+async function saveCostingAllUp(val) {
+  const c = costingCfg();
+  c.simple.allUpPerCookie = parseFloat(val) || 0;
+  await saveCfgKey('costing', c);
+  renderCfgCosting();
+}
+
+async function saveCostingDetailedField(key, field, val) {
+  const c = costingCfg();
+  if (!c.detailed[key]) return;
+  c.detailed[key][field] = field === 'cookiesPerUnit' ? (parseInt(val, 10) || 1) : (parseFloat(val) || 0);
+  await saveCfgKey('costing', c);
+  renderCfgCosting();
+}
+
+function renderCfgCosting() {
+  const el = document.getElementById('cfg-costing-body');
+  if (!el) return;
+  const c = costingCfg();
+  const detailedTotal = costPerCookieFromDetailed(c.detailed);
+  const active = c.mode === 'detailed' ? detailedTotal : (Number(c.simple.allUpPerCookie) || 0);
+
+  const modeToggle = '<div style="display:flex;gap:8px;margin-bottom:14px;">'
+    + '<button class="btn' + (c.mode==='simple' ? ' btn-primary' : '') + '" style="flex:1;" onclick="setCostingMode(\'simple\')">Simple — all-up cost</button>'
+    + '<button class="btn' + (c.mode==='detailed' ? ' btn-primary' : '') + '" style="flex:1;" onclick="setCostingMode(\'detailed\')">Detailed — itemized</button>'
+    + '</div>';
+
+  const activeCard = '<div class="card" style="background:var(--gray-light);margin-bottom:14px;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;">Active cost per cookie</div>'
+    + '<div style="font-size:26px;font-weight:700;color:var(--navy);font-family:sans-serif;">$' + active.toFixed(4) + '</div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">' + (c.mode==='simple' ? 'Using the all-up figure below.' : 'Sum of the itemized costs below.') + ' This is what future costing of orders, campaigns, and allocations will read from.</div>'
+    + '</div>';
+
+  const simplePanel = '<div class="card" id="cfg-costing-simple" style="display:' + (c.mode==='simple'?'block':'none') + ';margin-bottom:14px;">'
+    + '<div class="card-title">All-up cost per cookie</div>'
+    + '<p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">One flat estimate covering everything — ingredients, packaging, labour, decoration. Use this until you\'re ready to break costs down.</p>'
+    + '<div class="field" style="max-width:220px;"><label>$ per cookie</label>'
+    + '<input id="cfg-cost-allup" type="number" min="0" step="0.01" value="' + (c.simple.allUpPerCookie || '') + '" placeholder="e.g. 0.85" onchange="saveCostingAllUp(this.value)" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/>'
+    + '</div></div>';
+
+  const itemRows = Object.keys(c.detailed).map(function(key) {
+    const item = c.detailed[key];
+    const perCookie = (Number(item.costPerUnit) || 0) / (Number(item.cookiesPerUnit) || 1);
+    return '<div style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;">'
+      + '<div style="font-weight:700;font-size:13px;color:var(--navy);font-family:sans-serif;margin-bottom:6px;">' + esc(item.label) + '</div>'
+      + '<div class="r2" style="margin-bottom:0;">'
+      + '<div class="field" style="margin-bottom:0;"><label>Cost per ' + esc(item.unitLabel) + '</label>'
+      + '<input type="number" min="0" step="0.01" value="' + (item.costPerUnit || '') + '" placeholder="0.00" onchange="saveCostingDetailedField(\'' + key + '\',\'costPerUnit\',this.value)" style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>'
+      + '<div class="field" style="margin-bottom:0;"><label>Cookies per ' + esc(item.unitLabel) + '</label>'
+      + '<input type="number" min="1" step="1" value="' + (item.cookiesPerUnit || 1) + '" placeholder="1" onchange="saveCostingDetailedField(\'' + key + '\',\'cookiesPerUnit\',this.value)" style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);font-family:sans-serif;box-sizing:border-box;"/></div>'
+      + '</div>'
+      + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:6px;">= $' + perCookie.toFixed(4) + ' per cookie</div>'
+      + '</div>';
+  }).join('');
+
+  const detailedPanel = '<div class="card" id="cfg-costing-detailed" style="display:' + (c.mode==='detailed'?'block':'none') + ';">'
+    + '<div class="card-title">Itemized standard costs</div>'
+    + '<p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">Enter what each thing costs and how many cookies it covers — the app works out the per-cookie share and adds them all up. "Ingredients" has no pack size, so enter it directly as a $/cookie estimate.</p>'
+    + itemRows
+    + '<div style="font-size:13px;font-weight:700;color:var(--navy);font-family:sans-serif;padding-top:8px;border-top:1px solid var(--border);">Total: $' + detailedTotal.toFixed(4) + ' per cookie</div>'
+    + '</div>';
+
+  el.innerHTML = modeToggle + activeCard + simplePanel + detailedPanel;
 }
 
 function renderCfgTeam() {
@@ -26329,6 +26466,7 @@ const HOME_SEARCH_INDEX = [
   {label:'📊 Fridge History', description:'View full fridge temperature history', tab:'hist', sub:'hist-fridge', keywords:'fridge temperature history log records'},
   {label:'⚙️ Configure', description:'Team, categories, checklists and import', tab:'configure', sub:'cfg-team', keywords:'configure settings setup team categories checklists import'},
   {label:'📥 Import / Seed Data', description:'Import ingredients or seed recipes', tab:'configure', sub:'cfg-import', keywords:'import seed recipes ingredients data'},
+  {label:'💰 Standard Costing', description:'Set your standard cost per cookie', tab:'configure', sub:'cfg-costing', keywords:'costing cost price ingredients bags boxes ribbons stamps design labour all-up per cookie'},
 ];
 
 function homeSearch(q) {
@@ -32778,7 +32916,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v60.1',
+    app_version: 'v61.0',
     tables: {}
   };
 
