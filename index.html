@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v61.2</title>
+<title>Cookie & Me — Kitchen Manager v62.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -1353,7 +1353,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
                 <option value="disposal">Thrown away</option>
               </select>
             </div>
-            <div class="field"><label>Qty (cookies)</label><input id="al-q" type="number" placeholder="12"/><div id="al-remaining" style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:3px;"></div></div>
+            <div class="field"><label>Qty (cookies)</label><input id="al-q" type="number" placeholder="12" oninput="updAllocCostDisplay()"/><div id="al-remaining" style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-top:3px;"></div></div>
           </div>
           <div class="field">
             <label>Organisation / Customer</label>
@@ -1388,7 +1388,15 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </div>
           <div id="al-mf" style="display:none"><div class="field"><label>Market name</label><input id="al-mk" placeholder="e.g. Harbourside Market"/></div></div>
           <div class="field"><label>Notes / feedback <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label><textarea id="al-notes" placeholder="e.g. loved the packaging, wants more next time..." style="min-height:52px;font-size:13px;"></textarea></div>
-          <div class="field"><label>Cost to make <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional — ingredient cost of these cookies)</span></label><input id="al-cost-to-make" type="number" min="0" step="0.01" placeholder="e.g. 4.50"/></div>
+          <div class="field" id="al-cost-wrap">
+            <label>Cost to make</label>
+            <div id="al-cost-auto" style="font-weight:700;font-size:15px;color:var(--navy);font-family:sans-serif;padding:7px 0;">$0.00</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+              <label style="font-size:11px;color:var(--text-muted);font-weight:400;white-space:nowrap;">+ extra cost</label>
+              <input id="al-cost-extra" type="number" min="0" step="0.01" placeholder="0.00" oninput="updAllocCostDisplay()" style="width:90px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;font-family:sans-serif;"/>
+              <span style="font-size:11px;color:var(--text-muted);">for anything beyond the standard rate</span>
+            </div>
+          </div>
           <div style="margin-bottom:8px;">
             <button type="button" id="al-links-toggle" onclick="toggleAllocLinks()" style="font-size:12px;background:none;border:1px dashed var(--border);border-radius:var(--radius);padding:4px 10px;color:var(--text-muted);cursor:pointer;font-family:sans-serif;width:100%;text-align:left;">+ Link to campaign / order (optional)</button>
             <div id="al-links-panel" style="display:none;margin-top:8px;">
@@ -11788,23 +11796,24 @@ function loadAllocBatch() {
   const alUseBy = document.getElementById('al-useby'); if (alUseBy) alUseBy.value = '';
   const alPickerInput = document.querySelector('#al-cust-picker-wrap .cust-picker-input'); if (alPickerInput) alPickerInput.value = '';
   const alCustId = document.getElementById('al-cust-id'); if (alCustId) alCustId.value = '';
-  ['al-notes','al-cost-to-make','al-addr-org','al-addr-contact','al-addr-phone','al-addr-street','al-addr-suburb','al-addr-city','al-addr-postcode','al-mk'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value=''; });
+  ['al-notes','al-cost-extra','al-addr-org','al-addr-contact','al-addr-phone','al-addr-street','al-addr-suburb','al-addr-city','al-addr-postcode','al-mk'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value=''; });
   document.querySelectorAll('#al-dn .pill').forEach(function(p){ p.classList.remove('active'); });
   const af = document.getElementById('al-af'); if (af) af.style.display = 'none';
   const cb = document.getElementById('al-cancel-edit'); if (cb) cb.style.display = 'none';
   const saveBtn = document.querySelector('[onclick="addAlloc()"]'); if (saveBtn) saveBtn.textContent = 'Add allocation';
   var _aiei = document.getElementById('al-icing-entry-id'); if (_aiei) _aiei.value = '';
-  renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderAllocIcingInstances();
+  renderAllocList(); updateAllocTally(); prefillRemainingQty(); renderAllocIcingInstances(); updAllocCostDisplay();
 }
 
 function _resetAllocFormAfterSave() {
-  const ids = ['al-q','al-notes','al-cost-to-make','al-addr-org','al-addr-contact','al-addr-phone','al-cust-id','al-icing-entry-id'];
+  const ids = ['al-q','al-notes','al-cost-extra','al-addr-org','al-addr-contact','al-addr-phone','al-cust-id','al-icing-entry-id'];
   ids.forEach(function(id){ const el = document.getElementById(id); if (el) el.value = ''; });
   const pick = document.querySelector('#al-cust-picker-wrap .cust-picker-input'); if (pick) pick.value = '';
   const panel = document.getElementById('al-links-panel'); if (panel) panel.style.display = 'none';
   const toggle = document.getElementById('al-links-toggle'); if (toggle) toggle.textContent = '+ Link to campaign / order (optional)';
   renderCampMultiPicker('al-camp-picker', []);
   renderOrderMultiPicker('al-order-picker', []);
+  updAllocCostDisplay();
 }
 
 async function addAlloc() {
@@ -11849,7 +11858,8 @@ async function addAlloc() {
   var _alDateErr = validateDate(date, 'Allocation date');
   if (_alDateErr) { alert(_alDateErr); return; }
   const notes = (document.getElementById('al-notes')?.value||'').trim();
-  const costToMake = parseFloat(document.getElementById('al-cost-to-make')?.value)||null;
+  const costExtra = parseFloat(document.getElementById('al-cost-extra')?.value)||0;
+  const costToMake = (type === 'frozen') ? null : (qty * currentCostPerCookie() + costExtra);
   const allocCampIds = getCampMultiPickerIds('al-camp-picker');
   const allocOrderIds = getOrderMultiPickerIds('al-order-picker');
 
@@ -11919,7 +11929,8 @@ async function addAlloc() {
     if (document.getElementById('frozen-list')) renderFrozenStock();
     document.getElementById('al-q').value = '';
     const alNotesEl = document.getElementById('al-notes'); if (alNotesEl) alNotesEl.value = '';
-    const alCostEl = document.getElementById('al-cost-to-make'); if (alCostEl) alCostEl.value = '';
+    const alCostEl = document.getElementById('al-cost-extra'); if (alCostEl) alCostEl.value = '';
+    updAllocCostDisplay();
     const alOrgEl = document.getElementById('al-addr-org'); if (alOrgEl) alOrgEl.value = '';
     const alContactEl = document.getElementById('al-addr-contact'); if (alContactEl) alContactEl.value = '';
     const alPhoneEl = document.getElementById('al-addr-phone'); if (alPhoneEl) alPhoneEl.value = '';
@@ -12451,7 +12462,9 @@ function editAlloc(id) {
   }
   if (a.method==='market') document.getElementById('al-mk').value = a.market||'';
   const alNotesEdit = document.getElementById('al-notes'); if (alNotesEdit) alNotesEdit.value = a.notes||'';
-  const alCostEdit = document.getElementById('al-cost-to-make'); if (alCostEdit) alCostEdit.value = a.cost_to_make||'';
+  const alCostEdit = document.getElementById('al-cost-extra');
+  if (alCostEdit) alCostEdit.value = Math.max(0, (parseFloat(a.cost_to_make)||0) - (a.qty||0) * currentCostPerCookie()).toFixed(2);
+  updAllocCostDisplay();
   const alContactEdit = document.getElementById('al-addr-contact'); if (alContactEdit) alContactEdit.value = (a.recipient?.contactName||a.recipient?.name||'');
   const alPhoneEdit = document.getElementById('al-addr-phone'); if (alPhoneEdit) alPhoneEdit.value = (a.recipient?.phone||'');
   document.querySelectorAll('#al-dn .pill').forEach(p=>{
@@ -12478,7 +12491,8 @@ function cancelEditAlloc() {
   const alPickerInput = document.querySelector('#al-cust-picker-wrap .cust-picker-input'); if (alPickerInput) alPickerInput.value = '';
   const alQ = document.getElementById('al-q'); if (alQ) alQ.value = '';
   const alNotes = document.getElementById('al-notes'); if (alNotes) alNotes.value = '';
-  const alCost = document.getElementById('al-cost-to-make'); if (alCost) alCost.value = '';
+  const alCost = document.getElementById('al-cost-extra'); if (alCost) alCost.value = '';
+  updAllocCostDisplay();
   const alOrg = document.getElementById('al-addr-org'); if (alOrg) alOrg.value = '';
   const alContact = document.getElementById('al-addr-contact'); if (alContact) alContact.value = '';
   const alPhone = document.getElementById('al-addr-phone'); if (alPhone) alPhone.value = '';
@@ -15414,6 +15428,23 @@ function allocSelPerson() {
 }
 function updAllocT() {
   // Allocation type change no longer toggles UI — customer picker always visible
+  updAllocCostDisplay();
+}
+
+// Frozen rows are a hold, not a final destination — they're never costed here (see
+// sumConsumedQty / cost_to_make notes); the eventual real allocation carries the cost.
+function updAllocCostDisplay() {
+  const wrap = document.getElementById('al-cost-wrap');
+  if (!wrap) return;
+  const type = (document.getElementById('al-t')||{}).value;
+  if (type === 'frozen') { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  const qty = parseInt((document.getElementById('al-q')||{}).value) || 0;
+  const extra = parseFloat((document.getElementById('al-cost-extra')||{}).value) || 0;
+  const rate = currentCostPerCookie();
+  const auto = qty * rate;
+  const el = document.getElementById('al-cost-auto');
+  if (el) el.textContent = '$' + (auto + extra).toFixed(2) + (qty ? ' (' + qty + ' × $' + rate.toFixed(2) + (extra ? ' + $' + extra.toFixed(2) + ' extra' : '') + ')' : '');
 }
 
 
@@ -32916,7 +32947,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v61.2',
+    app_version: 'v62.0',
     tables: {}
   };
 
