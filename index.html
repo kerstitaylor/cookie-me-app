@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v60.0</title>
+<title>Cookie & Me — Kitchen Manager v60.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -19184,6 +19184,51 @@ async function printReconciliationReport() {
     return { html: '<ul>'+issues.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>', count: issues.length };
   }
 
+  // ── Section 12: Frozen Stock Integrity ───────────────────
+  // sumConsumedQty() already folds held frozen stock into "allocated" for Section 1, so a lot
+  // sitting in the freezer never shows up as unaccounted there — it needs its own check here.
+  function sec13() {
+    var pastUseBy = [], overReleased = [], orphanChildren = [], badLinks = [];
+    var frozenParents = rAllocs.filter(function(a){ return a.type === 'frozen'; });
+    var parentIds = new Set(frozenParents.map(function(p){ return String(p.id); }));
+    var childrenByParent = {};
+    rAllocs.forEach(function(a) {
+      if (a.frozen_source_id != null) {
+        var k = String(a.frozen_source_id);
+        (childrenByParent[k] = childrenByParent[k] || []).push(a);
+      }
+    });
+    frozenParents.forEach(function(p) {
+      var children = childrenByParent[String(p.id)] || [];
+      var returned = children.filter(function(c){ return c.type==='unfrozen'; }).reduce(function(s,c){ return s+(Number(c.qty)||0); }, 0);
+      var writtenOff = children.filter(function(c){ return c.type==='disposal'; }).reduce(function(s,c){ return s+(Number(c.qty)||0); }, 0);
+      var frozenQty = Number(p.qty)||0;
+      var held = frozenQty - returned - writtenOff;
+      if (held > 0 && p.frozen_use_by && p.frozen_use_by < todayStr) {
+        pastUseBy.push('Batch '+p.batch_num+': '+held+' cookie'+(held===1?'':'s')+' still frozen past use-by '+p.frozen_use_by+' (frozen '+(p.date||'—')+')');
+      }
+      if (returned + writtenOff > frozenQty) {
+        overReleased.push('Batch '+p.batch_num+' (lot #'+p.id+'): frozen '+frozenQty+', but '+returned+' taken out + '+writtenOff+' written off = '+(returned+writtenOff)+' — '+((returned+writtenOff)-frozenQty)+' more than went in');
+      }
+    });
+    rAllocs.forEach(function(a) {
+      if (a.frozen_source_id == null) return;
+      if (!parentIds.has(String(a.frozen_source_id))) {
+        orphanChildren.push('Batch '+(a.batch_num||'—')+' allocation #'+a.id+' ('+(a.type||'—')+', qty '+(a.qty||0)+'): frozen_source_id '+a.frozen_source_id+' has no matching frozen lot');
+      }
+      (a.order_ids||[]).forEach(function(oid){ if (!orderIdSet.has(String(oid))) badLinks.push('Batch '+(a.batch_num||'—')+' '+(a.type||'—')+' #'+a.id+': linked order '+oid+' not found in orders'); });
+      (a.campaign_ids||[]).forEach(function(cid){ if (!campIdSet.has(String(cid))) badLinks.push('Batch '+(a.batch_num||'—')+' '+(a.type||'—')+' #'+a.id+': linked campaign '+cid+' not found in campaigns'); });
+    });
+    var count = pastUseBy.length + overReleased.length + orphanChildren.length + badLinks.length;
+    if (!count) return { html: '<p>✓ No issues found</p>', count: 0 };
+    var html = '';
+    if (pastUseBy.length) html += '<p><strong>Frozen stock past its use-by date, still held:</strong></p><ul>'+pastUseBy.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (overReleased.length) html += '<p><strong>Frozen lots with more taken out/written off than were frozen:</strong></p><ul>'+overReleased.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (orphanChildren.length) html += '<p><strong>Freezer take-out/write-off records with no matching frozen lot:</strong></p><ul>'+orphanChildren.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    if (badLinks.length) html += '<p><strong>Freezer records linked to an order/campaign that no longer exists:</strong></p><ul>'+badLinks.map(function(s){ return '<li>'+s+'</li>'; }).join('')+'</ul>';
+    return { html: html, count: count };
+  }
+
   // ── Build report ─────────────────────────────────────────
   var secDefs = [
     { n:1,  title:'Batch Arithmetic',                fn: sec1  },
@@ -19196,7 +19241,8 @@ async function printReconciliationReport() {
     { n:8,  title:'Orphaned Records',                fn: sec9  },
     { n:9,  title:'Split Batch Completeness',        fn: sec10 },
     { n:10, title:'Name and String Consistency',     fn: sec11 },
-    { n:11, title:'Cancelled Orders With Production', fn: sec12 }
+    { n:11, title:'Cancelled Orders With Production', fn: sec12 },
+    { n:12, title:'Frozen Stock Integrity',          fn: sec13 }
   ];
   var totalIssues = 0, sectionsWithIssues = 0, bodyParts = [];
   secDefs.forEach(function(s) {
@@ -32732,7 +32778,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v60.0',
+    app_version: 'v60.1',
     tables: {}
   };
 
