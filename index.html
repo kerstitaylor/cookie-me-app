@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v64.2</title>
+<title>Cookie & Me — Kitchen Manager v64.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18663,16 +18663,18 @@ function _prBuildOrders(orderArr, orderLinesArr, customers) {
       html += '<tr style="font-weight:700;background:#f0ede8;"><td>Total received</td><td>$' + totalReceived.toFixed(2) + '</td></tr></table>';
     }
     // Costs
+    var costProd  = frOrderCookieCost(o);
     var costPkg   = parseFloat(o.cost_packaging)||0;
     var costIng   = parseFloat(o.cost_ingredients)||0;
     var costPrint = parseFloat(o.cost_printing)||0;
     var costSoc   = parseFloat(o.cost_social)||0;
     var costExtra = parseFloat(o.cost_extra_cookies)||0;
     var otherExp  = (o.other_expenses||[]).reduce(function(s,e){ return s+(parseFloat(e.amount)||0); }, 0);
-    var totalCosts = costPkg + costIng + costPrint + costSoc + costExtra + otherExp;
+    var totalCosts = costProd + costPkg + costIng + costPrint + costSoc + costExtra + otherExp;
     if (totalCosts > 0) {
       html += '<div style="font-size:11px;font-weight:700;color:#122640;margin:8px 0 4px;">Costs</div>';
       html += '<table>';
+      if (costProd)  html += '<tr><th>Production cost</th><td colspan="3">$' + costProd.toFixed(2) + '</td></tr>';
       if (costPkg)   html += '<tr><th>Packaging</th><td>$' + costPkg.toFixed(2) + '</td>';
       if (costIng)   html += '<th>Ingredients</th><td>$' + costIng.toFixed(2) + '</td></tr>';
       if (costPrint) html += '<tr><th>Printing</th><td>$' + costPrint.toFixed(2) + '</td>';
@@ -32967,7 +32969,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v64.2',
+    app_version: 'v64.3',
     tables: {}
   };
 
