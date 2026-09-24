@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v64.3</title>
+<title>Cookie & Me — Kitchen Manager v65.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -4928,6 +4928,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <button class="btn" style="grid-column:1/-1;" onclick="_activeSubSection['records']='corp-gifting';go('records')">🎁 Corporate Gifting Register</button>
       </div>
       <button class="btn" style="width:100%;margin-top:6px;" onclick="_activeSubSection['records']='fin-report';go('records')">💰 Financial Report</button>
+      <button class="btn" style="width:100%;margin-top:6px;" onclick="_activeSubSection['records']='outstanding-report';go('records')">🧾 Outstanding Balances</button>
     </div>
     <div class="card" style="margin-bottom:10px;">
       <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.07em;font-family:sans-serif;margin-bottom:10px;">👤 Team records</div>
@@ -5168,6 +5169,27 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 
     <!-- Report output -->
     <div id="cr-body" class="pr-embed"></div>
+  </div>
+
+  <!-- ═══ OUTSTANDING BALANCES REPORT ═══ -->
+  <div id="s-outstanding-report" class="section" style="padding:12px 16px 0;">
+    <button class="btn btn-sm" style="margin-bottom:12px;font-size:12px;" onclick="_activeSubSection['records']='__hub__';go('records')">← Records</button>
+    <div style="font-size:17px;font-weight:700;color:var(--navy);margin-bottom:4px;">🧾 Outstanding Balances</div>
+    <div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:12px;">Every order and campaign box with money still owing — who owes it, for what, and how much.</div>
+
+    <input class="search-input" id="ow-search" placeholder="Search by customer, order #, or campaign..." oninput="renderOutstandingReport()" style="margin-bottom:10px;"/>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:12px;cursor:pointer;">
+      <input type="checkbox" id="ow-incl-draft" onchange="renderOutstandingReport()" style="width:15px;height:15px;"/> Include Draft orders (not yet confirmed)
+    </label>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="btn" style="flex:1;" onclick="printOutstandingReport()">🖨 Print</button>
+      <button class="btn" style="flex:1;" onclick="exportOutstandingReportCSV()">⬇ Export CSV</button>
+    </div>
+
+    <!-- Report output -->
+    <div id="ow-body"></div>
   </div>
 
 </div>
@@ -8499,6 +8521,7 @@ function go(t) {
         'customer-report': ()=>{ document.getElementById('s-customer-report').classList.add('active'); renderCustomerReport(); },
         'icing-report':  ()=>{ document.getElementById('s-icing-report').classList.add('active'); renderIcingReport(); },
         'frozen-report': ()=>{ document.getElementById('s-frozen-report').classList.add('active'); renderFrozenReport(); },
+        'outstanding-report': ()=>{ document.getElementById('s-outstanding-report').classList.add('active'); renderOutstandingReport(); },
         'stocktake-report': ()=>{ document.getElementById('s-stocktake-report').classList.add('active'); renderStocktakeReport(); },
         'trusted-suppliers': ()=>{ document.getElementById('s-trusted-suppliers').classList.add('active'); renderTrustedSuppliers(); },
         'corp-gifting':  ()=>{ document.getElementById('s-corp-gifting').classList.add('active'); renderCorpGiftingRec(); },
@@ -32969,7 +32992,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v64.3',
+    app_version: 'v65.0',
     tables: {}
   };
 
@@ -36011,6 +36034,167 @@ function frOrderReceived(o) {
 
 function frEngReceived(e) {
   return (e.payments||[]).filter(p=>!p._meta).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+}
+
+// ═══════════════════════════════════════════════════════
+// OUTSTANDING BALANCES REPORT — every order and campaign box that still
+// has real money owing on it, grouped by customer. Draft orders are
+// excluded by default since they aren't a confirmed commitment yet.
+// ═══════════════════════════════════════════════════════
+
+function owCustName(customerId, fallbackName) {
+  if (customerId) {
+    var c = (cfg.customers||[]).find(function(x){ return String(x.id)===String(customerId); });
+    if (c) return custDisplayName(c);
+  }
+  return fallbackName || 'Unknown';
+}
+
+function owGetRows(includeDraft) {
+  var rows = [];
+  (orders||[]).forEach(function(o) {
+    if (!includeDraft && o.status === 'Draft') return;
+    var owed = (parseFloat(o.total)||0) - (parseFloat(o.discount)||0);
+    if (owed <= 0) return;
+    var received = frOrderReceived(o);
+    var balance = owed - received;
+    if (balance <= 0.01) return;
+    rows.push({
+      source: 'order',
+      customerKey: o.customer_id ? String(o.customer_id) : 'name:'+(o.order_number||o.id),
+      customerName: owCustName(o.customer_id, o.order_number),
+      refLabel: (o.order_number || ('Order '+String(o.id).slice(-4))) + (o.occasion?' · '+o.occasion:''),
+      date: o.delivery_date || o.date_placed || '',
+      status: o.status,
+      paymentStatus: o.payment_status || '—',
+      owed: owed, received: received, balance: balance
+    });
+  });
+  (campEngagements||[]).forEach(function(e) {
+    if (e.deleted_at) return;
+    var owed = parseFloat(e.amount_owed)||0;
+    if (owed <= 0) return;
+    var received = frEngReceived(e);
+    var balance = owed - received;
+    if (balance <= 0.01) return;
+    var camp = (campaigns||[]).find(function(c){ return c.id===e.campaign_id; });
+    rows.push({
+      source: 'campaign',
+      customerKey: e.customer_id ? String(e.customer_id) : 'name:'+(e.name||e.id),
+      customerName: owCustName(e.customer_id, e.name),
+      refLabel: (camp?camp.name:'Campaign') + (e.boxes?' · '+e.boxes+' box'+(e.boxes!==1?'es':''):''),
+      date: e.fulfilment_date || (e.created_at||'').slice(0,10) || '',
+      status: e.status,
+      paymentStatus: e.payment_status || '—',
+      owed: owed, received: received, balance: balance
+    });
+  });
+  rows.sort(function(a,b){ return a.customerName.toLowerCase().localeCompare(b.customerName.toLowerCase()) || (a.date||'').localeCompare(b.date||''); });
+  return rows;
+}
+
+function owGetFiltered() {
+  var q = ((document.getElementById('ow-search')||{}).value||'').trim().toLowerCase();
+  var includeDraft = !!(document.getElementById('ow-incl-draft')||{}).checked;
+  var rows = owGetRows(includeDraft);
+  if (!q) return rows;
+  return rows.filter(function(r){
+    return (r.customerName||'').toLowerCase().includes(q) || (r.refLabel||'').toLowerCase().includes(q);
+  });
+}
+
+function owGroupByCustomer(rows) {
+  var groups = {};
+  rows.forEach(function(r){
+    if (!groups[r.customerKey]) groups[r.customerKey] = { name: r.customerName, rows: [], total: 0 };
+    groups[r.customerKey].rows.push(r);
+    groups[r.customerKey].total += r.balance;
+  });
+  return Object.values(groups).sort(function(a,b){ return b.total - a.total; });
+}
+
+function renderOutstandingReport() {
+  var el = document.getElementById('ow-body'); if (!el) return;
+  var rows = owGetFiltered();
+  if (!rows.length) { el.innerHTML = '<div class="empty">No outstanding balances found.</div>'; return; }
+  var groups = owGroupByCustomer(rows);
+  var grandTotal = rows.reduce(function(s,r){ return s+r.balance; },0);
+
+  var html = '<div class="card" style="background:var(--gray-light);margin-bottom:12px;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.06em;font-family:sans-serif;">Total outstanding</div>'
+    + '<div style="font-size:22px;font-weight:700;color:var(--navy);font-family:sans-serif;">$'+grandTotal.toFixed(2)+'</div>'
+    + '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;">'+rows.length+' item'+(rows.length===1?'':'s')+' across '+groups.length+' customer'+(groups.length===1?'':'s')+'</div>'
+    + '</div>';
+
+  html += groups.map(function(g){
+    return '<div class="card" style="margin-bottom:10px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">'
+      + '<div style="font-weight:700;font-size:14px;color:var(--navy);font-family:sans-serif;">'+esc(g.name)+'</div>'
+      + '<div style="font-weight:700;font-size:14px;color:var(--danger);font-family:sans-serif;">$'+g.total.toFixed(2)+'</div>'
+      + '</div>'
+      + g.rows.map(function(r){
+          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--gray-light);font-family:sans-serif;font-size:12px;">'
+            + '<div>'
+            + '<span class="tag '+(r.source==='order'?'tag-blue':'tag-purple')+'" style="font-size:9px;">'+(r.source==='order'?'ORDER':'CAMPAIGN')+'</span> '
+            + esc(r.refLabel)
+            + '<div style="color:var(--text-muted);font-size:11px;">'+(r.date?fmtDate(r.date):'—')+' · '+esc(r.paymentStatus)+(r.status?' · '+esc(r.status):'')+'</div>'
+            + '</div>'
+            + '<div style="text-align:right;white-space:nowrap;">'
+            + '<div style="font-weight:700;color:var(--danger);">$'+r.balance.toFixed(2)+'</div>'
+            + '<div style="font-size:10px;color:var(--text-muted);">owed $'+r.owed.toFixed(2)+(r.received?' · paid $'+r.received.toFixed(2):'')+'</div>'
+            + '</div>'
+            + '</div>';
+        }).join('')
+      + '</div>';
+  }).join('');
+
+  el.innerHTML = html;
+}
+
+function _owPrintHtml(rows) {
+  var groups = owGroupByCustomer(rows);
+  var grandTotal = rows.reduce(function(s,r){ return s+r.balance; },0);
+  var L = ['<html><head><title>Outstanding Balances</title><style>',
+    'body{font-family:sans-serif;font-size:12px;padding:20px;color:#222;}h1{font-size:16px;}',
+    'h3{font-size:12px;margin:12px 0 2px;background:#122640;color:#fff;padding:5px 10px;border-radius:4px;display:flex;justify-content:space-between;}',
+    'table{width:100%;border-collapse:collapse;margin-bottom:6px;}',
+    'td,th{padding:4px 6px;border-bottom:1px solid #eee;text-align:left;}',
+    'td.amt,th.amt{text-align:right;}',
+    '.grand{font-size:14px;font-weight:700;margin-bottom:14px;}',
+    '@media print{h3{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}',
+    '</style></head><body>',
+    '<h1>Cookie &amp; Me — Outstanding Balances</h1>',
+    '<p style="color:#666;font-size:11px;">Printed: '+new Date().toLocaleDateString('en-NZ')+'</p>',
+    '<div class="grand">Total outstanding: $'+grandTotal.toFixed(2)+' across '+groups.length+' customer'+(groups.length===1?'':'s')+'</div>'
+  ];
+  groups.forEach(function(g){
+    L.push('<h3><span>'+esc(g.name)+'</span><span>$'+g.total.toFixed(2)+'</span></h3>');
+    L.push('<table><tr><th>Date</th><th>Type</th><th>Reference</th><th>Status</th><th class="amt">Owed</th><th class="amt">Paid</th><th class="amt">Balance</th></tr>');
+    g.rows.forEach(function(r){
+      L.push('<tr><td>'+(r.date?fmtDate(r.date):'—')+'</td><td>'+(r.source==='order'?'Order':'Campaign')+'</td><td>'+esc(r.refLabel)+'</td><td>'+esc(r.paymentStatus)+'</td><td class="amt">$'+r.owed.toFixed(2)+'</td><td class="amt">$'+r.received.toFixed(2)+'</td><td class="amt">$'+r.balance.toFixed(2)+'</td></tr>');
+    });
+    L.push('</table>');
+  });
+  if (!rows.length) L.push('<p>No outstanding balances.</p>');
+  L.push('</body></html>');
+  return L.join('');
+}
+
+function printOutstandingReport() {
+  var w = window.open('','_blank'); w.document.write(_owPrintHtml(owGetFiltered())); w.document.close(); w.print();
+}
+
+function exportOutstandingReportCSV() {
+  var rows = owGetFiltered();
+  var out = [['Customer','Type','Reference','Date','Payment status','Order/Job status','Owed','Received','Balance']];
+  rows.forEach(function(r){
+    out.push([r.customerName, r.source==='order'?'Order':'Campaign', r.refLabel, r.date||'', r.paymentStatus||'', r.status||'', r.owed.toFixed(2), r.received.toFixed(2), r.balance.toFixed(2)]);
+  });
+  var csv = out.map(function(row){ return row.map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+  var a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'outstanding-balances-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
 }
 
 // ── COGS helpers ──────────────────────────────────────
