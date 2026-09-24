@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v65.2</title>
+<title>Cookie & Me — Kitchen Manager v65.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -32992,7 +32992,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v65.2',
+    app_version: 'v65.3',
     tables: {}
   };
 
@@ -36320,15 +36320,16 @@ function renderFinReport() {
       const oNum     = o.order_number || ('ORD-'+String(o.id).slice(-4));
       const oLines   = (orderLines||[]).filter(l=>l.order_id===o.id);
       const cookieSummary = oLines.length ? oLines.map(l=>(l.quantity||'?')+'× '+(l.cookie_type||l.flavour||'Cookie')).join(', ') : '';
+      const lineQty  = oLines.reduce((s,l)=>s+(parseInt(l.quantity)||0),0);
       const allocCtm = frOrderCookieCost(o);
       const grandCogs= totalCogs + allocCtm;
-      const row = { o, oNum, custName, received, costLines, totalCogs, allocCtm, grandCogs, cookieSummary, oType };
+      const row = { o, oNum, custName, received, costLines, totalCogs, allocCtm, grandCogs, cookieSummary, lineQty, oType };
 
       if (!NON_REVENUE_ORDER_TYPES.includes(oType)) {
         // Standard sold order — counts as income
         ordersTotalReceived += received;
         ordersTotalCogs     += grandCogs;
-        ordersTotalQty      += oLines.reduce((s,l)=>s+(parseInt(l.quantity)||0),0);
+        ordersTotalQty      += lineQty;
         if (o.status !== 'Draft') {
           const owed = (parseFloat(o.total)||0) - (parseFloat(o.discount)||0);
           ordersTotalOutstanding += Math.max(0, owed - received);
@@ -36434,7 +36435,9 @@ function renderFinReport() {
     orderGivRows.forEach(function(row) {
       const typeKey = row.oType;
       if (!giv.groupTotals[typeKey]) giv.groupTotals[typeKey]={qty:0,cost:0,label:'Order — '+(typeKey.charAt(0).toUpperCase()+typeKey.slice(1))};
+      giv.groupTotals[typeKey].qty  += row.lineQty;
       giv.groupTotals[typeKey].cost += row.grandCogs;
+      giv.totalQty  += row.lineQty;
       giv.totalCost += row.grandCogs;
       const kohaNote = row.received > 0 ? 'Koha received: '+frFmt(row.received) : '';
       giv.rows.push({kind:'order', row, ctm:row.grandCogs, uncosted:row.grandCogs===0, kohaNote});
@@ -36877,7 +36880,8 @@ function printFinReport(bodyOnly) {
       const cust=(cfg.customers||[]).find(c=>String(c.id)===String(o.customer_id));
       const oLines=(orderLines||[]).filter(l=>l.order_id===o.id);
       const cs=oLines.map(l=>(l.quantity||'?')+'× '+(l.cookie_type||l.flavour||'?')).join(', ');
-      pOrderGivRows.push({o,rec,gc,cust,cs});
+      const qty=oLines.reduce((s,l)=>s+(parseInt(l.quantity)||0),0);
+      pOrderGivRows.push({o,rec,gc,cust,cs,qty});
       if(rec>0) pKohaTotalIncome+=rec;
     });
     if (!soldO.length) { body+='<p style="font-size:11px;color:#888">No orders.</p>'; }
@@ -36986,7 +36990,7 @@ function printFinReport(bodyOnly) {
   body += '<div class="sec-hdr">C — Giveaways</div>';
   body += pGiv.html;
   // Non-sold orders (gift, samples, giveaway, testing, donation) also belong in giveaways
-  let pNonSoldGivCost = 0;
+  let pNonSoldGivCost = 0, pNonSoldGivQty = 0;
   if (f.inclOrders && pOrderGivRows.length) {
     const tLabels={gift:'Gift order',samples:'Samples order',testing:'Testing order',giveaway:'Giveaway order',donation:'Donation order'};
     body+='<div class="sub-hdr">Non-sold orders</div>';
@@ -36996,12 +37000,14 @@ function printFinReport(bodyOnly) {
       const label=tLabels[oType]||(oType.charAt(0).toUpperCase()+oType.slice(1));
       const kohaNote=r.rec>0?'Koha received: '+frFmt(r.rec):'';
       pNonSoldGivCost+=r.gc;
+      pNonSoldGivQty+=r.qty;
       body+='<tr><td>'+(r.o.order_number||'ORD-'+String(r.o.id).slice(-4))+'</td><td>'+(r.cust?custDisplayName(r.cust):'—')+'</td><td class="date-col">'+(frOrderDate(r.o)||'—')+'</td><td>'+pTag(oType)+'</td><td>'+r.cs+'</td><td style="text-align:right;">'+frFmt(r.gc)+'</td><td>'+kohaNote+'</td></tr>';
     });
-    body+='<tr style="font-weight:700;background:#f0ede8;"><td colspan="5">Total — non-sold orders</td><td style="text-align:right;">'+frFmt(pNonSoldGivCost)+'</td><td></td></tr>';
+    body+='<tr style="font-weight:700;background:#f0ede8;"><td colspan="4">Total — non-sold orders</td><td style="text-align:right;">'+pNonSoldGivQty+' cookies</td><td style="text-align:right;">'+frFmt(pNonSoldGivCost)+'</td><td></td></tr>';
     body+='</tbody></table>';
   }
   const pTotalGivCost = pGiv.cost + pNonSoldGivCost;
+  const pTotalGivQty = pGiv.qty + pNonSoldGivQty;
   body += '<div class="sec-hdr">D — Write-offs</div>';
   body += pWoff.html;
   body += '<div class="sec-hdr">E — Donations</div>';
@@ -37101,8 +37107,9 @@ function exportFinReportCSV() {
       const cust=(cfg.customers||[]).find(c=>String(c.id)===String(o.customer_id));
       const oLines=(orderLines||[]).filter(l=>l.order_id===o.id);
       const cs=oLines.map(l=>(l.quantity||'?')+'x '+(l.cookie_type||l.flavour||'?')).join('; ');
+      const qty=oLines.reduce((s,l)=>s+(parseInt(l.quantity)||0),0);
       if(rec>0) csvKohaTotalIncome+=rec;
-      csvOrderGivRows.push({o,rec,gc,cust,cs});
+      csvOrderGivRows.push({o,rec,gc,cust,cs,qty});
     });
     allDateFiltered.filter(o=>!NON_REVENUE_ORDER_TYPES.includes(o.order_type||'')).forEach(function(o){
       const rec=frOrderReceived(o);
@@ -37160,10 +37167,10 @@ function exportFinReportCSV() {
   const colHdr=['Date','Batch / Campaign','Recipient','Type','Method','Qty (cookies)','Cost','Notes'];
 
   function csvAllocRows(types, includeCampBoxes) {
-    const r=[]; let tc=0;
+    const r=[]; let tc=0, tq=0;
     if (f.inclAllocs) {
       (allocs||[]).filter(a=>types.includes(a.type)&&f.allocTypes.includes(a.type)&&frInDateRange(a.date,f.from,f.to)&&(!a.method||f.allocMethods.includes(a.method))&&(!includeCampBoxes||!a.collection_instance_id)).sort((x,y)=>(x.type||'').localeCompare(y.type||'')).forEach(function(a){
-        const ctm=parseFloat(a.cost_to_make)||0; tc+=ctm;
+        const ctm=parseFloat(a.cost_to_make)||0; tc+=ctm; tq+=a.qty||0;
         const ml=(methodLabels[a.method]||a.method||'—')+(a.method==='market'&&a.market?' @ '+a.market:'');
         r.push([a.date||'',a.batch_num||'',frAllocRecipName(a),typeLabels[a.type]||a.type,ml,a.qty||0,ctm.toFixed(2),a.notes||'']);
       });
@@ -37172,12 +37179,12 @@ function exportFinReportCSV() {
       (campaigns||[]).filter(c=>frInDateRange(frCampDate(c),f.from,f.to)).forEach(function(c){
         (campEngagements||[]).filter(e=>e.campaign_id===c.id&&(e.box_type==='Gifted'||e.box_type==='Disposed')).forEach(function(e){
           const cpb=frEngCpb(e);
-          const boxes=e.boxes||0, qty=frEngGiveawayQty(e), ctm=frEngGiveawayCost(e); tc+=ctm;
+          const boxes=e.boxes||0, qty=frEngGiveawayQty(e), ctm=frEngGiveawayCost(e); tc+=ctm; tq+=qty;
           r.push([frCampDate(c)||'',c.name,e.name||'—','Campaign '+e.box_type,boxes+' boxes',qty,ctm.toFixed(2),qty?'$'+(ctm/qty).toFixed(2)+'/cookie':'no cost recorded']);
         });
       });
     }
-    return {rows:r, cost:tc};
+    return {rows:r, cost:tc, qty:tq};
   }
 
   const csvGiv  = csvAllocRows(CSV_GIVEAWAY_TYPES, true);
@@ -37187,9 +37194,9 @@ function exportFinReportCSV() {
   const csvDonTotal=csvDon.cost+csvCampDonTotal;
 
   rows.push(['=== C — GIVEAWAYS ===']); rows.push(colHdr);
-  csvGiv.rows.forEach(function(r){rows.push(r);}); rows.push(['TOTAL','','','','','',csvGiv.cost.toFixed(2),'']); rows.push([]);
+  csvGiv.rows.forEach(function(r){rows.push(r);}); rows.push(['TOTAL','','','','',csvGiv.qty,csvGiv.cost.toFixed(2),'']); rows.push([]);
   // Non-sold orders also belong in Section C
-  let csvNonSoldGivCost = 0;
+  let csvNonSoldGivCost = 0, csvNonSoldGivQty = 0;
   if (f.inclOrders && csvOrderGivRows.length) {
     rows.push(['--- Non-sold orders ---']);
     rows.push(['Order','Customer','Date','Type','Cookies','Cost','Koha received']);
@@ -37198,15 +37205,17 @@ function exportFinReportCSV() {
       const oType=r.o.order_type||'';
       const label=tLabels2[oType]||(oType.charAt(0).toUpperCase()+oType.slice(1));
       csvNonSoldGivCost+=r.gc;
+      csvNonSoldGivQty+=r.qty;
       rows.push([r.o.order_number||'ORD-'+String(r.o.id).slice(-4),r.cust?custDisplayName(r.cust):'—',frOrderDate(r.o)||'',label,r.cs,r.gc.toFixed(2),r.rec>0?r.rec.toFixed(2):'']);
     });
-    rows.push(['TOTAL non-sold orders','','','','',csvNonSoldGivCost.toFixed(2),'']);
+    rows.push(['TOTAL non-sold orders','','','',csvNonSoldGivQty+' cookies',csvNonSoldGivCost.toFixed(2),'']);
     rows.push([]);
   }
   const csvTotalGivCost = csvGiv.cost + csvNonSoldGivCost;
+  const csvTotalGivQty = csvGiv.qty + csvNonSoldGivQty;
 
   rows.push(['=== D — WRITE-OFFS ===']); rows.push(colHdr);
-  csvWoff.rows.forEach(function(r){rows.push(r);}); rows.push(['TOTAL','','','','','',csvWoff.cost.toFixed(2),'']); rows.push([]);
+  csvWoff.rows.forEach(function(r){rows.push(r);}); rows.push(['TOTAL','','','','',csvWoff.qty,csvWoff.cost.toFixed(2),'']); rows.push([]);
 
   rows.push(['=== E — DONATIONS ===']); rows.push(colHdr);
   csvDon.rows.forEach(function(r){rows.push(r);});
