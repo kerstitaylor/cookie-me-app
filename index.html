@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v64.1</title>
+<title>Cookie & Me — Kitchen Manager v64.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -18778,7 +18778,8 @@ function _prBuildCampaigns(campArr, engArr, collTemplates, collInstances) {
     var costCour  = parseFloat(c.cost_courier)||0;
     var costSoc   = parseFloat(c.social_media_expenses)||0;
     var costOther = (c.other_expenses||[]).reduce(function(s,e){ return s+(parseFloat(e.amount)||0); }, 0);
-    var totalCosts = costPkg + costPrint + costIng + costTrans + costCour + engCourierActual + costSoc + costOther + (donationFinal||0);
+    var costProd  = campaignCookieCost(c.id);
+    var totalCosts = costPkg + costPrint + costIng + costTrans + costCour + engCourierActual + costSoc + costOther + costProd + (donationFinal||0);
     var profit = rev - totalCosts;
     if (rev > 0) html += '<tr><th>Revenue received</th><td colspan="3">$' + rev.toFixed(2) + '</td></tr>';
     var outstanding = soldEngs.reduce(function(s,e){
@@ -18800,6 +18801,7 @@ function _prBuildCampaigns(campArr, engArr, collTemplates, collInstances) {
     if (totalCosts > 0) {
       html += '<div style="font-size:11px;font-weight:700;color:#122640;margin:8px 0 4px;">Cost breakdown</div>';
       html += '<table>';
+      if (costProd)          html += '<tr><th>Production cost</th><td colspan="3">$'+costProd.toFixed(2)+'</td></tr>';
       if (costPkg)           html += '<tr><th>Packaging</th><td>$'+costPkg.toFixed(2)+'</td><th>Printing</th><td>$'+costPrint.toFixed(2)+'</td></tr>';
       if (costIng)           html += '<tr><th>Ingredients</th><td>$'+costIng.toFixed(2)+'</td><th>Transport</th><td>$'+costTrans.toFixed(2)+'</td></tr>';
       if (costCour||engCourierActual) html += '<tr><th>Courier (budgeted)</th><td>$'+costCour.toFixed(2)+'</td><th>Courier (actual)</th><td>$'+engCourierActual.toFixed(2)+'</td></tr>';
@@ -30127,7 +30129,7 @@ function renderCampList() {
     const engCourierActual = engs.reduce((s,e)=>s+(e.deliveries||[]).reduce((ds,d)=>d.type==='Courier'?ds+(parseFloat(d.courier_actual)||0):ds,0),0);
     const donationCalc = (c.donation_enabled&&c.donation_per_box)?sold*parseFloat(c.donation_per_box):null;
     const donationFinal = c.donation_actual?parseFloat(c.donation_actual):donationCalc;
-    const totalCosts = (parseFloat(c.cost_packaging)||0)+(parseFloat(c.cost_printing)||0)+(parseFloat(c.cost_ingredients)||0)+(parseFloat(c.cost_transport)||0)+(parseFloat(c.cost_courier)||0)+engCourierActual+(parseFloat(c.social_media_expenses)||0)+((c.other_expenses||[]).reduce((s,e)=>s+(parseFloat(e.amount)||0),0))+(donationFinal||0);
+    const totalCosts = campaignCookieCost(c.id)+(parseFloat(c.cost_packaging)||0)+(parseFloat(c.cost_printing)||0)+(parseFloat(c.cost_ingredients)||0)+(parseFloat(c.cost_transport)||0)+(parseFloat(c.cost_courier)||0)+engCourierActual+(parseFloat(c.social_media_expenses)||0)+((c.other_expenses||[]).reduce((s,e)=>s+(parseFloat(e.amount)||0),0))+(donationFinal||0);
     const profit = rev - totalCosts;
     const hasProfitData = rev>0||totalCosts>0;
     const profitLabel = hasProfitData ? (profit>=0?'Profit: <strong style="color:var(--success);">$'+profit.toFixed(2)+'</strong>':'Loss: <strong style="color:var(--danger);">−$'+Math.abs(profit).toFixed(2)+'</strong>') : '';
@@ -30808,7 +30810,9 @@ function renderCampDetailView(el, c) {
   const legacyLines = [];
   if ((c.cost_transport||0)>0) legacyLines.push({type:'Transport', amount:parseFloat(c.cost_transport)});
   if ((c.cost_courier||0)>0) legacyLines.push({type:'Courier', amount:parseFloat(c.cost_courier)});
+  const campProdCost = campaignCookieCost(c.id);
   const allExpLines = [
+    ...(campProdCost>0?[{type:'Production cost', amount:campProdCost}]:[]),
     ...(c.cost_packaging>0?[{type:'Packaging', amount:parseFloat(c.cost_packaging)}]:[]),
     ...(c.cost_printing>0?[{type:'Printing', amount:parseFloat(c.cost_printing)}]:[]),
     ...(c.cost_ingredients>0?[{type:'Ingredients', amount:parseFloat(c.cost_ingredients)}]:[]),
@@ -32963,7 +32967,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v64.1',
+    app_version: 'v64.2',
     tables: {}
   };
 
