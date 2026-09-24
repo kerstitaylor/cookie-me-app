@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v65.1</title>
+<title>Cookie & Me — Kitchen Manager v65.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -32992,7 +32992,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v65.1',
+    app_version: 'v65.2',
     tables: {}
   };
 
@@ -36262,19 +36262,33 @@ function frEngCpb(e) {
   return tmpl ? (tmpl.cookies_per_box||null) : null;
 }
 
-// Real cost of a gifted/disposed campaign box — summed straight from the allocation
-// row(s) that box was built from (matched by collection_instance_id), each of which
-// already carries its own cost_to_make. Replaces an old hardcoded per-box rate that
-// double-counted once real allocations were costed (the box's cookies were counted
-// once here AND once via the ordinary GIVEAWAY_TYPES sweep over the allocations table).
+// Real cost/qty of a gifted/disposed campaign box — summed from the allocation row(s)
+// that box was built from (matched by collection_instance_id), each of which already
+// carries its own cost_to_make. Replaces an old hardcoded per-box rate that double-
+// counted once real allocations were costed (the box's cookies were counted once here
+// AND once via the ordinary GIVEAWAY_TYPES sweep over the allocations table).
+//
+// One collection_instance_id is routinely shared by several engagements — e.g. five
+// customers each collecting part of one shared box run — so the instance's total can't
+// just be handed to every engagement that references it (that re-reports the whole
+// shared total once per engagement, N-times overcounting it once summed). Apportion it
+// by each engagement's own share of the boxes drawn from that instance instead.
 function frEngGiveawayAllocs(e) {
   return (allocs||[]).filter(function(a){ return a.collection_instance_id === e.collection_instance_id; });
 }
+function frInstanceEngShare(e) {
+  if (e.collection_instance_id == null) return 0;
+  var totalBoxes = (campEngagements||[]).filter(function(x){ return x.collection_instance_id === e.collection_instance_id && !x.deleted_at; })
+    .reduce(function(s,x){ return s+(x.boxes||0); }, 0);
+  return totalBoxes > 0 ? (e.boxes||0) / totalBoxes : 0;
+}
 function frEngGiveawayCost(e) {
-  return frEngGiveawayAllocs(e).reduce(function(s,a){ return s + (parseFloat(a.cost_to_make)||0); }, 0);
+  var total = frEngGiveawayAllocs(e).reduce(function(s,a){ return s + (parseFloat(a.cost_to_make)||0); }, 0);
+  return total * frInstanceEngShare(e);
 }
 function frEngGiveawayQty(e) {
-  return frEngGiveawayAllocs(e).reduce(function(s,a){ return s + (Number(a.qty)||0); }, 0);
+  var total = frEngGiveawayAllocs(e).reduce(function(s,a){ return s + (Number(a.qty)||0); }, 0);
+  return total * frInstanceEngShare(e);
 }
 
 // ── Main render ───────────────────────────────────────
@@ -36292,7 +36306,7 @@ function renderFinReport() {
   let orderRows = [];       // sold orders — income section
   let kohaRows  = [];       // non-sold orders with payments received > $0
   let orderGivRows = [];    // non-sold orders — giveaways section
-  let ordersTotalReceived=0, ordersTotalCogs=0, ordersTotalOutstanding=0;
+  let ordersTotalReceived=0, ordersTotalCogs=0, ordersTotalOutstanding=0, ordersTotalQty=0;
   let kohaTotalReceived=0;
 
   if (f.inclOrders) {
@@ -36314,6 +36328,7 @@ function renderFinReport() {
         // Standard sold order — counts as income
         ordersTotalReceived += received;
         ordersTotalCogs     += grandCogs;
+        ordersTotalQty      += oLines.reduce((s,l)=>s+(parseInt(l.quantity)||0),0);
         if (o.status !== 'Draft') {
           const owed = (parseFloat(o.total)||0) - (parseFloat(o.discount)||0);
           ordersTotalOutstanding += Math.max(0, owed - received);
@@ -36333,7 +36348,7 @@ function renderFinReport() {
 
   // A2 — Campaigns
   let campBlocks = [];
-  let campsTotalReceived=0, campsTotalCogs=0, campsTotalOutstanding=0;
+  let campsTotalReceived=0, campsTotalCogs=0, campsTotalOutstanding=0, campsTotalQty=0;
   if (f.inclCampaigns) {
     (campaigns||[]).filter(c=>frInDateRange(frCampDate(c), f.from, f.to)).forEach(function(c) {
       const engs       = (campEngagements||[]).filter(e=>e.campaign_id===c.id);
@@ -36349,6 +36364,9 @@ function renderFinReport() {
       campsTotalReceived += campReceived;
       campsTotalCogs     += grandCogs;
       campsTotalOutstanding += campOutstanding;
+      // frEngGiveawayQty() apportions a shared collection_instance_id by each
+      // engagement's own box share, so it's safe to sum across engagements here too.
+      campsTotalQty      += soldEngs.filter(e=>!e.deleted_at).reduce((s,e)=>s+frEngGiveawayQty(e),0);
       campBlocks.push({ c, engs, soldEngs, givEngs, campReceived, costLines, totalCogs, allocCtm, grandCogs });
     });
   }
@@ -36783,7 +36801,7 @@ function renderFinReport() {
 
   out.innerHTML = '<div style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">📅 '+dateLabel+' &nbsp;·&nbsp; Generated '+new Date().toLocaleDateString('en-NZ',{day:'2-digit',month:'long',year:'numeric'})+' &nbsp;·&nbsp; Tap a section header to expand.</div>'
     + plHtml
-    + frSection('fr-sec-a', 'A — Income (sold orders &amp; campaigns)', frFmt(grandReceived), secAHtml, false)
+    + frSection('fr-sec-a', 'A — Income (sold orders &amp; campaigns)', (ordersTotalQty+campsTotalQty)+' cookies · '+frFmt(grandReceived), secAHtml, false)
     + frSection('fr-sec-b', 'B — Cost of goods sold (COGS)', '−'+frFmt(grandCogs), bHtml, false)
     + frSection('fr-sec-c', 'C — Giveaways', giv.totalQty+' cookies · '+frFmt(giv.totalCost), cHtml, false)
     + frSection('fr-sec-d', 'D — Write-offs', woff.totalQty+' cookies · '+frFmt(woff.totalCost), dHtml, false)
