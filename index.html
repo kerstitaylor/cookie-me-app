@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v65.0</title>
+<title>Cookie & Me — Kitchen Manager v65.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -32992,7 +32992,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v65.0',
+    app_version: 'v65.1',
     tables: {}
   };
 
@@ -36292,7 +36292,7 @@ function renderFinReport() {
   let orderRows = [];       // sold orders — income section
   let kohaRows  = [];       // non-sold orders with payments received > $0
   let orderGivRows = [];    // non-sold orders — giveaways section
-  let ordersTotalReceived=0, ordersTotalCogs=0;
+  let ordersTotalReceived=0, ordersTotalCogs=0, ordersTotalOutstanding=0;
   let kohaTotalReceived=0;
 
   if (f.inclOrders) {
@@ -36314,6 +36314,10 @@ function renderFinReport() {
         // Standard sold order — counts as income
         ordersTotalReceived += received;
         ordersTotalCogs     += grandCogs;
+        if (o.status !== 'Draft') {
+          const owed = (parseFloat(o.total)||0) - (parseFloat(o.discount)||0);
+          ordersTotalOutstanding += Math.max(0, owed - received);
+        }
         orderRows.push(row);
       } else {
         // Non-revenue order — cost goes to giveaways section
@@ -36329,13 +36333,14 @@ function renderFinReport() {
 
   // A2 — Campaigns
   let campBlocks = [];
-  let campsTotalReceived=0, campsTotalCogs=0;
+  let campsTotalReceived=0, campsTotalCogs=0, campsTotalOutstanding=0;
   if (f.inclCampaigns) {
     (campaigns||[]).filter(c=>frInDateRange(frCampDate(c), f.from, f.to)).forEach(function(c) {
       const engs       = (campEngagements||[]).filter(e=>e.campaign_id===c.id);
       const soldEngs   = engs.filter(e=>!e.box_type||e.box_type==='Sold');
       const givEngs    = engs.filter(e=>e.box_type==='Gifted'||e.box_type==='Disposed');
       const campReceived = soldEngs.reduce((s,e)=>s+frEngReceived(e),0);
+      const campOutstanding = soldEngs.filter(e=>!e.deleted_at).reduce((s,e)=>s+Math.max(0,(parseFloat(e.amount_owed)||0)-frEngReceived(e)),0);
       const costLines  = frCampCosts(c, engs);
       const totalCogs  = costLines.reduce((s,l)=>s+l.amount,0);
       // cost_to_make on sold allocations linked to this campaign
@@ -36343,6 +36348,7 @@ function renderFinReport() {
       const grandCogs  = totalCogs + allocCtm;
       campsTotalReceived += campReceived;
       campsTotalCogs     += grandCogs;
+      campsTotalOutstanding += campOutstanding;
       campBlocks.push({ c, engs, soldEngs, givEngs, campReceived, costLines, totalCogs, allocCtm, grandCogs });
     });
   }
@@ -36350,6 +36356,7 @@ function renderFinReport() {
   const grandReceived = ordersTotalReceived + campsTotalReceived;
   const grandCogs     = ordersTotalCogs     + campsTotalCogs;
   const grossProfit   = grandReceived - grandCogs;
+  const grandOutstanding = ordersTotalOutstanding + campsTotalOutstanding;
 
   // ── Type classification ────────────────────────────
   // Write-offs: cookies consumed with no external recipient (internal loss)
@@ -36724,6 +36731,11 @@ function renderFinReport() {
       : '')
     +'<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;font-family:sans-serif;padding:6px 0 2px;border-top:2px solid var(--navy);margin-top:3px;">'
     +'<span>Net profit (before EBIT)</span><span style="'+netColour(netProfit)+'">'+frFmt(netProfit)+'</span></div>'
+    +(grandOutstanding>0
+      ? '<div style="display:flex;justify-content:space-between;font-size:12px;font-family:sans-serif;padding:6px 0 2px;margin-top:6px;border-top:1px dashed var(--border);color:var(--warning);">'
+        +'<span>⚠ Outstanding — not yet received</span><span style="font-weight:700;">'+frFmt(grandOutstanding)+'</span></div>'
+        +'<div style="font-size:10px;color:var(--text-muted);font-family:sans-serif;">Money owed on sold orders/campaigns that hasn\'t been paid yet — memo only, not included in the figures above.</div>'
+      : '')
     +'</div>';
 
   // ── Assemble output ──
@@ -36819,7 +36831,7 @@ function printFinReport(bodyOnly) {
 
   // Recalculate totals
   let pGrandRec=0, pGrandCogs=0, pGivCost=0;
-  let pOrdersRec=0, pCampsRec=0;
+  let pOrdersRec=0, pCampsRec=0, pOrdersOutstanding=0, pCampsOutstanding=0;
   let pOrderGivRows=[]; // non-sold orders — collected here for Section C
   let pKohaTotalIncome=0; // koha from non-sold orders
 
@@ -36864,6 +36876,10 @@ function printFinReport(bodyOnly) {
         const oLines=(orderLines||[]).filter(l=>l.order_id===o.id);
         const cs=oLines.map(l=>(l.quantity||'?')+'× '+(l.cookie_type||l.flavour||'?')).join(', ');
         pGrandRec+=rec; pGrandCogs+=gc; pOrdersRec+=rec;
+        if (o.status !== 'Draft') {
+          const owed=(parseFloat(o.total)||0)-(parseFloat(o.discount)||0);
+          pOrdersOutstanding += Math.max(0, owed-rec);
+        }
         pOrderRows.push({o,rec,gc});
         body+='<tr><td>'+(o.order_number||'ORD-'+String(o.id).slice(-4))+'</td><td>'+(cust?custDisplayName(cust):'—')+'</td><td class="date-col">'+(frOrderDate(o)||'—')+'</td><td>'+(o.occasion||'')+'</td><td>'+cs+'</td><td>'+(o.payment_status||'')+'</td><td>'+frFmt(rec)+'</td></tr>';
       });
@@ -36888,6 +36904,7 @@ function printFinReport(bodyOnly) {
         const gc=tc+allocCtm;
         const net=cr-gc;
         pGrandRec+=cr; pGrandCogs+=gc; pCampsRec+=cr;
+        pCampsOutstanding += soldEngs.filter(e=>!e.deleted_at).reduce((s,e)=>s+Math.max(0,(parseFloat(e.amount_owed)||0)-frEngReceived(e)),0);
         body+='<div style="margin-bottom:12px;page-break-inside:avoid;">'
           +'<div style="font-size:12px;font-weight:700;margin-bottom:4px;">'+c.name+' <span style="font-size:10px;font-weight:400;color:#888;">'+(frCampDate(c)||'')+'</span></div>'
           +'<table><thead><tr><th>Item</th><th>Amount</th></tr></thead><tbody>';
@@ -37020,6 +37037,10 @@ function printFinReport(bodyOnly) {
     +(pKohaTotal>0?'<div class="pl-total" style="font-size:13px;"><span>Net profit before Koha</span><span class="'+(( pNetProfit-pKohaTotal)>=0?'net-pos':'net-neg')+'">'+frFmt(pNetProfit-pKohaTotal)+'</span></div>':'')
     +(pKohaTotal>0?'<div class="pl-row"><span style="color:#6b6760;">Koha received (voluntary)</span><span style="color:#2d7a4f;">+'+frFmt(pKohaTotal)+'</span></div>':'')
     +'<div class="pl-total" style="font-size:14px;border-top:2px solid #122640;"><span>Net profit (before EBIT)</span><span class="'+(pNetProfit>=0?'net-pos':'net-neg')+'">'+frFmt(pNetProfit)+'</span></div>'
+    +((pOrdersOutstanding+pCampsOutstanding)>0
+      ? '<div class="pl-row" style="margin-top:6px;padding-top:6px;border-top:1px dashed #c8c4bc;color:#a05a00;"><span>⚠ Outstanding — not yet received</span><span style="font-weight:700;">'+frFmt(pOrdersOutstanding+pCampsOutstanding)+'</span></div>'
+        +'<div style="font-size:10px;color:#888;">Money owed on sold orders/campaigns that hasn\'t been paid yet — memo only, not included above.</div>'
+      : '')
     +'</div>';
   body = body.replace(plPlaceholder, plBox);
 
@@ -37047,7 +37068,7 @@ function exportFinReportCSV() {
   rows.push(['=== A — INCOME: CUSTOMER ORDERS ===']);
   rows.push(['Order','Customer','Date','Occasion','Cookies','Payment Status','Received','Ingredients','Packaging','Printing','Social Media','Extra Cookies','Delivery Costs','Other Costs','Alloc CTM','Total COGS','Gross Profit']);
   let pGrandRec=0,pGrandCogs=0;
-  let csvOrdersRec=0, csvCampsRec=0;
+  let csvOrdersRec=0, csvCampsRec=0, csvOrdersOutstanding=0, csvCampsOutstanding=0;
   let csvOrderGivRows=[]; // non-sold orders for Section C
   let csvKohaTotalIncome=0;
   if (f.inclOrders) {
@@ -37075,6 +37096,10 @@ function exportFinReportCSV() {
       const oLines=(orderLines||[]).filter(l=>l.order_id===o.id);
       const cs=oLines.map(l=>(l.quantity||'?')+'x '+(l.cookie_type||l.flavour||'?')).join('; ');
       pGrandRec+=rec; pGrandCogs+=gc; csvOrdersRec+=rec;
+      if (o.status !== 'Draft') {
+        const owed=(parseFloat(o.total)||0)-(parseFloat(o.discount)||0);
+        csvOrdersOutstanding += Math.max(0, owed-rec);
+      }
       const byLabel=function(lbl){ const li=cl.find(x=>x.label===lbl); return li?li.amount.toFixed(2):''; };
       const otherC=cl.filter(l=>!['Ingredients','Packaging','Printing','Social media','Extra cookies','Delivery costs'].includes(l.label)).reduce((s,l)=>s+l.amount,0);
       rows.push([o.order_number||'ORD-'+String(o.id).slice(-4),cust?custDisplayName(cust):'—',frOrderDate(o)||'',o.occasion||'',cs,o.payment_status||'',rec.toFixed(2),byLabel('Ingredients'),byLabel('Packaging'),byLabel('Printing'),byLabel('Social media'),byLabel('Extra cookies'),byLabel('Delivery costs'),otherC||'',allocCtm||'',gc.toFixed(2),(rec-gc).toFixed(2)]);
@@ -37096,6 +37121,7 @@ function exportFinReportCSV() {
       const allocCtm=(allocs||[]).filter(a=>['sold','customer'].includes(a.type)&&a.campaign_ids&&a.campaign_ids.map(String).includes(String(c.id))).reduce((s,a)=>s+(parseFloat(a.cost_to_make)||0),0);
       const gc=tc+allocCtm;
       pGrandRec+=cr; pGrandCogs+=gc; csvCampsRec+=cr;
+      csvCampsOutstanding += soldEngs.filter(e=>!e.deleted_at).reduce((s,e)=>s+Math.max(0,(parseFloat(e.amount_owed)||0)-frEngReceived(e)),0);
       const byLabel=function(lbl){ const li=cl.find(x=>x.label===lbl); return li?li.amount.toFixed(2):''; };
       const otherC=cl.filter(l=>!['Ingredients','Packaging','Printing','Social media','Delivery costs','Donation paid out'].includes(l.label)).reduce((s,l)=>s+l.amount,0);
       rows.push([c.name,frCampDate(c)||'',soldEngs.length,cr.toFixed(2),byLabel('Ingredients'),byLabel('Packaging'),byLabel('Printing'),byLabel('Social media'),byLabel('Delivery costs'),byLabel('Donation paid out'),otherC||'',allocCtm||'',gc.toFixed(2),(cr-gc).toFixed(2)]);
@@ -37202,6 +37228,9 @@ function exportFinReportCSV() {
   rows.push(['Net profit before Koha',(net-csvKohaTotal).toFixed(2)]);
   if(csvKohaTotal>0) rows.push(['Koha received (voluntary)',csvKohaTotal.toFixed(2)]);
   rows.push(['Net profit (before EBIT)',net.toFixed(2)]);
+  if((csvOrdersOutstanding+csvCampsOutstanding)>0) {
+    rows.push(['Outstanding — not yet received (memo only, not included above)',(csvOrdersOutstanding+csvCampsOutstanding).toFixed(2)]);
+  }
 
   downloadCSV('cookie_me_financial_report_'+fromSlug+'_to_'+toSlug+'.csv', [], rows);
 }
