@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v65.3</title>
+<title>Cookie & Me — Kitchen Manager v66.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -1433,6 +1433,26 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           into their batch's unallocated cookies, ready to ice and allocate like any other.
         </p>
         <div id="frozen-list"></div>
+      </div>
+
+      <div class="card" id="frc-card">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>📋 Inventory check</span>
+          <button class="btn btn-sm" id="frc-toggle-btn" style="font-size:11px" onclick="toggleFrcPanel()">Start check</button>
+        </div>
+        <div id="frc-panel" style="display:none">
+          <p style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:10px;">
+            Count what's physically in the freezer for each lot below and enter it — the app will
+            tell you which lots match its own records and which don't, and by how much. Leave a lot
+            blank to skip it.
+          </p>
+          <div id="frc-list"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" onclick="frcCompare()">Compare</button>
+            <button class="btn btn-sm" onclick="printFrcChecklist()">🖨 Print blank checklist</button>
+          </div>
+          <div id="frc-results" style="margin-top:12px;"></div>
+        </div>
       </div>
     </div>
 
@@ -7658,6 +7678,7 @@ function toggleFrozenShowDepleted() {
 }
 
 function renderFrozenStock() {
+  renderFrcPanel();
   const el = document.getElementById('frozen-list');
   if (!el) return;
   const all = frozenLots();
@@ -7717,6 +7738,112 @@ function renderFrozenStock() {
     + '<thead><tr>'
     + ['Batch', 'Frozen', 'Put in', 'In freezer', 'Taken out', 'Written off', 'Use by', 'Note', ''].map(function(h){ return '<th style="' + th + '">' + h + '</th>'; }).join('')
     + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+// ── Frozen inventory check — physical count vs the app's held records ────
+// Deliberately blind: the printed checklist carries no quantities, so a
+// count isn't unconsciously anchored to what the app already believes.
+let frcPanelOpen = false;
+function toggleFrcPanel() {
+  frcPanelOpen = !frcPanelOpen;
+  const panel = document.getElementById('frc-panel');
+  const btn = document.getElementById('frc-toggle-btn');
+  if (panel) panel.style.display = frcPanelOpen ? '' : 'none';
+  if (btn) btn.textContent = frcPanelOpen ? 'Hide' : 'Start check';
+  if (frcPanelOpen) renderFrcPanel();
+}
+
+function renderFrcPanel() {
+  const el = document.getElementById('frc-list');
+  if (!el || !frcPanelOpen) return;
+  const results = document.getElementById('frc-results');
+  if (results) results.innerHTML = '';
+  const lots = activeFrozenLots();
+  if (!lots.length) {
+    el.innerHTML = '<div class="empty">Nothing currently in the freezer to check.</div>';
+    return;
+  }
+  const th = 'text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);font-family:sans-serif;white-space:nowrap;';
+  const td = 'padding:7px 8px;border-bottom:1px solid var(--border);font-family:sans-serif;font-size:12px;vertical-align:top;';
+  const rows = lots.map(function(l) {
+    return '<tr>'
+      + '<td style="' + td + 'font-weight:700;">' + esc(l.batch_num) + '</td>'
+      + '<td style="' + td + 'white-space:nowrap;">' + fmtDate(l.date_frozen) + '</td>'
+      + '<td style="' + td + '"><input type="number" min="0" inputmode="numeric" id="frc-count-' + l.id + '" placeholder="count" style="width:80px;padding:5px 7px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;text-align:right;"/></td>'
+      + '</tr>';
+  }).join('');
+  el.innerHTML = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;"><table style="width:100%;border-collapse:collapse;">'
+    + '<thead><tr>' + ['Batch', 'Frozen on', 'Your count'].map(function(h){ return '<th style="' + th + '">' + h + '</th>'; }).join('')
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function frcCompare() {
+  const lots = activeFrozenLots();
+  const matched = [], mismatched = [];
+  lots.forEach(function(l) {
+    const input = document.getElementById('frc-count-' + l.id);
+    const raw = input ? String(input.value).trim() : '';
+    if (raw === '') return;
+    const counted = parseInt(raw) || 0;
+    const diff = counted - l.qty_held;
+    if (diff === 0) matched.push(l);
+    else mismatched.push({ lot: l, counted: counted, diff: diff });
+  });
+
+  const el = document.getElementById('frc-results');
+  if (!el) return;
+  if (!matched.length && !mismatched.length) {
+    el.innerHTML = '<div class="empty">Enter at least one count above, then compare.</div>';
+    return;
+  }
+
+  let html = '';
+  if (matched.length) {
+    html += '<div style="font-size:12px;font-weight:700;color:#2d7a4f;font-family:sans-serif;margin-bottom:6px;">✓ Match (' + matched.length + ')</div>'
+      + '<div style="margin-bottom:14px;">' + matched.map(function(l) {
+        return '<div style="display:flex;justify-content:space-between;padding:4px 8px;font-size:12px;font-family:sans-serif;border-bottom:1px solid var(--border);">'
+          + '<span>' + esc(l.batch_num) + ' <span style="color:var(--text-muted);">(' + fmtDate(l.date_frozen) + ')</span></span>'
+          + '<span style="font-weight:700;">' + l.qty_held + '</span>'
+          + '</div>';
+      }).join('') + '</div>';
+  }
+  if (mismatched.length) {
+    html += '<div style="font-size:12px;font-weight:700;color:var(--danger);font-family:sans-serif;margin-bottom:6px;">⚠ Don’t match (' + mismatched.length + ')</div>'
+      + '<div>' + mismatched.map(function(m) {
+        const sign = m.diff > 0 ? ('+' + m.diff) : String(m.diff);
+        const signColor = m.diff > 0 ? '#1a7a3c' : 'var(--danger)';
+        return '<div style="padding:6px 8px;font-size:12px;font-family:sans-serif;border-bottom:1px solid var(--border);">'
+          + '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;">'
+          + '<span style="font-weight:700;">' + esc(m.lot.batch_num) + ' <span style="color:var(--text-muted);font-weight:400;">(' + fmtDate(m.lot.date_frozen) + ')</span></span>'
+          + '<span>Your count: <strong>' + m.counted + '</strong> &middot; App: <strong>' + m.lot.qty_held + '</strong></span>'
+          + '</div>'
+          + '<div style="color:' + signColor + ';font-weight:700;margin-top:2px;">Your records are ' + sign + ' vs the app</div>'
+          + '</div>';
+      }).join('') + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function _frcChecklistHtml() {
+  const lots = activeFrozenLots();
+  const styles = 'body{font-family:sans-serif;padding:24px;color:#222;} h1{font-size:18px;margin-bottom:2px;} p{font-size:12px;color:#666;margin-top:0;} table{width:100%;border-collapse:collapse;margin-top:16px;} th,td{border-bottom:1px solid #ccc;padding:9px 8px;text-align:left;font-size:13px;} th{text-transform:uppercase;font-size:10px;letter-spacing:0.04em;color:#777;} .count-line{display:inline-block;width:110px;border-bottom:1px solid #999;height:14px;}';
+  const rows = lots.map(function(l) {
+    return '<tr><td>' + esc(l.batch_num) + '</td><td>' + fmtDate(l.date_frozen) + '</td><td><span class="count-line">&nbsp;</span></td></tr>';
+  }).join('');
+  const body = '<h1>Freezer Inventory Check</h1>'
+    + '<p>Printed ' + fmtDate(today()) + ' &middot; count each lot in the freezer before comparing against the app</p>'
+    + (lots.length
+        ? '<table><thead><tr><th>Batch</th><th>Frozen on</th><th>Count</th></tr></thead><tbody>' + rows + '</tbody></table>'
+        : '<p>Nothing currently in the freezer.</p>');
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Freezer_Inventory_Check_' + today() + '</title><style>' + styles + '</style></head><body>' + body + '</body></html>';
+}
+
+function printFrcChecklist() {
+  const w = window.open('', '_blank');
+  if (!w) { alert('Pop-up blocked. Please allow pop-ups for this page.'); return; }
+  w.document.write(_frcChecklistHtml());
+  w.document.close();
+  w.print();
 }
 
 // ── What became of a lot, shown under it ─────────────────────────────────
@@ -32992,7 +33119,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v65.3',
+    app_version: 'v66.0',
     tables: {}
   };
 
