@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v67.0</title>
+<title>Cookie & Me — Kitchen Manager v67.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -606,7 +606,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </button>
           <span class="sync-status" id="sync-status">Connected</span>
           <span id="hdr-version" style="font-size:9px;opacity:0.45;font-family:sans-serif;letter-spacing:0.02em;"></span>
-          <span id="hdr-test-badge" style="display:none;font-size:9px;font-weight:700;font-family:sans-serif;letter-spacing:0.02em;background:var(--orange);color:white;border-radius:99px;padding:2px 7px;white-space:nowrap;">Test version v67.0</span>
+          <span id="hdr-test-badge" style="display:none;font-size:9px;font-weight:700;font-family:sans-serif;letter-spacing:0.02em;background:var(--orange);color:white;border-radius:99px;padding:2px 7px;white-space:nowrap;">Test version v67.1</span>
         </div>
       </div>
       <div class="tab-bar" id="main-tabs">
@@ -1790,6 +1790,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <p style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px">Date and time auto-populate — edit if recording retrospectively.</p>
         <div id="fr-warn" style="display:none" class="alert alert-danger">Temperature above 5°C — food safety risk. Record action taken.</div>
         <div class="field" id="fr-action-f" style="display:none"><label>Action taken</label><textarea id="fr-action" placeholder="What did you do?"></textarea></div>
+        <div id="fr-missing" style="display:none;margin-bottom:10px;"></div>
         <button class="btn btn-primary" onclick="saveFridgeTemp()">Save temperature record</button>
         <div id="fr-msg" class="alert alert-success" style="display:none;margin-top:8px"></div>
         <div style="margin-top:12px">
@@ -14743,7 +14744,89 @@ function setFridgeHistSort(order) {
   renderFridgeHistFull();
 }
 
+// ── Days with no fridge reading ──
+// Lists every day in the last FRIDGE_MISSING_LOOKBACK_DAYS (up to yesterday, never before the
+// first reading) that has no fridge log. "Add" puts the date into the form; once a reading is
+// saved for it, it drops off this list and shows in Recent readings like any other record.
+// The bin marks the day as "no temperature taken" — stored in config key fridgeSkippedDates
+// as {id:date, date, skipped, by, at} so it is shared across devices and can be undone.
+const FRIDGE_MISSING_LOOKBACK_DAYS = 30;
+
+function _frAddDays(ymd, n) {
+  const p = String(ymd).split('-').map(Number);
+  return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10);
+}
+
+function fridgeMissingDates() {
+  const have = new Set((fridgeLogs || []).map(r => r && r.date).filter(Boolean));
+  const skipped = new Set((cfg.fridgeSkippedDates || []).filter(x => x && x.skipped).map(x => x.date));
+  const dates = [...have].filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  if (!dates.length) return [];
+  const t = today();
+  let from = _frAddDays(t, -FRIDGE_MISSING_LOOKBACK_DAYS);
+  if (dates[0] > from) from = dates[0];
+  const out = [];
+  for (let d = _frAddDays(t, -1); d >= from; d = _frAddDays(d, -1)) {
+    if (!have.has(d) && !skipped.has(d)) out.push(d);
+  }
+  return out; // newest first
+}
+
+function renderFridgeMissing() {
+  const el = document.getElementById('fr-missing'); if (!el) return;
+  const missing = fridgeMissingDates();
+  if (!missing.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<div style="border:1px solid rgba(160,90,0,0.25);background:var(--warning-bg);border-radius:var(--radius);padding:8px 10px;font-family:sans-serif;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--warning);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">'
+    + missing.length + ' day' + (missing.length === 1 ? '' : 's') + ' with no reading <span style="font-weight:400;text-transform:none;letter-spacing:0">(last ' + FRIDGE_MISSING_LOOKBACK_DAYS + ' days)</span></div>'
+    + '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">Tap <strong>Add</strong> to record a reading you took that day, or 🗑 if no temperature was taken.</div>'
+    + missing.map(d => {
+        const label = new Date(d + 'T12:00:00').toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+        return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-top:1px solid rgba(160,90,0,0.15);">'
+          + '<span style="flex:1;font-size:13px;color:var(--text);">' + esc(label) + '</span>'
+          + '<button type="button" class="btn btn-sm" data-frm-add="' + esc(d) + '" style="font-size:11px;padding:3px 10px;">Add</button>'
+          + '<button type="button" class="btn-del" data-frm-skip="' + esc(d) + '" title="No temperature taken this day" style="font-size:10px;padding:3px 8px;">🗑</button>'
+          + '</div>';
+      }).join('')
+    + '</div>';
+}
+
+async function _fridgeSetSkipped(date, skipped) {
+  const by = (typeof getCurrentUser === 'function' && getCurrentUser()) || (document.getElementById('fr-by') || {}).value || '';
+  const item = { id: date, date: date, skipped: skipped, by: by, at: new Date().toISOString() };
+  const ok = await saveCfgArrayItem('fridgeSkippedDates', item);
+  if (!ok) { _showSaveFailedMsg('fr-msg', 'Could not update the list of days with no reading — check your connection and try again.'); }
+  renderFridgeMissing();
+  return ok;
+}
+
+(function() {
+  const box = document.getElementById('fr-missing');
+  if (!box) return;
+  box.addEventListener('click', async function(e) {
+    const add = e.target.closest('[data-frm-add]');
+    if (add) {
+      const d = add.getAttribute('data-frm-add');
+      const dEl = document.getElementById('fr-d'); if (dEl) dEl.value = d;
+      const tEl = document.getElementById('fr-t'); if (tEl) { tEl.value = ''; tEl.focus(); }
+      checkFridgeTemp();
+      showMsg('fr-msg', 'Date set to ' + fmtDate(d) + ' — enter the time and temperature you recorded that day.', 'warning');
+      return;
+    }
+    const skip = e.target.closest('[data-frm-skip]');
+    if (skip) {
+      const d = skip.getAttribute('data-frm-skip');
+      skip.disabled = true;
+      const ok = await _fridgeSetSkipped(d, true);
+      if (ok) showDeleteToast(fmtDate(d) + ' removed — no temperature taken', async function() { await _fridgeSetSkipped(d, false); });
+      else skip.disabled = false;
+    }
+  });
+})();
+
 function renderFridgeHist() {
+  renderFridgeMissing();
   const el = document.getElementById('fr-hist'); if (!el) return;
   if (!fridgeLogs.length) { el.innerHTML='<div class="empty">No records yet.</div>'; return; }
   const sorted = [...fridgeLogs].sort((a,b)=>{
@@ -34008,7 +34091,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v67.0',
+    app_version: 'v67.1',
     tables: {}
   };
 
