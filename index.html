@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v67.1</title>
+<title>Cookie & Me — Kitchen Manager v67.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -606,7 +606,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </button>
           <span class="sync-status" id="sync-status">Connected</span>
           <span id="hdr-version" style="font-size:9px;opacity:0.45;font-family:sans-serif;letter-spacing:0.02em;"></span>
-          <span id="hdr-test-badge" style="display:none;font-size:9px;font-weight:700;font-family:sans-serif;letter-spacing:0.02em;background:var(--orange);color:white;border-radius:99px;padding:2px 7px;white-space:nowrap;">Test version v67.1</span>
+          <span id="hdr-test-badge" style="display:none;font-size:9px;font-weight:700;font-family:sans-serif;letter-spacing:0.02em;background:var(--orange);color:white;border-radius:99px;padding:2px 7px;white-space:nowrap;">Test version v67.2</span>
         </div>
       </div>
       <div class="tab-bar" id="main-tabs">
@@ -1848,6 +1848,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         </div>
         <div class="field"><label>Checked by</label><select id="pest-by" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text)"></select></div>
         <p style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px">Date and time auto-populate — edit if recording retrospectively.</p>
+        <div id="pest-missing" style="display:none;margin-bottom:10px;"></div>
         <div style="display:flex;gap:8px;">
           <button class="btn btn-primary" style="flex:1" onclick="savePest()">Save pest check record</button>
           <button class="btn" style="flex:1;margin-top:0;" onclick="cancelCL('pest')">Cancel</button>
@@ -15255,20 +15256,99 @@ function _pestDaysBetween(a, b) { // whole days from a to b (YYYY-MM-DD)
 
 // Returns null when it could not check (load error), else
 // { last, dueDate, missed:[due dates already passed], dueToday:bool, never:bool }.
+// Walks the fortnightly schedule from the pest checks on record. A due date counts as covered
+// when a check was recorded between the previous check and that due date, or late — before the
+// following due date. A due date with no check at all is "missed", unless it was removed with
+// the bin (config key pestSkippedDates). Looks back at most PEST_MISSED_LOOKBACK_DAYS.
+const PEST_MISSED_LOOKBACK_DAYS = 365;
+
+function pestScheduleFrom(dates, skippedSet) {
+  const t = today();
+  const sorted = [...new Set(dates)].sort();
+  if (!sorted.length) return { last: null, dueDate: t, missed: [], dueToday: true, never: true };
+  const horizon = _pestAddDays(t, -PEST_MISSED_LOOKBACK_DAYS);
+  let start = sorted[0];
+  sorted.forEach(d => { if (d <= horizon) start = d; });
+  const missed = [];
+  let cur = start, due = null, guard = 0;
+  while (guard++ < 2000) {
+    due = _pestAddDays(cur, PEST_CHECK_INTERVAL_DAYS);
+    const next = sorted.find(d => d > cur);
+    if (next && next <= due) { cur = next; continue; }        // done on time
+    if (due >= t) break;                                     // not due yet (or due today)
+    if (next && next < _pestAddDays(due, PEST_CHECK_INTERVAL_DAYS)) { cur = next; continue; } // done late
+    if (!skippedSet.has(due)) missed.push(due);
+    cur = due;
+  }
+  return { last: sorted[sorted.length - 1], dueDate: due, missed: missed.reverse(), dueToday: due === t, never: false };
+}
+
+// Returns null when it could not check (load error), else
+// { last, dueDate, missed:[missed due dates, newest first], dueToday:bool, never:bool }.
 async function getPestCheckStatus() {
   const { data, error } = await db.from('logs').select('*').eq('log_type','checklist');
   if (error || !data) { console.error('Pest reminder: could not load pest checks', error); return null; }
   const dates = data.filter(r => r.data && r.data.type === 'pest' && /^\d{4}-\d{2}-\d{2}$/.test(r.data.date || ''))
-    .map(r => r.data.date).sort();
-  const t = today();
-  if (!dates.length) return { last: null, dueDate: t, missed: [], dueToday: true, never: true };
-  const last = dates[dates.length - 1];
-  const missed = [];
-  let due = _pestAddDays(last, PEST_CHECK_INTERVAL_DAYS);
-  while (due < t && missed.length < 500) { missed.push(due); due = _pestAddDays(due, PEST_CHECK_INTERVAL_DAYS); }
-  // `due` is now the next due date on or after today.
-  return { last, dueDate: due, missed, dueToday: due === t, never: false };
+    .map(r => r.data.date);
+  const skipped = new Set((cfg.pestSkippedDates || []).filter(x => x && x.skipped).map(x => x.date));
+  return pestScheduleFrom(dates, skipped);
 }
+
+// ── Missed pest checks list on the Pest check form ──
+// "Add" puts the due date into the form; once a check is saved it drops off the list.
+// The bin marks a due date as "no check was done" (pestSkippedDates, with undo).
+async function renderPestMissing() {
+  const el = document.getElementById('pest-missing'); if (!el) return;
+  let st = null;
+  try { st = await getPestCheckStatus(); } catch(e) { console.error('renderPestMissing', e); }
+  if (!st || st.never || !st.missed.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const missed = st.missed;
+  el.style.display = 'block';
+  el.innerHTML = '<div style="border:1px solid rgba(160,90,0,0.25);background:var(--warning-bg);border-radius:var(--radius);padding:8px 10px;font-family:sans-serif;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--warning);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">'
+    + missed.length + ' missed pest check' + (missed.length === 1 ? '' : 's') + ' <span style="font-weight:400;text-transform:none;letter-spacing:0">(due every ' + PEST_CHECK_INTERVAL_DAYS + ' days)</span></div>'
+    + '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">Tap <strong>Add</strong> to record a check you did around that date, or 🗑 if no check was done.</div>'
+    + missed.map(d => {
+        const label = new Date(d + 'T12:00:00').toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+        return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-top:1px solid rgba(160,90,0,0.15);">'
+          + '<span style="flex:1;font-size:13px;color:var(--text);">Due ' + esc(label) + '</span>'
+          + '<button type="button" class="btn btn-sm" data-pm-add="' + esc(d) + '" style="font-size:11px;padding:3px 10px;">Add</button>'
+          + '<button type="button" class="btn-del" data-pm-skip="' + esc(d) + '" title="No pest check was done" style="font-size:10px;padding:3px 8px;">🗑</button>'
+          + '</div>';
+      }).join('')
+    + '</div>';
+}
+
+async function _pestSetSkipped(date, skipped) {
+  const by = (typeof getCurrentUser === 'function' && getCurrentUser()) || (document.getElementById('pest-by') || {}).value || '';
+  const ok = await saveCfgArrayItem('pestSkippedDates', { id: date, date: date, skipped: skipped, by: by, at: new Date().toISOString() });
+  if (!ok) _showSaveFailedMsg('pest-msg', 'Could not update the list of missed pest checks — check your connection and try again.');
+  await renderPestMissing();
+  return ok;
+}
+
+(function() {
+  const box = document.getElementById('pest-missing');
+  if (!box) return;
+  box.addEventListener('click', async function(e) {
+    const add = e.target.closest('[data-pm-add]');
+    if (add) {
+      const d = add.getAttribute('data-pm-add');
+      const dEl = document.getElementById('pest-date'); if (dEl) dEl.value = d;
+      const items = document.getElementById('pest-items'); if (items) items.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      showMsg('pest-msg', 'Date set to ' + fmtDate(d) + ' — change it to the day you actually did the check if different, tick the checklist, then save.', 'warning');
+      return;
+    }
+    const skip = e.target.closest('[data-pm-skip]');
+    if (skip) {
+      const d = skip.getAttribute('data-pm-skip');
+      skip.disabled = true;
+      const ok = await _pestSetSkipped(d, true);
+      if (ok) showDeleteToast('Pest check due ' + fmtDate(d) + ' removed', async function() { await _pestSetSkipped(d, false); });
+      else skip.disabled = false;
+    }
+  });
+})();
 
 // "Remind me later" just closes it — it comes back at the next app open or close-down save.
 async function checkPestReminder() {
@@ -15314,6 +15394,7 @@ function snoozePestReminder() {
 
 // ── Pest check recent records ──
 async function renderPestRecent() {
+  renderPestMissing();
   const el = document.getElementById('pest-recent-list'); if (!el) return;
   const { data } = await db.from('logs').select('*').eq('log_type','checklist').order('id', {ascending: false});
   const records = (data||[]).filter(r=>r.data&&r.data.type==='pest').slice(0,10);
@@ -34091,7 +34172,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v67.1',
+    app_version: 'v67.2',
     tables: {}
   };
 
