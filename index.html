@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cookie & Me — Kitchen Manager v66.0</title>
+<title>Cookie & Me — Kitchen Manager v67.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="document.write('<script src=\'https://unpkg.com/@supabase/supabase-js@2\'><\/script>')"></script>
 <style>
 :root {
@@ -606,6 +606,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           </button>
           <span class="sync-status" id="sync-status">Connected</span>
           <span id="hdr-version" style="font-size:9px;opacity:0.45;font-family:sans-serif;letter-spacing:0.02em;"></span>
+          <span id="hdr-test-badge" style="display:none;font-size:9px;font-weight:700;font-family:sans-serif;letter-spacing:0.02em;background:var(--orange);color:white;border-radius:99px;padding:2px 7px;white-space:nowrap;">Test version v67.0</span>
         </div>
       </div>
       <div class="tab-bar" id="main-tabs">
@@ -862,13 +863,31 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
             <input id="iunt-other" placeholder="Enter custom unit..." style="display:none;margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text)"/>
           </div>
           <div class="field"><label>Quantity</label>
-            <input id="iq" type="number" value="1" min="1" step="1" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text)"/>
+            <input id="iq" type="number" value="1" min="1" step="1" oninput="ingMultiLotSync()" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text)"/>
           </div>
         </div>
         <div class="r3">
           <div class="field"><label>Unit cost $</label><input id="ico" type="number" placeholder="0.00" step="0.01"/></div>
-          <div class="field"><label>Batch/lot no.</label><input id="ibn" placeholder="from label"/></div>
-          <div class="field"><label>Best before</label><input id="ibb" type="date"/></div>
+          <div class="field" id="ibn-field"><label>Batch/lot no.</label><input id="ibn" placeholder="from label"/></div>
+          <div class="field" id="ibb-field"><label>Best before</label><input id="ibb" type="date"/></div>
+        </div>
+        <div id="ing-ml-link-wrap" style="display:none;margin:-4px 0 10px;text-align:right;">
+          <button type="button" onclick="ingMultiLotOpen()" style="background:none;border:none;padding:0;color:var(--navy);text-decoration:underline;cursor:pointer;font-size:12px;font-family:sans-serif">+ Different lot numbers in this purchase</button>
+        </div>
+        <div id="ing-ml" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--gray-light);font-family:sans-serif;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap;">
+            <div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.05em;">Lot numbers in this purchase</div>
+            <button type="button" onclick="ingMultiLotClose()" style="background:none;border:none;padding:0;color:var(--navy);text-decoration:underline;cursor:pointer;font-size:12px;font-family:sans-serif">Use a single lot number</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 70px 32px;gap:6px;font-size:11px;color:var(--text-muted);margin-bottom:4px;">
+            <div>Lot no.</div><div>Best before</div><div>How many</div><div></div>
+          </div>
+          <div id="ing-ml-rows"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-sm" onclick="ingMultiLotAddRow()">+ Add row</button>
+            <div id="ing-ml-count" style="font-size:12px;font-weight:600;"></div>
+          </div>
+          <div id="ing-ml-err" class="alert alert-danger" style="display:none;margin:8px 0 0;"></div>
         </div>
         <div class="r2">
           <div class="field"><label>Temp (if req.)</label><input id="itv" placeholder="e.g. 4.3°C"/></div>
@@ -1666,10 +1685,21 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
             <button class="btn btn-sm" onclick="resetCL('setup')">Reset</button>
           </div>
         </div>
+        <div id="su-fridge-block" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--gray-light)">
+          <div id="su-fridge-done" class="alert alert-success" style="display:none;margin-bottom:8px">
+            <span id="su-fridge-done-txt"></span>
+          </div>
+          <div id="su-fridge-entry">
+            <div class="field" style="margin-bottom:6px"><label>Fridge temperature (°C) <span id="su-fridge-req" style="font-weight:400;color:var(--text-muted);font-size:11px">(required — no reading yet for this date)</span></label><input id="cl-su-fridge" type="number" step="0.1" placeholder="e.g. 3.5" oninput="suFridgeInput()"/></div>
+            <p style="font-size:11px;color:var(--text-muted);font-family:sans-serif;margin-bottom:6px">Must be at or below 5°C. Use probe thermometer, not the fridge display. <span id="su-fridge-hint">Also saved to the fridge temperature log.</span></p>
+            <div id="su-fr-warn" style="display:none" class="alert alert-danger">Temperature above 5°C — food safety risk. Record action taken.</div>
+            <div class="field" id="su-fr-action-f" style="display:none"><label>Action taken</label><textarea id="su-fr-action" placeholder="What did you do?"></textarea></div>
+            <div id="su-fridge-err" class="alert alert-danger" style="display:none;margin-bottom:0"></div>
+          </div>
+        </div>
         <div id="setup-items"></div>
         <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-light)">
           <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Session details</div>
-          <div class="field"><label>Fridge temp at start (°C)</label><input id="cl-su-fridge" type="number" step="0.1" placeholder="e.g. 3.5"/></div>
           <div class="field"><label>Session notes <span style="font-weight:400;color:var(--text-muted);font-size:11px">(optional)</span></label>
             <input id="cl-su-occasion" placeholder="e.g. ANZAC campaign, Trial bake, anything worth noting..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text);font-family:sans-serif;"/>
           </div>
@@ -1677,7 +1707,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
           <div id="setup-task-rows"></div>
           <button type="button" class="btn btn-sm" style="margin-bottom:10px" onclick="addSetupTaskRow()">+ Add task / batch</button>
           <div class="r2">
-            <div class="field"><label>Date</label><input id="cl-su-date" type="date"/></div>
+            <div class="field"><label>Date</label><input id="cl-su-date" type="date" onchange="refreshSetupFridgeState()"/></div>
             <div class="field"><label>Time</label><input id="cl-su-time" type="time"/></div>
           </div>
           <div class="field"><label>Signed off by</label><select id="cl-su-by" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--white);color:var(--text)"></select></div>
@@ -1721,6 +1751,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
             <div style="font-size:11px;font-weight:700;color:var(--navy);font-family:sans-serif;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Production summary (if baking session)</div>
             <button type="button" id="copy-from-setup-btn" class="btn btn-sm" style="margin-bottom:8px;font-size:11px;" onclick="copyFromSetup()">📋 Copy from a recent setup record</button>
             <div id="copy-from-setup-panel" style="display:none;background:var(--gray-light);border-radius:var(--radius);padding:10px;margin-bottom:8px;font-family:sans-serif;"></div>
+            <div id="close-autolink-note" class="alert alert-success" style="display:none;font-size:12px;"><span id="close-autolink-txt"></span> <button type="button" onclick="undoCloseAutoLink()" style="background:none;border:none;padding:0 0 0 4px;color:var(--navy);text-decoration:underline;cursor:pointer;font-size:12px;font-family:sans-serif">Undo</button></div>
             <div id="close-activity-rows"></div>
             <button type="button" class="btn btn-sm" style="margin-bottom:10px" onclick="addCloseActivityRow()">+ Add activity</button>
             <div class="field"><label>Issues / notes (leave blank if none)</label><textarea id="cl-cl-issues" placeholder="Any issues, deviations or notes for this session..." style="min-height:48px;"></textarea></div>
@@ -1746,6 +1777,7 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
     <div id="fridge-cl" class="section">
       <div class="card">
         <div class="card-title">Fridge temperature log</div>
+        <div id="fr-today-info" class="alert alert-success" style="display:none"></div>
         <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;font-family:sans-serif">Must be at or below 5°C. Use probe thermometer, not the fridge display.</p>
         <div class="r2">
           <div class="field"><label>Date</label><input id="fr-d" type="date"/></div>
@@ -3924,26 +3956,10 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
         <div class="card" style="margin-bottom:10px;">
           <div class="card-title">Section 1 — Customer</div>
 
-          <!-- Customer search/select -->
-          <div class="field" style="position:relative;">
-            <label>Organisation</label>
-            <input id="orf-org" placeholder="Type organisation or customer name..." autocomplete="off"
-              oninput="orderCustSearch(this.value)"
-              style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);"/>
-            <div id="orf-cust-dropdown" style="display:none;position:absolute;left:0;right:0;top:100%;background:var(--white);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:50;max-height:180px;overflow-y:auto;"></div>
-          </div>
-          <input type="hidden" id="orf-cust-id" value=""/>
-
-          <!-- Auto-filled customer fields (editable) -->
-          <div id="orf-cust-fields">
-            <div class="field" style="position:relative;"><label>Customer name</label>
-              <input id="orf-cust-search" placeholder="Auto-filled, or type name to search..." autocomplete="off" oninput="orderNameSearch(this.value)"/>
-              <div id="orf-name-dropdown" style="display:none;position:absolute;left:0;right:0;top:100%;background:var(--white);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:50;max-height:180px;overflow-y:auto;"></div>
-            </div>
-
-          <!-- Inline new customer toggle -->
-          <div style="margin-bottom:8px;">
-            <button class="btn btn-sm" onclick="toggleNewCustInline()" id="orf-new-cust-btn" style="font-size:11px;">+ Add new customer instead</button>
+          <!-- Existing / New customer toggle -->
+          <div id="orf-cust-mode" style="display:flex;margin-bottom:10px;border:1px solid var(--navy);border-radius:var(--radius);overflow:hidden;font-family:sans-serif;">
+            <button type="button" id="orf-cust-mode-existing" onclick="setOrfCustMode('existing')" style="flex:1;padding:8px 10px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:var(--navy);color:white;">Existing customer</button>
+            <button type="button" id="orf-cust-mode-new" onclick="setOrfCustMode('new')" style="flex:1;padding:8px 10px;border:none;border-left:1px solid var(--navy);cursor:pointer;font-size:13px;font-weight:600;background:var(--white);color:var(--navy);">New customer</button>
           </div>
           <div id="orf-new-cust-panel" style="display:none;background:var(--gray-light);border-radius:var(--radius);padding:10px;margin-bottom:8px;">
             <div style="font-size:11px;font-weight:700;font-family:sans-serif;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em;">New customer</div>
@@ -3964,6 +3980,23 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
             </div>
             <button class="btn btn-primary btn-sm" onclick="saveNewCustInline()">Create customer &amp; use</button>
           </div>
+
+          <!-- Customer search/select -->
+          <div class="field" id="orf-org-field" style="position:relative;">
+            <label>Organisation</label>
+            <input id="orf-org" placeholder="Type organisation or customer name..." autocomplete="off"
+              oninput="orderCustSearch(this.value)"
+              style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);"/>
+            <div id="orf-cust-dropdown" style="display:none;position:absolute;left:0;right:0;top:100%;background:var(--white);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:50;max-height:180px;overflow-y:auto;"></div>
+          </div>
+          <input type="hidden" id="orf-cust-id" value=""/>
+
+          <!-- Auto-filled customer fields (editable) -->
+          <div id="orf-cust-fields">
+            <div class="field" style="position:relative;"><label>Customer name</label>
+              <input id="orf-cust-search" placeholder="Auto-filled, or type name to search..." autocomplete="off" oninput="orderNameSearch(this.value)"/>
+              <div id="orf-name-dropdown" style="display:none;position:absolute;left:0;right:0;top:100%;background:var(--white);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:50;max-height:180px;overflow-y:auto;"></div>
+            </div>
             <div class="r2">
               <div class="field"><label>Phone</label><input id="orf-phone" placeholder="Auto-filled from customer"/></div>
               <div class="field"><label>Email</label><input id="orf-email" placeholder="Auto-filled from customer"/></div>
@@ -5215,6 +5248,16 @@ body { font-family: 'Georgia', serif; background: var(--cream); color: var(--tex
 </div>
 
 <script>
+// Shows a small "Test version" badge in the header. Set to false once this version is adopted.
+const SHOW_TEST_BADGE = false;
+// A pest check is due this many days after the last one (14 = fortnightly, 30 = monthly).
+// The pest reminder pop-up uses this to work out which checks have been missed.
+const PEST_CHECK_INTERVAL_DAYS = 14;
+(function() {
+  var b = document.getElementById('hdr-test-badge');
+  if (b) b.style.display = SHOW_TEST_BADGE ? 'inline-block' : 'none';
+})();
+
 // ═══════════════════════════════════════════════════════
 // SUPABASE INIT
 // ═══════════════════════════════════════════════════════
@@ -5883,6 +5926,7 @@ function _doApplySetup(setupData) {
     // Hide the picker panel
     const panel = document.getElementById('copy-from-setup-panel');
     if (panel) panel.style.display = 'none';
+    const _caln = document.getElementById('close-autolink-note'); if (_caln) _caln.style.display = 'none';
     showMsg('close-msg', 'Copied ' + (setupData.tasks||[]).length + ' task(s) from setup record \u2713');
   };
 
@@ -6666,6 +6710,9 @@ async function saveIcingSession() {
 
   showSaveToast('Icing session saved');
   showMsg('icing-session-msg', 'Icing session saved ✓', 'success');
+  var _wnIcedIds = Object.keys(byBatch);
+  var _wnIcedBatch = _wnIcedIds.length === 1 ? batches.find(function(b){ return b.id === parseInt(_wnIcedIds[0]); }) : null;
+  showWhatsNext('icing', document.getElementById('icing-session-msg'), 'icing', { batchNum: _wnIcedBatch ? _wnIcedBatch.num : '' });
   var container = document.getElementById('icing-entries-container');
   if (container) { container.innerHTML = ''; addIcingEntry(); }
   renderIcingRecent();
@@ -7134,34 +7181,78 @@ function populateDecRows(prefix, icingMaterials) {
 // SUPABASE HELPERS
 // ═══════════════════════════════════════════════════════
 async function loadCfg() {
-  const { data } = await db.from('config').select('key,value');
-  if (data && data.length) {
-    data.forEach(row => {
-      if (row.key && row.value !== null) cfg[row.key] = row.value;
-    });
+  const { data, error } = await db.from('config').select('key,value');
+  // A failed read must never fall through to the seeding below — that would upsert defaults
+  // over the real saved values. Throwing lets safeLoad() record 'cfg' in _loadFailures.
+  if (error) {
+    console.error('loadCfg: config select failed', error);
+    throw error;
   }
-  if (!cfg.unit_types) {
+  // An empty result is treated as a failed read too: the live config table is never empty,
+  // and seeding into it on a bad read would overwrite real settings.
+  if (!data || !data.length) {
+    console.error('loadCfg: config select returned no rows — treating as a load failure');
+    throw new Error('config returned no rows');
+  }
+  // Keys the server actually returned (even with a null value). Defaults are only ever
+  // seeded for a key that is genuinely absent from this set — never because the local
+  // cfg object happens to lack it.
+  const serverKeys = new Set();
+  data.forEach(row => {
+    if (row.key) serverKeys.add(row.key);
+    if (row.key && row.value !== null) cfg[row.key] = row.value;
+  });
+  if (!serverKeys.has('unit_types')) {
     cfg.unit_types = ["ml", "g", "kg", "units", "dozen"];
     await saveCfgKey('unit_types', cfg.unit_types);
+  } else if (!cfg.unit_types) {
+    cfg.unit_types = ["ml", "g", "kg", "units", "dozen"]; // in-memory fallback only, not saved
   }
-  if (!cfg.stepsLibrary || !cfg.stepsLibrary.length) {
+  if (!serverKeys.has('stepsLibrary')) {
     cfg.stepsLibrary = DEFAULT_CFG.stepsLibrary;
     await saveCfgKey('stepsLibrary', cfg.stepsLibrary);
+  } else if (!cfg.stepsLibrary || !cfg.stepsLibrary.length) {
+    cfg.stepsLibrary = DEFAULT_CFG.stepsLibrary; // in-memory fallback only, not saved
   } else if (typeof cfg.stepsLibrary[0] === 'string') {
     migrateStepsLibrary();
   }
-  if (!cfg.leadSources) {
+  if (!serverKeys.has('leadSources')) {
     cfg.leadSources = ['Instagram', 'Facebook', 'Market stall', 'Word of mouth', 'Email', 'Phone'];
     await saveCfgKey('leadSources', cfg.leadSources);
+  } else if (!cfg.leadSources) {
+    cfg.leadSources = ['Instagram', 'Facebook', 'Market stall', 'Word of mouth', 'Email', 'Phone']; // in-memory fallback only
   }
-  if (!cfg.leadNextActions) {
+  if (!serverKeys.has('leadNextActions')) {
     cfg.leadNextActions = ['Send quote', 'Follow up', 'Confirm order', 'Send invoice'];
     await saveCfgKey('leadNextActions', cfg.leadNextActions);
+  } else if (!cfg.leadNextActions) {
+    cfg.leadNextActions = ['Send quote', 'Follow up', 'Confirm order', 'Send invoice']; // in-memory fallback only
   }
-  if (!cfg.cookieFlavours) {
+  if (!serverKeys.has('cookieFlavours')) {
     cfg.cookieFlavours = ['New Vanilla', 'Vegan', 'Vanilla', 'Salted Chocolate', 'Ginger', 'Spice'];
     await saveCfgKey('cookieFlavours', cfg.cookieFlavours);
+  } else if (!cfg.cookieFlavours) {
+    cfg.cookieFlavours = ['New Vanilla', 'Vegan', 'Vanilla', 'Salted Chocolate', 'Ginger', 'Spice']; // in-memory fallback only
   }
+}
+
+// True while the config failed to load. Any config write in that state could overwrite the
+// user's real settings with whatever partial/default values are in memory, so both config
+// writers refuse outright.
+function _cfgWritesBlocked(key) {
+  if ((_loadFailures || []).includes('cfg')) {
+    console.error('Config save blocked for key=' + key + ' — settings failed to load. Reload the app first.');
+    setSyncStatus('err', 'Settings not loaded — reload before saving');
+    return true;
+  }
+  return false;
+}
+
+// Record a loader's database error so it is visible (console + the load-failure banner).
+// Deliberately adds no save-blocking behaviour of its own.
+function _noteLoadError(name, error) {
+  console.error('Load error for ' + name + ':', error);
+  if (!_loadFailures.includes(name)) _loadFailures.push(name);
 }
 
 // Per-key serialization queue: ensures saves to the same config key run strictly
@@ -7176,7 +7267,9 @@ function _enqueueCfgSave(key, workFn) {
 }
 
 async function saveCfgKey(key, value) {
+  if (_cfgWritesBlocked(key)) return false;
   return _enqueueCfgSave(key, async function() {
+    if (_cfgWritesBlocked(key)) return false;
     setSyncStatus('syncing', 'Saving...');
     const { error } = await db.from('config').upsert({ key, value }, { onConflict: 'key' });
     if (error) {
@@ -7197,7 +7290,9 @@ async function saveCfgKey(key, value) {
 // SELECT always sees the result of the previous write for this key — eliminating
 // the stale-snapshot race that caused "edits not sticking".
 async function saveCfgArrayItem(key, item, idField = 'id') {
+  if (_cfgWritesBlocked(key)) return false;
   return _enqueueCfgSave(key, async function() {
+    if (_cfgWritesBlocked(key)) return false;
     setSyncStatus('syncing', 'Saving...');
     const { data: row, error: fetchErr } = await db.from('config').select('value').eq('key', key).maybeSingle();
     if (fetchErr) { setSyncStatus('err', 'Sync error'); console.error('saveCfgArrayItem fetch error key='+key, fetchErr); return false; }
@@ -7213,12 +7308,14 @@ async function saveCfgArrayItem(key, item, idField = 'id') {
 }
 
 async function loadIngs() {
-  const { data } = await db.from('ingredients').select('*').order('id');
+  const { data, error } = await db.from('ingredients').select('*').order('id');
+  if (error) _noteLoadError('ings', error);
   if (data) ings = data;
 }
 
 async function loadBatches() {
-  const { data } = await db.from('batches').select('*').order('id');
+  const { data, error } = await db.from('batches').select('*').order('id');
+  if (error) _noteLoadError('batches', error);
   if (data) {
     batches = data.map(b => {
       // Restore split meta from embedded notes JSON if Supabase columns not yet present
@@ -7501,6 +7598,7 @@ async function doFreezeCookies(batchNum) {
   closeUModal();
   showSaveToast(qty + ' cookie' + (qty === 1 ? '' : 's') + ' frozen');
   _refreshAfterFrozenChange();
+  showWhatsNext('freezer', null, 'freezer', {});
 }
 
 // ── Take cookies back out of the freezer ─────────────────────────────────
@@ -7874,7 +7972,8 @@ function frozenChildRowsHtml(lotId) {
 }
 
 async function loadAllocs() {
-  const { data } = await db.from('allocations').select('*').order('id');
+  const { data, error } = await db.from('allocations').select('*').order('id');
+  if (error) _noteLoadError('allocs', error);
   if (data) {
     allocs        = data.filter(function(a){ return !a.deleted_at; });
     deletedAllocs = data.filter(function(a){ return  a.deleted_at; });
@@ -7882,12 +7981,14 @@ async function loadAllocs() {
 }
 
 async function loadFridgeLogs() {
-  const { data } = await db.from('logs').select('*').eq('log_type','fridge').order('id');
+  const { data, error } = await db.from('logs').select('*').eq('log_type','fridge').order('id');
+  if (error) _noteLoadError('fridgeLogs', error);
   if (data) fridgeLogs = data.map(r => ({...r.data, id: r.id}));
 }
 
 async function loadSuppliers() {
-  const { data } = await db.from('supplier_records').select('*').order('id');
+  const { data, error } = await db.from('supplier_records').select('*').order('id');
+  if (error) _noteLoadError('suppliers', error);
   if (data) {
     supplierRecords = data;
     // Keep cfg.suppliers in sync with supplier_records names for dropdowns
@@ -7898,17 +7999,20 @@ async function loadSuppliers() {
 }
 
 async function loadOrders() {
-  const { data } = await db.from('orders').select('*').order('delivery_date');
+  const { data, error } = await db.from('orders').select('*').order('delivery_date');
+  if (error) _noteLoadError('orders', error);
   if (data) orders = data;
 }
 
 async function loadOrderLines() {
-  const { data } = await db.from('order_lines').select('*').order('id');
+  const { data, error } = await db.from('order_lines').select('*').order('id');
+  if (error) _noteLoadError('orderLines', error);
   if (data) orderLines = data;
 }
 
 async function loadInteractions() {
-  const { data } = await db.from('interactions').select('*').order('date', { ascending: false });
+  const { data, error } = await db.from('interactions').select('*').order('date', { ascending: false });
+  if (error) _noteLoadError('interactions', error);
   if (data) interactions = data;
 }
 
@@ -8042,8 +8146,8 @@ async function insertIng(ing) {
     auto_add_shopping: ing.auto_add_shopping || 'No',
     date_added: ing.date_added || null
   }]).select();
-  if (!error && data) { ings.push(data[0]); setSyncStatus('ok','Saved ✓'); }
-  else setSyncStatus('err','Sync error');
+  if (!error && data) { ings.push(data[0]); setSyncStatus('ok','Saved ✓'); return data[0]; }
+  else { setSyncStatus('err','Sync error'); if (error) console.error('insertIng error', error); return null; }
 }
 
 async function updateIng(id, fields) {
@@ -8187,7 +8291,8 @@ async function deleteAlloc(id) {
 
 // ── Setup session date pickers ──────────────────────────────────────────────
 async function loadRecentSetupSessions() {
-  const { data } = await db.from('logs').select('*').eq('log_type','checklist').order('id',{ascending:false}).limit(40);
+  const { data, error } = await db.from('logs').select('*').eq('log_type','checklist').order('id',{ascending:false}).limit(40);
+  if (error) _noteLoadError('recentSetupSessions', error);
   recentSetupSessions = (data||[])
     .filter(r => r.data && r.data.type === 'setup')
     .slice(0, 10);
@@ -8414,10 +8519,12 @@ async function init() {
     renderCL('setup', cfg.setupChecklist, 'setup');
     renderCL('close', cfg.closeChecklist, 'close');
     renderCL('pest', cfg.pestChecklist, 'pest');
+    refreshSetupFridgeState();
     renderShop();
     renderFridgeHist();
     renderSetupRecent();
     renderCloseRecent();
+    setTimeout(function() { checkPestReminder(); }, 1500);
   } catch(e) {
     console.error('Init render error:', e);
     setSyncStatus('err', 'Render error — check console');
@@ -8679,6 +8786,7 @@ function goKitchen(t) {
     setTimeout(function() {
       var ar = document.getElementById('close-activity-rows');
       if (ar && ar.children.length === 0) addCloseActivityRow();
+      autoLinkCloseToSetup();
     }, 0);
   }
   const ts=['setup-cl','close-cl','fridge-cl','pest-cl','water-safety-cl'];
@@ -8690,8 +8798,9 @@ function goKitchen(t) {
     const fd=document.getElementById('fr-d'); if(fd&&!fd.value)fd.value=nowDate;
     const ft=document.getElementById('fr-time'); if(ft&&!ft.value)ft.value=nowTime;
     renderFridgeHist();
+    renderFridgeTodayInfo();
   }
-  if(t==='setup-cl'){const d=document.getElementById('cl-su-date');if(d&&!d.value)d.value=nowDate;const tt=document.getElementById('cl-su-time');if(tt&&!tt.value)tt.value=nowTime;renderSetupRecent();}
+  if(t==='setup-cl'){const d=document.getElementById('cl-su-date');if(d&&!d.value)d.value=nowDate;const tt=document.getElementById('cl-su-time');if(tt&&!tt.value)tt.value=nowTime;renderSetupRecent();refreshSetupFridgeState();}
   if(t==='close-cl'){const d=document.getElementById('cl-cl-date');if(d&&!d.value)d.value=nowDate;const tt=document.getElementById('cl-cl-time');if(tt&&!tt.value)tt.value=nowTime;renderCloseRecent();}
   if(t==='pest-cl'){const d=document.getElementById('pest-date');if(d&&!d.value)d.value=nowDate;const tt=document.getElementById('pest-time');if(tt&&!tt.value)tt.value=nowTime;renderPestRecent();}
 }
@@ -9010,11 +9119,13 @@ function goIngTab(tab) {
     populateCategoryDropdown();
     const supNames = supplierRecords.length ? supplierRecords.map(s=>s.name) : cfg.suppliers;
     selOpts('isp', [...supNames, 'Other'], false, 'Select...');
+    orderSelectByUsage('isp', _ingUsageCounts(i => i.supplier));
     populateBrandDropdown();
     populateProductDropdown();
     populateUnitDropdown();
     const ipdEl = document.getElementById('ipd');
     if (ipdEl && !ipdEl.value) ipdEl.value = today();
+    ingMultiLotSync();
   }
 }
 
@@ -9080,6 +9191,73 @@ function toggleOtherField(selId, inputId) {
   if (sel.value !== 'Other') inp.value = '';
 }
 
+// ── Most-used options first (display only) ──
+// Reorders an existing <select>'s options by how often each value appears across ALL loaded
+// ingredient records (including finished/history ones): a "Most used" optgroup (up to 5 values
+// used at least twice, most used first) then "All others" A→Z. Option nodes are moved, never
+// re-created, so values and labels are untouched and nothing is ever duplicated. Placeholder
+// and "Other..." style options keep their positions. Nothing is saved anywhere.
+// fieldFn(ing) returns the ingredient's value for this dropdown; scopeFn(ing) (optional)
+// restricts which records are counted, matching how the dropdown itself is scoped.
+function _ingUsageCounts(fieldFn, scopeFn) {
+  const counts = {};
+  (ings || []).forEach(function(i) {
+    if (!i || (scopeFn && !scopeFn(i))) return;
+    const v = fieldFn(i);
+    if (v == null || v === '') return;
+    const k = String(v);
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  return counts;
+}
+
+function orderSelectByUsage(selId, counts) {
+  const sel = document.getElementById(selId);
+  if (!sel || sel.tagName !== 'SELECT') return;
+  const prev = sel.value;
+  const isSpecial = function(o) {
+    const v = String(o.value || ''), t = String(o.textContent || '').trim();
+    return v === '' || v === 'Other' || /^(other|add new|select)/i.test(t);
+  };
+  // Identical duplicate options (same value) are shown once — the first occurrence is kept.
+  const seenVals = new Set();
+  const all = Array.from(sel.querySelectorAll('option')).filter(function(o) {
+    const k = String(o.value);
+    if (seenVals.has(k)) return false;
+    seenVals.add(k);
+    return true;
+  });
+  const leading = [], trailing = [], normal = [];
+  let seenNormal = false;
+  all.forEach(function(o) {
+    if (isSpecial(o)) (seenNormal ? trailing : leading).push(o);
+    else { seenNormal = true; normal.push(o); }
+  });
+  if (!normal.length) return;
+  const cnt = function(o) { return counts[String(o.value)] || 0; };
+  const az = function(a, b) { return String(a.textContent).localeCompare(String(b.textContent), undefined, { sensitivity: 'base' }); };
+  const top = normal.filter(function(o) { return cnt(o) >= 2; })
+    .sort(function(a, b) { return (cnt(b) - cnt(a)) || az(a, b); })
+    .slice(0, 5);
+  const rest = normal.filter(function(o) { return top.indexOf(o) < 0; }).sort(az);
+  sel.innerHTML = '';
+  leading.forEach(function(o) { sel.appendChild(o); });
+  if (top.length) {
+    const g1 = document.createElement('optgroup'); g1.label = 'Most used';
+    top.forEach(function(o) { g1.appendChild(o); });
+    sel.appendChild(g1);
+    if (rest.length) {
+      const g2 = document.createElement('optgroup'); g2.label = 'All others';
+      rest.forEach(function(o) { g2.appendChild(o); });
+      sel.appendChild(g2);
+    }
+  } else {
+    rest.forEach(function(o) { sel.appendChild(o); });
+  }
+  trailing.forEach(function(o) { sel.appendChild(o); });
+  sel.value = prev;
+}
+
 function populateUnitDropdown() {
   const iunt = document.getElementById('iunt');
   if (!iunt) return;
@@ -9087,6 +9265,7 @@ function populateUnitDropdown() {
   iunt.innerHTML = '<option value="">Select...</option>' + 
     units.map(u => `<option value="${u}">${u}</option>`).join('') +
     '<option value="Other">Other</option>';
+  orderSelectByUsage('iunt', _ingUsageCounts(i => i.unit));
 }
 
 function populateProductDropdown(selectedCategory) {
@@ -9103,6 +9282,8 @@ function populateProductDropdown(selectedCategory) {
   iprod.innerHTML = '<option value="">Select product...</option>' +
     products.map(p => `<option value="${p}">${p}</option>`).join('') +
     '<option value="Other">Other / New product...</option>';
+  const _prodScoped = selectedCategory && selectedCategory !== 'Other';
+  orderSelectByUsage('iprod', _ingUsageCounts(i => i.product, _prodScoped ? (i => i.category === selectedCategory) : null));
 }
 
 function populateBrandDropdown() {
@@ -9112,6 +9293,7 @@ function populateBrandDropdown() {
   ib.innerHTML = '<option value="">Select brand...</option>' +
     brands.map(b => `<option value="${b}">${b}</option>`).join('') +
     '<option value="Other">Other / New brand...</option>';
+  orderSelectByUsage('ib', _ingUsageCounts(i => i.brand));
 }
 
 function populateCategoryDropdown() {
@@ -9121,6 +9303,7 @@ function populateCategoryDropdown() {
   ic.innerHTML = '<option value="">Select...</option>' +
     categories.map(c => `<option value="${c}">${c}</option>`).join('') +
     '<option value="Other">Other</option>';
+  orderSelectByUsage('ic', _ingUsageCounts(i => i.category));
 }
 
 function populateEditModalDropdowns(ing) {
@@ -9146,16 +9329,19 @@ function populateEditModalDropdowns(ing) {
   // Category
   const categories = ings && ings.length ? [...new Set(ings.map(i => i.category).filter(Boolean))].sort() : [];
   setSelectOrOther('iem-category', 'iem-category-other', ing.category||ing.cat||'', categories, 'Select...');
+  orderSelectByUsage('iem-category', _ingUsageCounts(i => i.category));
 
   // Supplier
   const supNames = (typeof supplierRecords !== 'undefined' && supplierRecords.length)
     ? supplierRecords.map(s=>s.name)
     : (cfg && cfg.suppliers ? cfg.suppliers : []);
   setSelectOrOther('iem-supplier', 'iem-supplier-other', ing.supplier||ing.sup||'', supNames, 'Select...');
+  orderSelectByUsage('iem-supplier', _ingUsageCounts(i => i.supplier));
 
   // Brand
   const brands = ings && ings.length ? [...new Set(ings.map(i => i.brand).filter(Boolean))].sort() : [];
   setSelectOrOther('iem-brand', 'iem-brand-other', ing.brand||'', brands, 'Select brand...');
+  orderSelectByUsage('iem-brand', _ingUsageCounts(i => i.brand));
 
   // Product — filtered by category
   const cat = ing.category||ing.cat||'';
@@ -9163,10 +9349,12 @@ function populateEditModalDropdowns(ing) {
     ? [...new Set(ings.filter(i => !cat || i.category===cat).map(i => i.product).filter(Boolean))].sort()
     : [];
   setSelectOrOther('iem-product', 'iem-product-other', ing.product||'', products, 'Select product...');
+  orderSelectByUsage('iem-product', _ingUsageCounts(i => i.product, cat ? (i => i.category === cat) : null));
 
   // Unit
   const units = (cfg && cfg.unit_types) ? cfg.unit_types : ["ml","g","kg","units","dozen"];
   setSelectOrOther('iem-unit', 'iem-unit-other', ing.unit||'', units, 'Select...');
+  orderSelectByUsage('iem-unit', _ingUsageCounts(i => i.unit));
 
   // Purchased by / Checked in by — team selects
   const team = (cfg && cfg.team) ? cfg.team : [];
@@ -9188,7 +9376,238 @@ function populateEditModalDropdowns(ing) {
   if (slY && slN) { slY.checked = slVal==='yes'; slN.checked = slVal!=='yes'; }
 }
 
+// ── Several lot numbers on one Add Ingredient form ──
+// The rows live in #ing-ml-rows; each row carries data-ml-row and its inputs carry
+// data-ml-field="lot|bb|count". Events are delegated from the container (no data in onclick).
+let _ingMultiLotActive = false;
+let _ingLastItemNumbers = null; // last confirmation shown in "Item numbers for this purchase"
+
+function _ingMlRowHtml(lot, bb, count) {
+  const inStyle = 'width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--white);color:var(--text);box-sizing:border-box;';
+  return '<div data-ml-row="1" style="display:grid;grid-template-columns:1fr 1fr 70px 32px;gap:6px;margin-bottom:6px;align-items:center;">'
+    + '<input data-ml-field="lot" placeholder="from label" value="' + esc(lot || '') + '" style="' + inStyle + '"/>'
+    + '<input data-ml-field="bb" type="date" value="' + esc(bb || '') + '" style="' + inStyle + '"/>'
+    + '<input data-ml-field="count" type="number" min="1" step="1" value="' + esc(count == null ? '' : count) + '" style="' + inStyle + '"/>'
+    + '<button type="button" data-ml-remove="1" title="Remove row" style="background:none;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;color:var(--danger);font-size:14px;padding:4px 0;">×</button>'
+    + '</div>';
+}
+
+function _ingMlQty() {
+  const el = document.getElementById('iq');
+  return el ? (parseInt(el.value) || 0) : 0;
+}
+
+function _ingMlReadRows() {
+  const box = document.getElementById('ing-ml-rows');
+  if (!box) return [];
+  return Array.from(box.querySelectorAll('[data-ml-row]')).map(function(r) {
+    const lot = (r.querySelector('[data-ml-field="lot"]') || {}).value || '';
+    const bb = (r.querySelector('[data-ml-field="bb"]') || {}).value || '';
+    const cRaw = String((r.querySelector('[data-ml-field="count"]') || {}).value || '').trim();
+    const count = /^\d+$/.test(cRaw) ? parseInt(cRaw, 10) : NaN;
+    return { batch: lot.trim(), best_before: bb || null, count: count };
+  });
+}
+
+// Shows/hides the "+ Different lot numbers" link and refreshes the counter.
+function ingMultiLotSync() {
+  const wrap = document.getElementById('ing-ml-link-wrap');
+  if (wrap) wrap.style.display = (!_ingMultiLotActive && _ingMlQty() > 1) ? 'block' : 'none';
+  if (!_ingMultiLotActive) return;
+  const rows = _ingMlReadRows();
+  const assigned = rows.reduce(function(s, r) { return s + (isNaN(r.count) ? 0 : r.count); }, 0);
+  const qty = _ingMlQty();
+  const cEl = document.getElementById('ing-ml-count');
+  if (cEl) {
+    cEl.textContent = assigned + ' of ' + qty + ' assigned';
+    cEl.style.color = assigned === qty ? 'var(--success)' : 'var(--warning)';
+  }
+}
+
+function ingMultiLotOpen(prefillRows) {
+  _ingMultiLotActive = true;
+  const box = document.getElementById('ing-ml-rows');
+  const rows = prefillRows || [{
+    batch: (document.getElementById('ibn') || {}).value || '',
+    best_before: (document.getElementById('ibb') || {}).value || '',
+    count: ''
+  }];
+  if (box) box.innerHTML = rows.map(function(r) { return _ingMlRowHtml(r.batch, r.best_before, r.count); }).join('');
+  ['ibn-field', 'ibb-field'].forEach(function(id) { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  const panel = document.getElementById('ing-ml'); if (panel) panel.style.display = 'block';
+  const err = document.getElementById('ing-ml-err'); if (err) err.style.display = 'none';
+  ingMultiLotSync();
+}
+
+// Back to a single lot: the first row's values go back into the ordinary fields.
+function ingMultiLotClose() {
+  const rows = _ingMlReadRows();
+  if (rows.length) {
+    const ibn = document.getElementById('ibn'); if (ibn) ibn.value = rows[0].batch || '';
+    const ibb = document.getElementById('ibb'); if (ibb) ibb.value = rows[0].best_before || '';
+  }
+  ingMultiLotReset();
+}
+
+function ingMultiLotReset() {
+  _ingMultiLotActive = false;
+  const box = document.getElementById('ing-ml-rows'); if (box) box.innerHTML = '';
+  const panel = document.getElementById('ing-ml'); if (panel) panel.style.display = 'none';
+  const err = document.getElementById('ing-ml-err'); if (err) err.style.display = 'none';
+  ['ibn-field', 'ibb-field'].forEach(function(id) { const el = document.getElementById(id); if (el) el.style.display = ''; });
+  ingMultiLotSync();
+}
+
+function ingMultiLotAddRow() {
+  const box = document.getElementById('ing-ml-rows'); if (!box) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = _ingMlRowHtml('', '', '');
+  box.appendChild(tmp.firstElementChild);
+  ingMultiLotSync();
+}
+
+(function() {
+  const box = document.getElementById('ing-ml-rows');
+  if (!box) return;
+  box.addEventListener('input', function() {
+    const err = document.getElementById('ing-ml-err'); if (err) err.style.display = 'none';
+    ingMultiLotSync();
+  });
+  box.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-ml-remove]');
+    if (!btn) return;
+    const row = btn.closest('[data-ml-row]');
+    if (row) row.remove();
+    ingMultiLotSync();
+  });
+})();
+
+function _ingMlError(msg) {
+  const err = document.getElementById('ing-ml-err');
+  if (err) { err.textContent = msg; err.style.display = 'block'; }
+  const panel = document.getElementById('ing-ml');
+  if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Returns null when the multi-lot rows are not in use, false when they are invalid
+// (an inline message has been shown), or the validated rows.
+function _ingMultiLotValidated() {
+  if (!_ingMultiLotActive) return null;
+  const rows = _ingMlReadRows();
+  const qty = _ingMlQty();
+  if (!rows.length) { _ingMlError('Add at least one lot row, or choose "Use a single lot number".'); return false; }
+  for (let i = 0; i < rows.length; i++) {
+    if (!rows[i].batch) { _ingMlError('Row ' + (i + 1) + ': enter a lot number.'); return false; }
+    if (isNaN(rows[i].count) || rows[i].count < 1) { _ingMlError('Row ' + (i + 1) + ': "How many" must be 1 or more.'); return false; }
+  }
+  const assigned = rows.reduce(function(s, r) { return s + r.count; }, 0);
+  if (assigned !== qty) {
+    _ingMlError('The rows add up to ' + assigned + ' but Quantity is ' + qty + '. They must match exactly before you can save.');
+    return false;
+  }
+  return rows;
+}
+
+// "#101–#106" for a consecutive run, otherwise "#101, #103, #110".
+function _ingIdRangeLabel(ids) {
+  const nums = ids.map(Number).filter(function(n) { return !isNaN(n); }).sort(function(a, b) { return a - b; });
+  if (!nums.length) return ids.map(function(id) { return '#' + id; }).join(', ');
+  const consecutive = nums.every(function(n, i) { return i === 0 || n === nums[i - 1] + 1; });
+  if (nums.length > 1 && consecutive) return '#' + nums[0] + '–#' + nums[nums.length - 1];
+  return nums.map(function(n) { return '#' + n; }).join(', ');
+}
+
+function _ingProductLabel(ing) {
+  return [ing.brand || '', ing.product || '', ing.size ? (ing.size + (ing.unit || '')) : ''].filter(Boolean).join(' · ');
+}
+
+// Inserts lots in row order, one record per item, through the ordinary insertIng() path.
+// Stops at the first failure (never retries — a retry could create a duplicate).
+async function _ingInsertLots(baseIng, lots) {
+  const saved = []; // [{lot, ids:[...]}]
+  for (let li = 0; li < lots.length; li++) {
+    const lot = lots[li];
+    const rec = Object.assign({}, baseIng, { batch: lot.batch, best_before: lot.best_before || null });
+    const ids = [];
+    for (let i = 0; i < lot.count; i++) {
+      const row = await insertIng(rec);
+      if (!row) {
+        if (ids.length) saved.push({ lot: lot, ids: ids });
+        const notSaved = [{ batch: lot.batch, best_before: lot.best_before, count: lot.count - ids.length }]
+          .concat(lots.slice(li + 1).map(function(l) { return { batch: l.batch, best_before: l.best_before, count: l.count }; }));
+        return { saved: saved, notSaved: notSaved };
+      }
+      ids.push(row.id);
+    }
+    saved.push({ lot: lot, ids: ids });
+  }
+  return { saved: saved, notSaved: [] };
+}
+
+function _ingItemNumbersTableHtml(info) {
+  const th = 'text-align:left;padding:5px 6px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-muted);';
+  const td = 'padding:5px 6px;border-bottom:1px solid var(--gray-light);font-size:12px;vertical-align:top;';
+  return '<table style="width:100%;border-collapse:collapse;font-family:sans-serif;">'
+    + '<tr><th style="' + th + '">Product</th><th style="' + th + '">Lot no.</th><th style="' + th + '">Best before</th><th style="' + th + '">Item numbers</th></tr>'
+    + info.saved.map(function(s) {
+        return '<tr><td style="' + td + '">' + esc(info.product) + '</td>'
+          + '<td style="' + td + '">' + esc(s.lot.batch || '—') + '</td>'
+          + '<td style="' + td + '">' + esc(s.lot.best_before ? fmtDate(s.lot.best_before) : '—') + '</td>'
+          + '<td style="' + td + '"><strong>' + esc(_ingIdRangeLabel(s.ids)) + '</strong> <span style="color:var(--text-muted)">(' + s.ids.length + ')</span></td></tr>';
+      }).join('')
+    + '</table>';
+}
+
+function showIngItemNumbers(info) {
+  _ingLastItemNumbers = info;
+  const total = info.saved.reduce(function(s, x) { return s + x.ids.length; }, 0);
+  let body = '<div style="font-size:12px;color:var(--text-muted);font-family:sans-serif;margin-bottom:8px;">'
+    + total + ' item' + (total === 1 ? '' : 's') + ' saved. Write each item number on its packet so it can be found later.</div>';
+  if (info.saved.length) body += _ingItemNumbersTableHtml(info);
+  if (info.notSaved && info.notSaved.length) {
+    body = '<div class="alert alert-danger" style="font-size:12px;">Saving stopped part-way because of an error. '
+      + 'The items listed under "Saved" are in the inventory. The items under "NOT saved" were not recorded. '
+      + 'The form has been left holding only the items that were not saved. Check your connection, check the inventory, then press Add ingredient again to save the rest.</div>'
+      + '<div style="font-size:11px;font-weight:700;color:var(--success);font-family:sans-serif;margin:8px 0 4px;text-transform:uppercase;">Saved</div>'
+      + (info.saved.length ? _ingItemNumbersTableHtml(info) : '<div style="font-size:12px;font-family:sans-serif;">Nothing was saved.</div>')
+      + '<div style="font-size:11px;font-weight:700;color:var(--danger);font-family:sans-serif;margin:10px 0 4px;text-transform:uppercase;">NOT saved</div>'
+      + info.notSaved.map(function(n) {
+          return '<div style="font-size:12px;font-family:sans-serif;padding:3px 0;border-bottom:1px solid var(--gray-light);">'
+            + esc(info.product) + ' · lot <strong>' + esc(n.batch || '—') + '</strong>'
+            + (n.best_before ? ' · best before ' + esc(fmtDate(n.best_before)) : '')
+            + ' · <strong>' + n.count + '</strong> item' + (n.count === 1 ? '' : 's') + '</div>';
+        }).join('');
+  }
+  const footer = (info.saved.length ? '<button class="btn" style="flex:1" onclick="printIngItemNumbers()">🖨 Print</button>' : '')
+    + '<button class="btn btn-primary" style="flex:1" onclick="closeUModal()">Done</button>';
+  openUModal((info.notSaved && info.notSaved.length) ? 'Some items were NOT saved' : 'Item numbers for this purchase', body, footer);
+}
+
+function printIngItemNumbers() {
+  const info = _ingLastItemNumbers;
+  if (!info || !info.saved.length) return;
+  const L = ['<html><head><title>Item numbers</title><style>',
+    'body{font-family:sans-serif;font-size:12px;padding:20px;color:#222;}h1{font-size:16px;}',
+    'table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:12px;}',
+    'th{background:#122640;color:#fff;}',
+    '@media print{th{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}',
+    '</style></head><body>',
+    '<h1>Cookie &amp; Me — Item numbers for this purchase</h1>',
+    '<p style="color:#666;font-size:11px;">' + esc(info.supplier || '') + (info.date ? ' · purchased ' + esc(fmtDate(info.date)) : '') + ' · printed ' + new Date().toLocaleDateString('en-NZ') + '</p>',
+    '<table><tr><th>Product</th><th>Lot no.</th><th>Best before</th><th>Item numbers</th><th>Count</th></tr>'];
+  info.saved.forEach(function(s) {
+    L.push('<tr><td>' + esc(info.product) + '</td><td>' + esc(s.lot.batch || '—') + '</td><td>'
+      + esc(s.lot.best_before ? fmtDate(s.lot.best_before) : '—') + '</td><td><strong>' + esc(_ingIdRangeLabel(s.ids)) + '</strong></td><td>' + s.ids.length + '</td></tr>');
+  });
+  L.push('</table></body></html>');
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(L.join('')); w.document.close(); w.print(); }
+}
+
 async function addIng() {
+  // Multi-lot rows (if in use) must add up to Quantity before anything is saved.
+  const _mlRows = _ingMultiLotValidated();
+  if (_mlRows === false) return;
   // Get category
   const catSel = document.getElementById('ic').value;
   const catOther = document.getElementById('ic-other').value.trim();
@@ -9297,11 +9716,34 @@ async function addIng() {
 
   if (qty > 1) {
     if (!confirm(`This will create ${qty} separate inventory records — one per packet. Continue?`)) return;
-    for (let i = 0; i < qty; i++) {
-      await insertIng(ing);
+    // One lot unless the multi-lot rows are in use; either way, inserted sequentially in row order.
+    const lots = _mlRows || [{ batch: ing.batch, best_before: ing.best_before, count: qty }];
+    const result = await _ingInsertLots(ing, lots);
+    const info = { product: _ingProductLabel(ing), supplier: supplier, date: date_added, saved: result.saved, notSaved: result.notSaved };
+    if (result.saved.length) await updateSupplierGoods(supplier, category, _addIngSupId);
+    if (result.notSaved.length) {
+      // Leave the form holding only what was NOT saved, so pressing Add again cannot
+      // duplicate the items that are already in the inventory.
+      const remaining = result.notSaved.reduce(function(s, n) { return s + n.count; }, 0);
+      const iqEl2 = document.getElementById('iq'); if (iqEl2) iqEl2.value = String(remaining);
+      if (result.notSaved.length > 1 || _mlRows) {
+        ingMultiLotOpen(result.notSaved);
+      } else {
+        const ibnEl = document.getElementById('ibn'); if (ibnEl) ibnEl.value = result.notSaved[0].batch || '';
+        const ibbEl = document.getElementById('ibb'); if (ibbEl) ibbEl.value = result.notSaved[0].best_before || '';
+        ingMultiLotSync();
+      }
+      showMsg('ing-msg', 'Saving stopped part-way — see the list of what was and was not saved.', 'danger');
+      renderInv(); renderOpened(); renderAlerts();
+      showIngItemNumbers(info);
+      return;
     }
-    await updateSupplierGoods(supplier, category, _addIngSupId);
+    showIngItemNumbers(info);
   } else {
+    if (_mlRows && _mlRows.length === 1) {
+      ing.batch = _mlRows[0].batch;
+      ing.best_before = _mlRows[0].best_before || null;
+    }
     await insertIng(ing);
     await updateSupplierGoods(supplier, category, _addIngSupId);
   }
@@ -9312,6 +9754,7 @@ async function addIng() {
     if(el) el.value = '';
   });
   const iqEl = document.getElementById('iq'); if(iqEl) iqEl.value = '1';
+  ingMultiLotReset();
   const ipdEl = document.getElementById('ipd'); if(ipdEl) ipdEl.value = today();
   document.getElementById('ib').value = '';
   document.getElementById('iunt').value = '';
@@ -10959,6 +11402,171 @@ function scaleVolumeMeasure(measure, m) {
   return numDisplay + ' ' + displayUnit;
 }
 
+// ═══════════════════════════════════════════════════════
+// "WHAT'S NEXT?" CARD — shown after setup / batch / icing / freezer / allocation saves
+// ═══════════════════════════════════════════════════════
+// Non-blocking: it only navigates and pre-fills. Each card's context lives in _wnCtx keyed by
+// card id; buttons carry data-wn-action and are handled by one delegated listener.
+const _WN_ACTIONS = {
+  setup:   [['bake', 'Record a batch'], ['icing', 'Record icing'], ['frozen', 'Take from freezer (bake-off)'], ['close', 'Close down']],
+  batch:   [['freeze', 'Send to freezer'], ['icing', 'Record icing'], ['alloc', 'Allocate cookies'], ['close', 'Close down']],
+  icing:   [['alloc', 'Allocate cookies'], ['close', 'Close down']],
+  freezer: [['close', 'Close down'], ['home', 'Home']],
+  alloc:   [['close', 'Close down'], ['home', 'Home']],
+};
+const _wnCtx = {};
+
+// key: short unique id for this card's slot. anchorEl: element to place the card under
+// (null = small floating card near the save toast).
+function showWhatsNext(key, anchorEl, kind, ctx) {
+  const actions = _WN_ACTIONS[kind]; if (!actions) return;
+  const cardId = 'wn-card-' + key;
+  const old = document.getElementById(cardId); if (old) old.remove();
+  _wnCtx[cardId] = ctx || {};
+  const card = document.createElement('div');
+  card.id = cardId;
+  card.setAttribute('data-wn-card', '1');
+  const floating = !anchorEl;
+  card.style.cssText = floating
+    ? 'position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:9998;background:var(--white);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 20px rgba(0,0,0,0.2);padding:10px 12px;font-family:sans-serif;max-width:calc(100vw - 32px);'
+    : 'margin-top:8px;background:var(--gray-light);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:sans-serif;';
+  card.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">'
+      + '<div style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:0.05em;">What’s next?</div>'
+      + '<button type="button" data-wn-dismiss="1" title="Dismiss" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-muted);line-height:1;padding:0 2px;">×</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+    + actions.map(function(a) {
+        return '<button type="button" class="btn btn-sm" data-wn-action="' + esc(a[0]) + '">' + esc(a[1]) + '</button>';
+      }).join('')
+    + '</div>';
+  if (floating) {
+    document.body.appendChild(card);
+    setTimeout(function() { const c = document.getElementById(cardId); if (c === card) { c.remove(); delete _wnCtx[cardId]; } }, 20000);
+  } else {
+    anchorEl.insertAdjacentElement('afterend', card);
+  }
+}
+
+// Pre-selects a "Startup session" picker option by date (the picker's option values are dates)
+// and fills the form date exactly as a manual pick would. Skipped silently if not listed.
+function _wnPickSetupSession(selId, dateFieldId, date) {
+  if (!date) return;
+  const sel = document.getElementById(selId); if (!sel) return;
+  const has = Array.from(sel.options).some(function(o) { return o.value === date; });
+  if (!has) return;
+  sel.value = date;
+  onSetupSessionPick(sel, dateFieldId);
+}
+
+function _wnRun(action, ctx) {
+  if (action === 'bake') {
+    _activeSubSection.production = 'prod-bake'; go('production');
+    _wnPickSetupSession('bk-setup-pick', 'bk-d', ctx.setupDate);
+  } else if (action === 'icing') {
+    _activeSubSection.production = 'prod-icing'; go('production');
+    _wnPickSetupSession('icing-setup-pick', 'icing-session-date', ctx.setupDate);
+  } else if (action === 'frozen') {
+    go('production'); goProd('prod-frozen');
+  } else if (action === 'freeze') {
+    if (ctx.batchNum) openFreezeForm(ctx.batchNum);
+    else { go('production'); goProd('prod-frozen'); }
+  } else if (action === 'alloc') {
+    _activeSubSection.production = 'prod-alloc'; go('production');
+    if (ctx.batchNum) jumpToAllocBatch(ctx.batchNum);
+  } else if (action === 'close') {
+    _activeSubSection.forms = 'kitchen'; go('forms'); goKitchen('close-cl');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } else if (action === 'home') {
+    go('home');
+  }
+}
+
+document.addEventListener('click', function(e) {
+  const card = e.target.closest && e.target.closest('[data-wn-card]');
+  if (!card) return;
+  const ctx = _wnCtx[card.id] || {};
+  if (e.target.closest('[data-wn-dismiss]')) { card.remove(); delete _wnCtx[card.id]; return; }
+  const btn = e.target.closest('[data-wn-action]');
+  if (!btn) return;
+  const action = btn.getAttribute('data-wn-action');
+  card.remove(); delete _wnCtx[card.id];
+  _wnRun(action, ctx);
+});
+
+// Rebuilds the bake and icing "Startup session" pickers from recentSetupSessions,
+// exactly as init() does.
+function _refreshSetupSessionPickers() {
+  const bk = document.getElementById('bk-setup-pick');
+  if (bk) bk.innerHTML = setupSessionOpts(['Bake','Pre-bake','Bake-off']);
+  const ic = document.getElementById('icing-setup-pick');
+  if (ic) ic.innerHTML = setupSessionOpts('Ice');
+}
+
+// ── Close-down: pre-select today's open setup session ──
+// When the close-down form opens with empty activity rows, the most recent setup session dated
+// today that has no close-down after it is copied in through the existing copy-from-setup path
+// (_doApplySetup). The user can undo it or pick another session with "Copy from a recent setup
+// record". If none qualifies, nothing happens.
+let _closeAutoLinkDismissed = {};
+let _closeAutoLinkBusy = false;
+async function autoLinkCloseToSetup() {
+  if (_closeAutoLinkBusy) return;
+  const container = document.getElementById('close-activity-rows'); if (!container) return;
+  const hasContent = Array.from(container.querySelectorAll('[data-close-row]')).some(function(row) {
+    const bv = getBatchControlValue(row.querySelector('[data-batch-control]'));
+    const qty = row.querySelector('[data-qty-input]')?.value;
+    return bv || qty;
+  });
+  if (hasContent) return;
+  _closeAutoLinkBusy = true;
+  try {
+    const { data, error } = await db.from('logs').select('*').eq('log_type','checklist').order('id', {ascending:false}).limit(200);
+    if (error || !data) return;
+    const t = today();
+    const stamp = function(d) { return (d.time || '') + '|' + (d.savedAt || ''); };
+    const setups = data.filter(function(r) { return r.data && r.data.type === 'setup' && r.data.date === t; })
+      .sort(function(a, b) { return stamp(b.data).localeCompare(stamp(a.data)); });
+    const closes = data.filter(function(r) { return r.data && r.data.type === 'close' && r.data.date === t; });
+    // A setup session counts as closed once a close-down dated today was recorded at or after it.
+    const open = setups.find(function(s) {
+      return !closes.some(function(c) { return stamp(c.data) >= stamp(s.data); });
+    });
+    if (!open || !(open.data.tasks || []).length) return;
+    if (_closeAutoLinkDismissed[open.id]) return;
+    // Re-check — the user may have started typing while the records loaded.
+    const nowHasContent = Array.from(container.querySelectorAll('[data-close-row]')).some(function(row) {
+      return getBatchControlValue(row.querySelector('[data-batch-control]')) || row.querySelector('[data-qty-input]')?.value;
+    });
+    if (nowHasContent) return;
+    _doApplySetup(open.data);
+    const note = document.getElementById('close-autolink-note');
+    if (note) {
+      note.setAttribute('data-setup-id', String(open.id));
+      const txt = document.getElementById('close-autolink-txt');
+      if (txt) txt.textContent = 'Pre-filled from today’s setup session'
+        + (open.data.time ? ' at ' + open.data.time : '')
+        + (open.data.occasion ? ' (' + open.data.occasion + ')' : '')
+        + ' — check and complete the details. To use a different session, choose "Copy from a recent setup record".';
+      note.style.display = 'block';
+    }
+  } catch(e) {
+    console.error('autoLinkCloseToSetup error', e);
+  } finally {
+    _closeAutoLinkBusy = false;
+  }
+}
+
+function undoCloseAutoLink() {
+  const note = document.getElementById('close-autolink-note');
+  if (note) {
+    const sid = note.getAttribute('data-setup-id');
+    if (sid) _closeAutoLinkDismissed[sid] = true;
+    note.style.display = 'none';
+  }
+  const container = document.getElementById('close-activity-rows');
+  if (container) { container.innerHTML = ''; addCloseActivityRow(); }
+}
+
 async function saveBake() {
   const ri = document.getElementById('bk-r').value;
   const m = parseInt(document.getElementById('bk-m').value)||1;
@@ -10971,6 +11579,7 @@ async function saveBake() {
   const notes = document.getElementById('bk-notes').value.trim();
   const variation = (document.getElementById('bk-variation')?.value||'').trim();
   const occasion = '';
+  const _wnBkSession = (document.getElementById('bk-setup-pick') || {}).value || '';
   if (!date) { alert('Please enter a date.'); return; }
   var _bkDateErr = validateDate(date, 'Batch date') || validateDate(bb, 'Best before date');
   if (_bkDateErr) { alert(_bkDateErr); return; }
@@ -11208,6 +11817,7 @@ async function saveBake() {
     } else {
       showSaveToast('Batch ' + num + ' saved');
       showMsg('bk-msg', 'Batch ' + num + ' saved \u2713');
+      showWhatsNext('batch', document.getElementById('bk-msg'), 'batch', { batchNum: result.num || num, setupDate: _wnBkSession });
       setTimeout(()=>{ const el=document.getElementById('bk-recent-list'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },400);
     }
   }
@@ -11484,11 +12094,14 @@ function cancelCL(type) {
   if (timeEl) timeEl.value = nowNZTime();
   if (type === 'setup') {
     const ft = document.getElementById('cl-su-fridge'); if (ft) ft.value = '';
+    const fa = document.getElementById('su-fr-action'); if (fa) fa.value = '';
     const oc = document.getElementById('cl-su-occasion'); if (oc) oc.value = '';
     const tr = document.getElementById('setup-task-rows'); if (tr) tr.innerHTML = '';
+    refreshSetupFridgeState();
   }
   if (type === 'close') {
     const ar = document.getElementById('close-activity-rows'); if (ar) { ar.innerHTML = ''; addCloseActivityRow(); }
+    const caln = document.getElementById('close-autolink-note'); if (caln) caln.style.display = 'none';
     const ci = document.getElementById('cl-cl-issues'); if (ci) ci.value = '';
   }
   if (type === 'pest') {
@@ -12094,8 +12707,10 @@ async function addAlloc() {
       if (_ubErr) { alert(_ubErr); return; }
       if (_useBy < date) { alert('Use-by date is before the allocation date.'); return; }
     }
+    const _wnAllocCount = allocs.length;
     await insertAlloc({ batchNum:b.num, batchIdx:selBI, type, qty, recipient, dist, method, addr, market, date, notes, campaignIds: allocCampIds, orderIds: allocOrderIds, costToMake, icingEntryId: _aieId, frozenUseBy: _useBy });
     showSaveToast('Allocation saved');
+    if (allocs.length > _wnAllocCount) showWhatsNext('alloc', document.querySelector('[onclick="addAlloc()"]'), 'alloc', {});
     if (document.getElementById('frozen-list')) renderFrozenStock();
     document.getElementById('al-q').value = '';
     const alNotesEl = document.getElementById('al-notes'); if (alNotesEl) alNotesEl.value = '';
@@ -13426,6 +14041,28 @@ async function saveCL(type) {
   const time = timeEl ? timeEl.value : nowNZTime();
   if (!date) { alert('Please enter a date.'); return; }
   if (!by) { alert('Please select who signed off.'); return; }
+  let _suFridgeSavedNow = false;
+  if (type === 'setup') {
+    if (_suSaving) return;
+    // Fridge reading is saved FIRST through the ordinary fridge log path. If it fails,
+    // the setup is not saved.
+    const frEntry = _suFridgeBuildEntry(date, time, by);
+    if (frEntry === false) return;
+    _suSaving = true;
+    if (frEntry) {
+      let frOk = false;
+      try { frOk = await insertLog('fridge', frEntry); } catch(e) { console.error('setup fridge save error', e); frOk = false; }
+      if (!frOk) {
+        _suSaving = false;
+        _suFridgeError('The fridge temperature could not be saved, so the setup record has NOT been saved. Check your connection and try again.');
+        return;
+      }
+      fridgeLogs.push(frEntry);
+      renderFridgeHist();
+      renderFridgeTodayInfo();
+      _suFridgeSavedNow = true;
+    }
+  }
   const items = type==='setup'?cfg.setupChecklist:cfg.closeChecklist;
   const state = checkState[type]||{};
   const completed = Object.keys(state).filter(k=>state[k]).length;
@@ -13445,7 +14082,31 @@ async function saveCL(type) {
     const issues = document.getElementById('cl-cl-issues')?.value.trim();
     if (issues) logData.issues = issues;
   }
-  await insertLog('checklist', logData);
+  let _clSaved = false;
+  try {
+    _clSaved = await insertLog('checklist', logData);
+  } finally {
+    if (type === 'setup') _suSaving = false;
+  }
+  if (!_clSaved) {
+    // The record was NOT saved. Keep everything the user entered so they can retry, and say so
+    // clearly instead of showing the success message.
+    let failMsg = (type === 'setup' ? 'Setup' : 'Close down') + ' record was NOT saved — check your connection and press Save again. Your entries are still here.';
+    if (type === 'setup' && _suFridgeSavedNow) {
+      // The fridge log was saved before the setup failed. A retry finds that reading for this
+      // date and won't create a second one; the field keeps its value for fridgeTempAtStart.
+      failMsg += ' (The fridge temperature WAS saved to the fridge log and will not be saved there again.)';
+      refreshSetupFridgeState();
+    }
+    _showSaveFailedMsg(type + '-msg', failMsg);
+    return;
+  }
+  if (type === 'setup') {
+    // Make the new session available to the bake/icing "Startup session" pickers straight away.
+    recentSetupSessions.unshift({ log_type: 'checklist', data: logData });
+    recentSetupSessions = recentSetupSessions.slice(0, 10);
+    _refreshSetupSessionPickers();
+  }
   showSaveToast((type==='setup' ? 'Setup' : 'Close down') + ' record saved');
   showMsg(type+'-msg', `${type==='setup'?'Setup':'Close down'} record saved — ${completed}/${items.length} items complete`);
   // Reset form for next entry: clear checkboxes, refresh date/time, keep signed-off-by
@@ -13458,18 +14119,23 @@ async function saveCL(type) {
   if (tf) tf.value = nowNZTime();
   if (type === 'setup') {
     const ft = document.getElementById('cl-su-fridge'); if(ft) ft.value='';
+    const fa = document.getElementById('su-fr-action'); if(fa) fa.value='';
     const oc = document.getElementById('cl-su-occasion'); if(oc) oc.value='';
     const tr = document.getElementById('setup-task-rows'); if(tr) tr.innerHTML='';
+    refreshSetupFridgeState();
   }
   if (type === 'close') {
     var ar2 = document.getElementById('close-activity-rows');
     if(ar2) { ar2.innerHTML=''; addCloseActivityRow(); }
+    var _caln = document.getElementById('close-autolink-note'); if(_caln) _caln.style.display='none';
     var ci2 = document.getElementById('cl-cl-issues'); if(ci2) ci2.value='';
   }
+  if (type === 'setup') showWhatsNext('setup', document.getElementById('setup-msg'), 'setup', { setupDate: date });
   if(type==='setup') { renderSetupRecent(); setTimeout(()=>{ const el=document.getElementById('setup-recent-list'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },400); }
   else {
     renderCloseRecent();
     setTimeout(()=>{ const el=document.getElementById('close-recent-list'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },400);
+    if (type === 'close') setTimeout(function() { checkPestReminder(); }, 1200);
     if (type === 'close' && logData.activities) {
       db.from('logs').select('id').eq('log_type','checklist').order('id',{ascending:false}).limit(1).then(function(res) {
         var logId = res.data && res.data[0] ? res.data[0].id : null;
@@ -13516,6 +14182,127 @@ async function savePest() {
   const pt = document.getElementById('pest-time'); if(pt) pt.value = nowNZTime();
   renderPestRecent();
 }
+// ── Fridge reading inside the start-up (setup) form ──
+// Uses the setup form's existing field (#cl-su-fridge), which saveCL('setup') keeps saving as
+// fridgeTempAtStart exactly as before. Once per date: when the fridge log has no reading for the
+// setup's date, the field is required and saving the setup ALSO creates the normal fridge log
+// (same shape as saveFridgeTemp's entry) — first, so a failed fridge save stops the setup.
+// When a reading already exists for that date the field is optional and no fridge log is made.
+let _suSaving = false;
+
+// Latest fridge-log reading for a YYYY-MM-DD date (the fridge form's own date field format).
+function _fridgeReadingFor(date) {
+  const list = (fridgeLogs || []).filter(r => r && r.date === date);
+  if (!list.length) return null;
+  list.sort((a, b) => (String(b.time || '') + String(b.savedAt || '')).localeCompare(String(a.time || '') + String(a.savedAt || '')));
+  return list[0];
+}
+function _latestFridgeReadingToday() { return _fridgeReadingFor(today()); }
+
+function _suSetupDate() {
+  const d = document.getElementById('cl-su-date');
+  return (d && d.value) || today();
+}
+
+// Ticks the first setup checklist item mentioning "fridge" (if there is one).
+function _suFridgeAutoTick() {
+  const items = cfg.setupChecklist || [];
+  const idx = items.findIndex(it => String(it || '').toLowerCase().includes('fridge'));
+  if (idx < 0) return;
+  if (!checkState.setup) checkState.setup = {};
+  if (checkState.setup[idx]) return;
+  checkState.setup[idx] = true;
+  renderCL('setup', cfg.setupChecklist, 'setup');
+}
+
+// Called when the setup form is shown or reset, and when its Date changes.
+function refreshSetupFridgeState() {
+  const doneEl = document.getElementById('su-fridge-done');
+  if (!doneEl) return;
+  const date = _suSetupDate();
+  const latest = _fridgeReadingFor(date);
+  const errEl = document.getElementById('su-fridge-err'); if (errEl) errEl.style.display = 'none';
+  const req = document.getElementById('su-fridge-req');
+  const hint = document.getElementById('su-fridge-hint');
+  if (latest) {
+    const txt = document.getElementById('su-fridge-done-txt');
+    if (txt) txt.textContent = 'Fridge: ' + latest.temp + '°C' + (latest.time ? ' at ' + latest.time : '')
+      + ', already recorded ' + (date === today() ? 'today' : 'for ' + fmtDate(date)) + ' ✓';
+    doneEl.style.display = 'block';
+    if (req) req.textContent = '(optional — already recorded for this date)';
+    if (hint) hint.textContent = 'Saved on this setup record only.';
+    _suFridgeAutoTick();
+  } else {
+    doneEl.style.display = 'none';
+    if (req) req.textContent = '(required — no reading yet for this date)';
+    if (hint) hint.textContent = 'Also saved to the fridge temperature log.';
+  }
+  suFridgeInput();
+}
+
+// Mirrors checkFridgeTemp(). The "Action taken" box only applies when this entry will become
+// a fridge log (no reading yet for the date) — that is where the fridge form stores it.
+function suFridgeInput() {
+  const f = document.getElementById('cl-su-fridge');
+  const t = f ? parseFloat(f.value) : NaN;
+  const over = !isNaN(t) && t > 5;
+  const willLog = !_fridgeReadingFor(_suSetupDate());
+  const w = document.getElementById('su-fr-warn'); if (w) w.style.display = over ? 'block' : 'none';
+  const a = document.getElementById('su-fr-action-f'); if (a) a.style.display = (over && willLog) ? 'block' : 'none';
+  if (!isNaN(t)) {
+    const errEl = document.getElementById('su-fridge-err'); if (errEl) errEl.style.display = 'none';
+    _suFridgeAutoTick();
+  }
+}
+
+function _suFridgeError(msg) {
+  const errEl = document.getElementById('su-fridge-err');
+  if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+  const blk = document.getElementById('su-fridge-block');
+  if (blk) blk.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Returns:
+//   null  — no fridge log needed (a reading already exists for this date)
+//   false — invalid; an inline message has been shown and the setup must not be saved
+//   entry — a fridge log entry, built exactly like saveFridgeTemp() builds one
+function _suFridgeBuildEntry(date, time, by) {
+  if (_fridgeReadingFor(date)) return null;
+  const f = document.getElementById('cl-su-fridge');
+  const raw = f ? String(f.value).trim() : '';
+  const temp = parseFloat(raw);
+  if (raw === '' || isNaN(temp)) {
+    _suFridgeError('Please record the fridge temperature — there is no fridge reading for ' + (date === today() ? 'today' : fmtDate(date)) + '. The setup cannot be saved without it.');
+    return false;
+  }
+  const actionEl = document.getElementById('su-fr-action');
+  const action = temp > 5 ? (actionEl ? actionEl.value.trim() : '') : '';
+  if (temp > 5 && !action) {
+    _suFridgeError('Temperature above 5°C — food safety risk. Record action taken before saving.');
+    return false;
+  }
+  return {date, time, temp, by, action, savedAt:new Date().toISOString()};
+}
+
+// Info line on the standalone fridge form when a reading already exists today.
+function renderFridgeTodayInfo() {
+  const el = document.getElementById('fr-today-info'); if (!el) return;
+  const latest = _latestFridgeReadingToday();
+  if (!latest) { el.style.display = 'none'; return; }
+  el.textContent = 'Already recorded today' + (latest.time ? ' at ' + latest.time : '') + ': ' + latest.temp + '°C. You can still add another reading.';
+  el.style.display = 'block';
+}
+
+// Shows a save-failure message that stays visible (showMsg() hides itself after 3 seconds).
+function _showSaveFailedMsg(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'alert alert-danger';
+  el.textContent = '⚠️ ' + text;
+  el.style.display = 'block';
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 function checkFridgeTemp() {
   const t = parseFloat(document.getElementById('fr-t').value);
   document.getElementById('fr-warn').style.display = t > 5 ? 'block' : 'none';
@@ -13528,7 +14315,12 @@ async function saveFridgeTemp() {
   if (!d || isNaN(temp)) { alert('Please enter date and temperature.'); return; }
   const action = document.getElementById('fr-action')?.value||'';
   const entry = {date:d, time, temp, by, action, savedAt:new Date().toISOString()};
-  await insertLog('fridge', entry);
+  const saved = await insertLog('fridge', entry);
+  if (!saved) {
+    // NOT saved: keep the reading on screen so it can be retried, and don't add it to the list.
+    _showSaveFailedMsg('fr-msg', 'Temperature ' + temp + '°C was NOT saved — check your connection and press Save again.');
+    return;
+  }
   fridgeLogs.push(entry);
   showSaveToast('Temperature recorded');
   showMsg('fr-msg', `Temperature ${temp}°C recorded${temp>5?' — action required!':' ✓'}`);
@@ -13540,6 +14332,7 @@ async function saveFridgeTemp() {
   const frd = document.getElementById('fr-d'); if(frd) frd.value = today();
   const frt = document.getElementById('fr-time'); if(frt) frt.value = nowNZTime();
   renderFridgeHist();
+  renderFridgeTodayInfo();
 }
 // Fridge sort state
 let fridgeSortOrder = 'newest';
@@ -14360,6 +15153,80 @@ function getCloseActivityRows() {
     });
   });
   return result;
+}
+
+// ── Pest check reminders ──
+// Pops up when the app opens and after a close-down is saved, whenever a pest check is due
+// today or has been missed. "Missed" = every due date (last check + N × PEST_CHECK_INTERVAL_DAYS)
+// that has passed since the last recorded check. Read-only: it never saves anything.
+
+function _pestAddDays(ymd, n) {
+  const p = String(ymd).split('-').map(Number);
+  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + n));
+  return d.toISOString().slice(0, 10);
+}
+function _pestDaysBetween(a, b) { // whole days from a to b (YYYY-MM-DD)
+  const pa = String(a).split('-').map(Number), pb = String(b).split('-').map(Number);
+  return Math.round((Date.UTC(pb[0], pb[1] - 1, pb[2]) - Date.UTC(pa[0], pa[1] - 1, pa[2])) / 86400000);
+}
+
+// Returns null when it could not check (load error), else
+// { last, dueDate, missed:[due dates already passed], dueToday:bool, never:bool }.
+async function getPestCheckStatus() {
+  const { data, error } = await db.from('logs').select('*').eq('log_type','checklist');
+  if (error || !data) { console.error('Pest reminder: could not load pest checks', error); return null; }
+  const dates = data.filter(r => r.data && r.data.type === 'pest' && /^\d{4}-\d{2}-\d{2}$/.test(r.data.date || ''))
+    .map(r => r.data.date).sort();
+  const t = today();
+  if (!dates.length) return { last: null, dueDate: t, missed: [], dueToday: true, never: true };
+  const last = dates[dates.length - 1];
+  const missed = [];
+  let due = _pestAddDays(last, PEST_CHECK_INTERVAL_DAYS);
+  while (due < t && missed.length < 500) { missed.push(due); due = _pestAddDays(due, PEST_CHECK_INTERVAL_DAYS); }
+  // `due` is now the next due date on or after today.
+  return { last, dueDate: due, missed, dueToday: due === t, never: false };
+}
+
+// "Remind me later" just closes it — it comes back at the next app open or close-down save.
+async function checkPestReminder() {
+  if ((_loadFailures || []).length) return; // the load-failure banner takes priority
+  let st;
+  try { st = await getPestCheckStatus(); } catch(e) { console.error('Pest reminder error', e); return; }
+  if (!st || (!st.missed.length && !st.dueToday)) return;
+  // Don't stack on top of another open form.
+  const ov = document.getElementById('u-modal-overlay');
+  if (ov && ov.classList.contains('open')) return;
+  const muted = 'font-size:12px;color:var(--text-muted);font-family:sans-serif;';
+  let body;
+  if (st.never) {
+    body = '<div class="alert alert-danger" style="font-size:13px;">No pest check has ever been recorded in the app.</div>';
+  } else if (st.missed.length) {
+    const sinceDays = _pestDaysBetween(st.last, today());
+    body = '<div class="alert alert-danger" style="font-size:13px;"><strong>' + st.missed.length + ' pest check' + (st.missed.length === 1 ? ' was' : 's were') + ' missed.</strong> '
+      + 'The last one was recorded on ' + esc(fmtDate(st.last)) + ' (' + sinceDays + ' day' + (sinceDays === 1 ? '' : 's') + ' ago).</div>'
+      + '<div style="' + muted + 'margin-bottom:4px;">Checks were due on:</div>'
+      + '<div style="font-size:13px;font-family:sans-serif;margin-bottom:8px;">'
+      + st.missed.map(d => '<div style="padding:3px 0;border-bottom:1px solid var(--gray-light);">✗ ' + esc(fmtDate(d)) + '</div>').join('')
+      + '</div>'
+      + '<div style="' + muted + 'margin-bottom:8px;">Next check due: <strong style="color:var(--text)">' + esc(st.dueToday ? 'today' : fmtDate(st.dueDate)) + '</strong></div>';
+  } else {
+    body = '<div class="alert alert-warning" style="font-size:13px;"><strong>A pest check is due today.</strong> The last one was recorded on ' + esc(fmtDate(st.last)) + '.</div>';
+  }
+  body += '<div style="' + muted + '">Pest checks are due every ' + PEST_CHECK_INTERVAL_DAYS + ' days. '
+    + 'Do one now and record it. Only enter a past date if a check really was done on that day but not recorded.</div>';
+  const footer = '<button class="btn btn-primary" style="flex:1" onclick="goRecordPestCheck()">Record pest check now</button>'
+    + '<button class="btn" style="flex:1" onclick="snoozePestReminder()">Remind me later</button>';
+  openUModal(st.missed.length || st.never ? '🐜 Pest check overdue' : '🐜 Pest check due today', body, footer);
+}
+
+function goRecordPestCheck() {
+  closeUModal();
+  _activeSubSection.forms = 'kitchen'; go('forms'); goKitchen('pest-cl');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function snoozePestReminder() {
+  closeUModal();
 }
 
 // ── Pest check recent records ──
@@ -23233,6 +24100,7 @@ function openNewOrderForm() {
   document.getElementById('orf-quick-note').value = '';
   document.getElementById('orf-lines').innerHTML = '';
   document.getElementById('orf-new-cust-panel').style.display = 'none';
+  setOrfCustMode('existing');
   document.getElementById('orf-batches-card').style.display = 'none';
   document.getElementById('orf-msg').style.display = 'none';
   orfInitDeliveryRows(null);
@@ -23328,6 +24196,7 @@ function openEditOrderForm(orderId) {
   _renderOrfBatches(o);
   _populateBatchSelect();
   document.getElementById('orf-new-cust-panel').style.display = 'none';
+  setOrfCustMode('existing');
   document.getElementById('orf-msg').style.display = 'none';
   document.getElementById('orf-batches-card').style.display = 'block';
   orfRenderLinkedIcing(orderId);
@@ -23428,11 +24297,25 @@ document.addEventListener('click', function(e) {
 });
 
 // ── Inline new customer ──
+// "Existing customer" shows the usual organisation picker; "New customer" reveals the inline
+// new-customer fields (saved by saveNewCustInline, unchanged).
+function setOrfCustMode(mode) {
+  const isNew = mode === 'new';
+  const panel = document.getElementById('orf-new-cust-panel');
+  if (panel) panel.style.display = isNew ? 'block' : 'none';
+  const orgField = document.getElementById('orf-org-field');
+  if (orgField) orgField.style.display = isNew ? 'none' : '';
+  const bEx = document.getElementById('orf-cust-mode-existing');
+  const bNew = document.getElementById('orf-cust-mode-new');
+  if (bEx) { bEx.style.background = isNew ? 'var(--white)' : 'var(--navy)'; bEx.style.color = isNew ? 'var(--navy)' : 'white'; }
+  if (bNew) { bNew.style.background = isNew ? 'var(--navy)' : 'var(--white)'; bNew.style.color = isNew ? 'white' : 'var(--navy)'; }
+  if (isNew) { const n = document.getElementById('orf-nc-name'); if (n) n.focus(); }
+}
+
 function toggleNewCustInline() {
   const panel = document.getElementById('orf-new-cust-panel');
-  const isShown = panel.style.display !== 'none';
-  panel.style.display = isShown ? 'none' : 'block';
-  document.getElementById('orf-new-cust-btn').textContent = isShown ? '+ Add new customer instead' : '− Cancel new customer';
+  const isShown = panel && panel.style.display !== 'none';
+  setOrfCustMode(isShown ? 'existing' : 'new');
 }
 
 async function saveNewCustInline() {
@@ -27600,6 +28483,7 @@ function downloadCSV(filename, headers, rows) {
 // ═══════════════════════════════════════════════════════
 async function loadCampaigns() {
   const { data, error } = await db.from('campaigns').select('*').order('created_at', { ascending: false });
+  if (error) _noteLoadError('campaigns', error);
   if (!error && data) campaigns = data;
 }
 
@@ -27609,6 +28493,7 @@ async function loadCampaigns() {
 // without having to be found and changed.
 async function loadCampEngagements() {
   const { data, error } = await db.from('campaign_engagements').select('*').order('created_at', { ascending: true });
+  if (error) _noteLoadError('campEngagements', error);
   if (!error && data) {
     campEngagements    = data.filter(function(e){ return !e.deleted_at; });
     deletedEngagements = data.filter(function(e){ return  e.deleted_at; });
@@ -27617,6 +28502,7 @@ async function loadCampEngagements() {
 
 async function loadLeads() {
   const { data, error } = await db.from('leads').select('*').order('created_at', { ascending: false });
+  if (error) _noteLoadError('leads', error);
   if (!error && data) leads = data;
 }
 
@@ -27629,16 +28515,19 @@ async function loadWebsiteOrders() {
     .select('*')
     .eq('log_type', 'website_order_pending')
     .order('id', { ascending: false });
+  if (error) _noteLoadError('websiteOrders', error);
   if (!error && data) websiteOrders = data.filter(function(r){ return !(r.data && r.data.reviewed); });
 }
 
 async function loadCollectionTemplates() {
   const { data, error } = await db.from('collection_templates').select('*').order('id', { ascending: true });
+  if (error) _noteLoadError('collectionTemplates', error);
   if (!error && data) collectionTemplates = data;
 }
 
 async function loadCollectionInstances() {
   const { data, error } = await db.from('collection_instances').select('*').order('id', { ascending: false });
+  if (error) _noteLoadError('collectionInstances', error);
   if (!error && data) collectionInstances = data.map(normaliseColInstance);
 }
 
@@ -33119,7 +34008,7 @@ async function exportAllData() {
 
   const snapshot = {
     exported_at: new Date().toISOString(),
-    app_version: 'v66.0',
+    app_version: 'v67.0',
     tables: {}
   };
 
@@ -33346,8 +34235,20 @@ function closeUModal() {
   uModalRecordType = null;
 }
 
+// Only a click that both STARTS and ENDS on the dark backdrop closes the modal. Dragging to
+// select text in a field and letting go outside the box fires a "click" on the backdrop too,
+// which used to close the form mid-edit.
+let _uModalDownOnBg = false;
+(function() {
+  const ov = document.getElementById('u-modal-overlay');
+  if (ov) ov.addEventListener('mousedown', function(e) { _uModalDownOnBg = (e.target === ov); });
+})();
+
 function uModalBgClick(e) {
-  if (e.target === document.getElementById('u-modal-overlay')) closeUModal();
+  const ov = document.getElementById('u-modal-overlay');
+  const startedOnBg = _uModalDownOnBg;
+  _uModalDownOnBg = false;
+  if (e.target === ov && startedOnBg) closeUModal();
 }
 
 // Helper: render a read-only field row
@@ -37438,6 +38339,7 @@ async function loadNotifications() {
     _notifications = data || [];
   } catch(e) {
     console.warn('loadNotifications failed:', e);
+    _noteLoadError('notifications', e);
     _notifications = [];
   }
 }
@@ -37452,6 +38354,7 @@ async function loadTasks() {
     _projects = pData || [];
   } catch(e) {
     console.warn('loadTasks failed:', e);
+    _noteLoadError('tasks', e);
     _tasks = [];
     _projects = [];
   }
